@@ -5,11 +5,11 @@ import { usePathname } from 'next/navigation'
 import { LayoutDashboard, Users, Calendar, Cpu, Settings } from 'lucide-react'
 
 const NAV = [
-  { href: '/',           label: 'Pipeline',    icon: LayoutDashboard },
-  { href: '/leads',      label: 'Leads',       icon: Users },
-  { href: '/agenda',     label: 'Agenda',      icon: Calendar },
-  { href: '/agent',      label: 'Agent IA',    icon: Cpu },
-  { href: '/campagnes',  label: 'Campagnes',   icon: Settings },
+  { href: '/',          label: 'Pipeline',  icon: LayoutDashboard },
+  { href: '/leads',     label: 'Leads',     icon: Users },
+  { href: '/agenda',    label: 'Agenda',    icon: Calendar },
+  { href: '/agent',     label: 'Agent IA',  icon: Cpu },
+  { href: '/campagnes', label: 'Campagnes', icon: Settings },
 ]
 
 export default function Sidebar() {
@@ -31,14 +31,14 @@ export default function Sidebar() {
           <Cpu size={11} color="#fff" />
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-[13px] font-semibold leading-tight" style={{ color: 'var(--color-text)' }}>Selquia</span>
-          <span className="text-[10px] leading-tight" style={{ color: 'var(--color-muted)' }}>Agent couvreurs</span>
+          <span className="text-[13px] font-semibold leading-tight truncate" style={{ color: 'var(--color-text)' }}>
+            Hdigiweb
+          </span>
+          <span className="text-[10px] leading-tight" style={{ color: 'var(--color-muted)' }}>
+            Agent IA
+          </span>
         </div>
-
-        <div
-          className="ml-auto flex items-center gap-1"
-          title="Agent actif"
-        >
+        <div className="ml-auto" title="Agent actif">
           <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
         </div>
       </div>
@@ -65,7 +65,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-4 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>
-        <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>France · Couverture</p>
+        <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>Toulouse · PME/TPE</p>
       </div>
     </aside>
   )

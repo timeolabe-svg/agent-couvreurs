@@ -6,8 +6,8 @@ import Sidebar from '@/components/Sidebar'
 const geist = Geist({ variable: '--font-geist-sans', subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Agent Couvreurs — Selquia',
-  description: 'Agent IA de cold emailing pour couvreurs',
+  title: 'Hdigiweb — Agent IA Prospection',
+  description: 'Agent IA de cold emailing pour Hdigiweb — PME/TPE Toulouse & Occitanie',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
