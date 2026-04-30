@@ -2,14 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Calendar, Cpu, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, Calendar, Cpu, Settings, BarChart2 } from 'lucide-react'
 
 const NAV = [
-  { href: '/',          label: 'Pipeline',  icon: LayoutDashboard },
-  { href: '/leads',     label: 'Leads',     icon: Users },
-  { href: '/agenda',    label: 'Agenda',    icon: Calendar },
-  { href: '/agent',     label: 'Agent IA',  icon: Cpu },
-  { href: '/campagnes', label: 'Campagnes', icon: Settings },
+  { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
+  { href: '/leads',     label: 'Leads',       icon: Users },
+  { href: '/agenda',    label: 'Agenda',      icon: Calendar },
+  { href: '/stats',     label: 'Analytique',  icon: BarChart2 },
+  { href: '/agent',     label: 'Agent IA',    icon: Cpu },
+  { href: '/campagnes', label: 'Campagnes',   icon: Settings },
 ]
 
 export default function Sidebar() {
