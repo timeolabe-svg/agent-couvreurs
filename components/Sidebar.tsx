@@ -2,21 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  LayoutDashboard,
-  Users,
-  Megaphone,
-  Mail,
-  BarChart2,
-  Zap,
-} from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, Mail, BarChart2 } from 'lucide-react'
 
 const NAV = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/prospects', label: 'Prospects', icon: Users },
-  { href: '/campagnes', label: 'Campagnes', icon: Megaphone },
-  { href: '/emails', label: 'Emails IA', icon: Mail },
-  { href: '/stats', label: 'Stats', icon: BarChart2 },
+  { href: '/',           label: 'Vue d\'ensemble', icon: LayoutDashboard },
+  { href: '/prospects',  label: 'Prospects',        icon: Users },
+  { href: '/campagnes',  label: 'Campagnes',        icon: Megaphone },
+  { href: '/emails',     label: 'Emails IA',        icon: Mail },
+  { href: '/stats',      label: 'Statistiques',     icon: BarChart2 },
 ]
 
 export default function Sidebar() {
@@ -24,57 +17,40 @@ export default function Sidebar() {
 
   return (
     <aside
+      className="w-52 flex-shrink-0 flex flex-col h-full"
       style={{ background: 'var(--color-surface)', borderRight: '1px solid var(--color-border)' }}
-      className="w-56 flex-shrink-0 flex flex-col h-full"
     >
-      {/* Logo */}
-      <div className="px-5 py-5 flex items-center gap-2.5" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center"
-          style={{ background: 'var(--color-accent)', boxShadow: '0 0 16px var(--color-accent-glow)' }}
-        >
-          <Zap size={16} className="text-white" />
-        </div>
-        <div>
-          <div className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-            Selquia
-          </div>
-          <div className="text-xs" style={{ color: 'var(--color-muted)' }}>
-            Agent Couvreurs
-          </div>
-        </div>
+      <div className="px-4 h-14 flex items-center" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <span className="text-sm font-semibold tracking-tight" style={{ color: 'var(--color-text)' }}>
+          Selquia
+        </span>
+        <span className="ml-2 text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--color-surface-2)', color: 'var(--color-muted)', border: '1px solid var(--color-border)' }}>
+          Cold Email
+        </span>
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
+      <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = path === href
           return (
             <Link
               key={href}
               href={href}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors"
               style={{
                 color: active ? 'var(--color-text)' : 'var(--color-muted)',
                 background: active ? 'var(--color-surface-2)' : 'transparent',
-                borderLeft: active ? '2px solid var(--color-accent)' : '2px solid transparent',
               }}
             >
-              <Icon size={16} />
+              <Icon size={14} strokeWidth={active ? 2 : 1.5} />
               {label}
             </Link>
           )
         })}
       </nav>
 
-      {/* Demo badge */}
-      <div className="px-4 pb-4">
-        <div
-          className="px-3 py-2 rounded-lg text-xs text-center"
-          style={{ background: 'var(--color-accent-glow)', color: 'var(--color-accent)', border: '1px solid var(--color-accent-dim)' }}
-        >
-          Mode Démo
-        </div>
+      <div className="px-4 py-4" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <p className="text-xs" style={{ color: 'var(--color-muted)' }}>Couvreurs · France</p>
       </div>
     </aside>
   )

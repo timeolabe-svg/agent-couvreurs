@@ -12,10 +12,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="fr" className={`${geist.variable} h-full`}>
-      <body className="h-full flex">
+    <html lang="fr" className={geist.variable}>
+      <body style={{ display: 'flex', height: '100dvh', overflow: 'hidden' }}>
         <Sidebar />
-        <main className="flex-1 overflow-auto">{children}</main>
+        <main style={{ flex: 1, overflowY: 'auto' }}>{children}</main>
       </body>
     </html>
   )
