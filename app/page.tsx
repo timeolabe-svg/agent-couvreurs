@@ -33,9 +33,10 @@ export default function DashboardPage() {
   const rdvs = DEMO_LEADS.filter(l => l.stage === 'rdv_booked').length
   const replyRate = Math.round((DEMO_LEADS.filter(l => l.stage !== 'prospected' && l.stage !== 'contacted' && l.stage !== 'not_interested').length / total) * 100)
 
-  const needsAction = DEMO_LEADS.filter(l => l.stage === 'replied')
-  const inSequence  = DEMO_LEADS.filter(l => ['contacted', 'follow_up_1', 'follow_up_2'].includes(l.stage))
-  const closed      = DEMO_LEADS.filter(l => ['rdv_booked', 'not_interested'].includes(l.stage))
+  const byRecent = (a: Lead, b: Lead) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()
+  const needsAction = DEMO_LEADS.filter(l => l.stage === 'replied').sort(byRecent)
+  const inSequence  = DEMO_LEADS.filter(l => ['contacted', 'follow_up_1', 'follow_up_2'].includes(l.stage)).sort(byRecent)
+  const closed      = DEMO_LEADS.filter(l => ['rdv_booked', 'not_interested'].includes(l.stage)).sort(byRecent)
 
   return (
     <div className="flex flex-col h-full">
