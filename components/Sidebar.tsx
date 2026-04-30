@@ -2,11 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Calendar, Cpu, Settings, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, Settings, BarChart2 } from 'lucide-react'
 
 const NAV = [
   { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
-  { href: '/leads',     label: 'Leads',       icon: Users },
   { href: '/agenda',    label: 'Agenda',      icon: Calendar },
   { href: '/stats',     label: 'Analytique',  icon: BarChart2 },
   { href: '/agent',     label: 'Agent IA',    icon: Cpu },
