@@ -1,76 +1,70 @@
-export type ProspectStatus = 'new' | 'contacted' | 'replied' | 'interested' | 'not_interested' | 'rdv_booked' | 'later'
+export type LeadStage =
+  | 'prospected'
+  | 'contacted'
+  | 'follow_up_1'
+  | 'follow_up_2'
+  | 'replied'
+  | 'rdv_booked'
+  | 'not_interested'
 
-export type ProspectSegment = 'with_site' | 'without_site' | 'active_ads' | 'passive'
+export type MessageAuthor = 'agent' | 'lead'
 
-export interface Prospect {
+export interface EmailMessage {
+  id: string
+  author: MessageAuthor
+  subject?: string
+  body: string
+  sentAt: string
+  openedAt?: string
+  isAiGenerated?: boolean
+  sequenceStep?: 'initial' | 'follow_up_1' | 'follow_up_2' | 'follow_up_3' | 'reply'
+}
+
+export interface Lead {
   id: string
   company: string
-  contact?: string
+  contact: string
+  firstName: string
   email: string
   phone?: string
   city: string
-  department: string
   website?: string
   googleRating?: number
   googleReviews?: number
   specialty: string[]
-  employees_estimate: '1-3' | '3-10' | '10-20'
   hasGoogleAds: boolean
   hasWebsite: boolean
-  marketingMaturity: 'low' | 'medium' | 'high'
-  segment: ProspectSegment
-  status: ProspectStatus
+  stage: LeadStage
+  thread: EmailMessage[]
+  rdvDate?: string
+  rdvConfirmedAt?: string
+  createdAt: string
+  lastActivityAt: string
+  nextScheduledAt?: string
   notes?: string
-  createdAt: string
-  lastContactedAt?: string
 }
 
-export interface GeneratedEmail {
+export interface RdvEvent {
   id: string
-  prospectId: string
-  subject: string
-  body: string
-  type: 'initial' | 'followup_1' | 'followup_2' | 'followup_3'
-  generatedAt: string
-  sentAt?: string
-  openedAt?: string
-  repliedAt?: string
-  status: 'draft' | 'sent' | 'opened' | 'replied'
+  leadId: string
+  company: string
+  contact: string
+  date: string
+  time: string
+  duration: number
+  detectedFrom: string
+  confirmedByAgent: boolean
+  clientNotified: boolean
+  phone?: string
 }
 
-export interface Campaign {
-  id: string
-  name: string
-  niche: string
-  targetZone: string
-  status: 'draft' | 'active' | 'paused' | 'completed'
-  prospectCount: number
-  emailsSent: number
-  openRate: number
-  replyRate: number
-  rdvCount: number
-  createdAt: string
-  startedAt?: string
-}
-
-export interface EmailReply {
-  id: string
-  prospectId: string
-  emailId: string
-  content: string
-  classification: 'interested' | 'not_interested' | 'later' | 'info_request'
-  suggestedResponse?: string
-  receivedAt: string
-  handledAt?: string
-}
-
-export interface DashboardStats {
-  totalProspects: number
-  totalEmailsSent: number
-  avgOpenRate: number
-  avgReplyRate: number
-  totalRdv: number
-  activeSequences: number
-  emailsThisWeek: number
-  rdvThisMonth: number
+export interface AgentConfig {
+  persona: string
+  objective: string
+  tone: string
+  maxEmailsPerDay: number
+  warmupEnabled: boolean
+  autoReplyEnabled: boolean
+  autoRdvEnabled: boolean
+  clientNotifEmail: string
 }

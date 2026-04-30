@@ -1,4 +1,3 @@
-import { GeneratedEmail } from '@/types'
-
-export const DEMO_GENERATED_EMAILS: GeneratedEmail[] = []
+// Legacy file — use data/demo.ts
+export const DEMO_GENERATED_EMAILS: never[] = []
 export const DEMO_REPLIES: never[] = []

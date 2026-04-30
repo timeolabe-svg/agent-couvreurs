@@ -2,14 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, Mail, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, Users, Calendar, Cpu, Settings } from 'lucide-react'
 
 const NAV = [
-  { href: '/',           label: 'Vue d\'ensemble', icon: LayoutDashboard },
-  { href: '/prospects',  label: 'Prospects',        icon: Users },
-  { href: '/campagnes',  label: 'Campagnes',        icon: Megaphone },
-  { href: '/emails',     label: 'Emails IA',        icon: Mail },
-  { href: '/stats',      label: 'Statistiques',     icon: BarChart2 },
+  { href: '/',           label: 'Pipeline',    icon: LayoutDashboard },
+  { href: '/leads',      label: 'Leads',       icon: Users },
+  { href: '/agenda',     label: 'Agenda',      icon: Calendar },
+  { href: '/agent',      label: 'Agent IA',    icon: Cpu },
+  { href: '/campagnes',  label: 'Campagnes',   icon: Settings },
 ]
 
 export default function Sidebar() {
@@ -17,40 +17,55 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="w-52 flex-shrink-0 flex flex-col h-full"
+      className="w-48 flex-shrink-0 flex flex-col h-full"
       style={{ background: 'var(--color-surface)', borderRight: '1px solid var(--color-border)' }}
     >
-      <div className="px-4 h-14 flex items-center" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <span className="text-sm font-semibold tracking-tight" style={{ color: 'var(--color-text)' }}>
-          Selquia
-        </span>
-        <span className="ml-2 text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--color-surface-2)', color: 'var(--color-muted)', border: '1px solid var(--color-border)' }}>
-          Cold Email
-        </span>
+      <div
+        className="px-4 h-14 flex items-center gap-2.5"
+        style={{ borderBottom: '1px solid var(--color-border)' }}
+      >
+        <div
+          className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0"
+          style={{ background: 'var(--color-accent)' }}
+        >
+          <Cpu size={11} color="#fff" />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <span className="text-[13px] font-semibold leading-tight" style={{ color: 'var(--color-text)' }}>Selquia</span>
+          <span className="text-[10px] leading-tight" style={{ color: 'var(--color-muted)' }}>Agent couvreurs</span>
+        </div>
+
+        <div
+          className="ml-auto flex items-center gap-1"
+          title="Agent actif"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
+        </div>
       </div>
 
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
         {NAV.map(({ href, label, icon: Icon }) => {
-          const active = path === href
+          const active = path === href || (href !== '/' && path.startsWith(href))
           return (
             <Link
               key={href}
               href={href}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors"
+              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors"
               style={{
                 color: active ? 'var(--color-text)' : 'var(--color-muted)',
                 background: active ? 'var(--color-surface-2)' : 'transparent',
+                fontWeight: active ? 500 : 400,
               }}
             >
-              <Icon size={14} strokeWidth={active ? 2 : 1.5} />
+              <Icon size={14} />
               {label}
             </Link>
           )
         })}
       </nav>
 
-      <div className="px-4 py-4" style={{ borderTop: '1px solid var(--color-border)' }}>
-        <p className="text-xs" style={{ color: 'var(--color-muted)' }}>Couvreurs · France</p>
+      <div className="px-4 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>France · Couverture</p>
       </div>
     </aside>
   )
