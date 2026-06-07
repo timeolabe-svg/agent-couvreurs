@@ -219,8 +219,8 @@ export default function StatsPage() {
               style={{ background: 'var(--color-border)' }}>
               {[
                 { label: 'Email initial J0',    sent: s.initialSent,   openRate: s.initialOpenRate, color: '#3b82f6' },
-                { label: 'Relance J+2',          sent: s.followup1Sent, openRate: s.fu1OpenRate,     color: '#8b5cf6' },
-                { label: 'Relance J+5',          sent: s.followup2Sent, openRate: 0,                color: '#f59e0b' },
+                { label: 'Relance J+3',          sent: s.followup1Sent, openRate: s.fu1OpenRate,     color: '#8b5cf6' },
+                { label: 'Relance J+7',          sent: s.followup2Sent, openRate: 0,                color: '#f59e0b' },
                 { label: 'Réponse IA',           sent: s.replySent,     openRate: 0,                color: '#22c55e' },
               ].map(step => (
                 <div key={step.label} className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>

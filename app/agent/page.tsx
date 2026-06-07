@@ -1,5 +1,5 @@
 import { AGENT_CONFIG } from '@/data/demo'
-import { Cpu, Shield, Clock, Mail, Bell, Bot } from 'lucide-react'
+import { Cpu, Shield, Clock, Mail, Bell, Bot, Flame, TrendingUp, CalendarRange } from 'lucide-react'
 
 export default function AgentPage() {
   return (
@@ -102,6 +102,68 @@ export default function AgentPage() {
                   <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>{p.desc}</p>
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Warmup & deliverability */}
+          <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--color-border)' }}>
+            <div className="px-4 py-3 flex items-center gap-2"
+              style={{ background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}>
+              <Flame size={13} style={{ color: '#f59e0b' }} />
+              <p className="text-[12px] font-medium" style={{ color: 'var(--color-text)' }}>Warmup & deliverability</p>
+              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#22c55e15', color: '#22c55e' }}>
+                Activé
+              </span>
+            </div>
+
+            <div className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
+              <p className="text-[12px] leading-relaxed mb-4" style={{ color: 'var(--color-text)' }}>
+                Chaque nouvelle boîte mail démarre en douceur pour habituer Google et Outlook à reconnaître vos envois comme légitimes. Sans warmup, vos emails finissent en spam dès la première campagne.
+              </p>
+
+              <div className="grid grid-cols-4 gap-px rounded-lg overflow-hidden mb-4"
+                style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}>
+                {[
+                  { week: 'Semaine 1', vol: '5 / jour',  pct: 14,  color: '#ef4444' },
+                  { week: 'Semaine 2', vol: '15 / jour', pct: 43, color: '#f59e0b' },
+                  { week: 'Semaine 3', vol: '25 / jour', pct: 71, color: '#3b82f6' },
+                  { week: 'Semaine 4+', vol: '35 / jour', pct: 100, color: '#22c55e' },
+                ].map(s => (
+                  <div key={s.week} className="px-3 py-3" style={{ background: 'var(--color-surface-2)' }}>
+                    <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{s.week}</p>
+                    <p className="text-[14px] font-semibold mt-0.5" style={{ color: 'var(--color-text)' }}>{s.vol}</p>
+                    <div className="h-1 rounded-full mt-2 overflow-hidden" style={{ background: 'var(--color-surface)' }}>
+                      <div className="h-full rounded-full" style={{ width: `${s.pct}%`, background: s.color }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { icon: <CalendarRange size={12} />, label: 'Plage horaire', value: '9h00 → 17h30', desc: 'Lun-Ven uniquement', color: '#3b82f6' },
+                  { icon: <TrendingUp size={12} />,    label: 'Incrément quotidien', value: '+2 emails/jour', desc: 'Jusqu\'à 35 emails/jour', color: '#8b5cf6' },
+                  { icon: <Clock size={12} />,         label: 'Espacement', value: '8 à 25 min', desc: 'Aléatoire entre chaque envoi', color: '#f59e0b' },
+                ].map(p => (
+                  <div key={p.label} className="rounded-lg px-3 py-3" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
+                    <div className="mb-2" style={{ color: p.color }}>{p.icon}</div>
+                    <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{p.label}</p>
+                    <p className="text-[12px] font-semibold mt-0.5" style={{ color: 'var(--color-text)' }}>{p.value}</p>
+                    <p className="text-[10px] mt-1" style={{ color: 'var(--color-muted-2)' }}>{p.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-lg p-3 mt-4 flex gap-2.5"
+                style={{ background: '#f59e0b08', border: '1px solid #f59e0b30' }}>
+                <Flame size={13} style={{ color: '#f59e0b', flexShrink: 0, marginTop: 2 }} />
+                <div className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text)' }}>
+                  <p className="font-semibold mb-0.5">Warmup automatisé inter-boîtes</p>
+                  <p style={{ color: 'var(--color-muted)' }}>
+                    Pendant les 4 semaines de warmup, vos boîtes échangent automatiquement des emails simulés entre elles (questions, réponses, marquage important) pour entraîner les filtres anti-spam à reconnaître votre activité comme légitime.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 

@@ -2,18 +2,69 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Calendar, Cpu, Settings, BarChart2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain } from 'lucide-react'
 
-const NAV = [
+const NAV_BEFORE_BELL = [
   { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
   { href: '/agenda',    label: 'Agenda',      icon: Calendar },
-  { href: '/stats',     label: 'Analytique',  icon: BarChart2 },
-  { href: '/agent',     label: 'Agent IA',    icon: Cpu },
-  { href: '/campagnes', label: 'Campagnes',   icon: Settings },
+]
+
+const NAV_AFTER_BELL = [
+  { href: '/stats',       label: 'Analytique',    icon: BarChart2 },
+  { href: '/agent',       label: 'Agent IA',      icon: Cpu },
+  { href: '/campagnes',   label: 'Campagnes',     icon: Megaphone },
+  { href: '/learning',    label: 'Auto-Learning', icon: Brain },
+  { href: '/parametres',  label: 'Paramètres',    icon: SlidersHorizontal },
 ]
 
 export default function Sidebar() {
   const path = usePathname()
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch('/api/replies?status=pending&limit=50')
+        if (!res.ok) return
+        const json = await res.json() as { data: Array<{ draft: unknown | null }> }
+        const count = (json.data ?? []).filter((item) => item.draft !== null).length
+        setPendingCount(count)
+      } catch {
+        // ignore
+      }
+    }
+    void load()
+    const interval = setInterval(load, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const renderLink = (href: string, label: string, Icon: React.ElementType, badge?: number) => {
+    const active = path === href || (href !== '/' && path.startsWith(href))
+    return (
+      <Link
+        key={href}
+        href={href}
+        className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors"
+        style={{
+          color: active ? 'var(--color-text)' : 'var(--color-muted)',
+          background: active ? 'var(--color-surface-2)' : 'transparent',
+          fontWeight: active ? 500 : 400,
+        }}
+      >
+        <Icon size={14} />
+        <span className="flex-1">{label}</span>
+        {badge !== undefined && badge > 0 && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none"
+            style={{ background: '#ef4444', color: '#fff' }}
+          >
+            {badge}
+          </span>
+        )}
+      </Link>
+    )
+  }
 
   return (
     <aside
@@ -44,24 +95,9 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = path === href || (href !== '/' && path.startsWith(href))
-          return (
-            <Link
-              key={href}
-              href={href}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors"
-              style={{
-                color: active ? 'var(--color-text)' : 'var(--color-muted)',
-                background: active ? 'var(--color-surface-2)' : 'transparent',
-                fontWeight: active ? 500 : 400,
-              }}
-            >
-              <Icon size={14} />
-              {label}
-            </Link>
-          )
-        })}
+        {NAV_BEFORE_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
+        {renderLink('/reponses-a-valider', 'À valider', Bell, pendingCount)}
+        {NAV_AFTER_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
       </nav>
 
       <div className="px-4 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>

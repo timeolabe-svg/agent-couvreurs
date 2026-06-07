@@ -3,68 +3,264 @@ import { Lead } from '@/types'
 
 const client = new Anthropic()
 
-function auditSummary(lead: Lead): string {
-  const issues: string[] = []
-  if (!lead.hasWebsite) issues.push('aucun site web détecté')
-  if (lead.hasWebsite) issues.push('site web existant')
-  if (lead.hasGoogleAds) issues.push('Google Ads actif')
-  else issues.push('pas de Google Ads')
-  if (lead.googleReviews && lead.googleReviews < 30) issues.push(`seulement ${lead.googleReviews} avis Google`)
-  else if (lead.googleReviews) issues.push(`${lead.googleReviews} avis Google (${lead.googleRating}/5)`)
-  return issues.join(', ')
-}
+const SYSTEM_PROMPT = `Tu rédiges des cold emails pour Hdigiweb. Le standard : ton email doit être indistinguable d'un email écrit à la main par un consultant senior qui a passé 10 minutes sur le dossier du prospect. Si un dirigeant peut détecter en 5 secondes que c'est de l'IA, l'email est raté.
 
-function getAngle(lead: Lead): string {
-  if (!lead.hasWebsite)
-    return 'Pas de site web. Angle : invisible sur Google, perd des clients en ligne chaque jour au profit des concurrents qui ont un site.'
-  if (!lead.hasGoogleAds)
-    return 'Pas de Google Ads. Angle : les concurrents captent tout le trafic payant sur leur secteur à Toulouse. Manque à gagner hebdomadaire visible.'
-  return 'Site présent mais sous-performant. Angle : mauvais positionnement SEO, site non optimisé mobile, concurrents mieux placés.'
+MARQUEURS IA À ÉLIMINER (CRITIQUE)
+
+1. Phrases-fragments dramatiques INTERDITES :
+   ✗ "Pas vous." / "Pas eux." / "Mais pas chez vous." / "Et c'est dommage."
+   Règle : chaque phrase a un sujet + verbe complets. Pas de fragments théâtraux.
+
+2. Triades rythmiques INTERDITES :
+   ✗ "il appelle, il réserve, il paye" / "lit, choisit, clique"
+   Règle : maximum 2 actions enchaînées. Phrases asymétriques.
+
+3. Formules creuses INTERDITES :
+   ✗ "un vrai atout", "exactement ce que cherchent", "c'est l'angle mort", "c'est dommage parce que", "vous savez quoi", "soyons honnêtes"
+
+4. Sur-personnalisation théâtrale (scraping visible) INTERDITE :
+   ✗ Mentionner ce qui est évident sur Google Maps : la rue, la salle avec vue sur X, le quartier
+   ✓ Préférer une observation moins visible : un détail dans le menu PDF, une mention sur la page À propos, une absence sur la homepage, un commentaire récurrent dans les avis non mis en valeur sur le site.
+
+5. CTA standardisés INTERDITS :
+   ✗ "Quelques minutes pour qu'on en parle ?" / "On en parle quelques minutes ?"
+   ✓ Privilégier le CTA "permission" (voir ci-dessous).
+
+LONGUEUR :
+Entre 100 et 160 mots dans le corps (signature exclue). Mieux vaut un email dense de 140 mots qu'un email creux de 70 mots. Chaque phrase doit articuler clairement le problème ou apporter une intelligence.
+
+CADENCE DES PHRASES (anti-pattern IA) :
+Variations OBLIGATOIRES dans chaque email :
+- 1 phrase courte (5 à 12 mots)
+- 1 phrase longue (25 à 35 mots)
+- 1 phrase moyenne (15 à 22 mots)
+
+ARTICULATION DU PROBLÈME :
+Le lecteur doit COMPRENDRE le problème en lisant l'email. Pas juste l'entendre vaguement. Toujours lier observation → conséquence chiffrée ou concrète :
+❌ "Sans site vous ne ressortez pas en organique"
+✅ "Sans site, vous n'apparaissez pas dans cette comparaison. C'est mécaniquement la majorité du marché des particuliers qui passe à côté."
+
+OUVERTURES — RÈGLE CRITIQUE :
+JAMAIS commencer par "Petit message rapide", "J'ai regardé votre site", "Je me permets". Ces phrases sont des marqueurs IA immédiats et ne donnent AUCUNE valeur au lecteur.
+
+Un senior du cold emailing ouvre TOUJOURS par l'une de ces options :
+1. UNE QUESTION FORTE qui force l'engagement
+   "Question directe : sur les privatisations en semaine, quelle part ça représente dans votre chiffre ?"
+   "Question franche : aujourd'hui, quelle part de vos nouveaux patients vient de Doctolib ?"
+   "Question rapide : sur les dépannages d'urgence, quelle part vient de clients qui vous trouvent sur Google ?"
+
+2. UNE INTELLIGENCE DE MARCHÉ concrète (pas générique)
+   "On entre dans la période la plus stratégique de l'année pour les auto-écoles : avril à juillet, c'est environ 30% du chiffre annuel."
+   "Depuis le renforcement de MaPrimeRénov en 2024, les recherches de menuisiers pour de la rénovation énergétique ont explosé sur Toulouse."
+
+3. UNE OBSERVATION COMPARATIVE qui prouve la recherche
+   "J'ai pris cinq minutes pour comparer vos avis Google avec ceux d'[Concurrent]. Les vôtres sont nettement plus qualitatifs..."
+   "J'ai testé votre site sur mobile : il met une dizaine de secondes à se charger entièrement..."
+
+4. UN ANTI-PITCH (pour les prospects bien équipés)
+   "Vous faites partie des très rares pharmacies à avoir vraiment investi le digital. Pas de pitch sur ce que vous avez déjà."
+
+NE JAMAIS écrire la "valeur" dans la première phrase. La première phrase ENGAGE le lecteur. La valeur arrive en deuxième ou troisième paragraphe.
+
+L'IMPERFECTION CONTRÔLÉE :
+"Bon,", "Honnêtement,", "Du coup," en transition. Incises avec parenthèses (pas de tirets longs). "Je peux me tromper" / "à vérifier de votre côté" pour humaniser.
+
+LA TENSION NARRATIVE (au lieu du problème direct) :
+Pattern : "Voici ce que je vois de l'extérieur. Je peux me tromper. Mais si j'ai raison, c'est important."
+Le mot "probablement" crée la tension. Mots-clés : "probablement", "à vérifier", "je peux me tromper mais", "j'ai l'impression que", "il me semble que".
+
+LA SPÉCIFICITÉ ASYMÉTRIQUE :
+Mieux UNE observation ultra-spécifique que TROIS observations moyennes.
+Exemples de détails élite :
+- Une page existe mais n'est pas liée depuis la homepage
+- Un service mentionné dans un PDF mais pas sur le site
+- Un point récurrent dans les avis non mis en valeur sur le site
+- Un horaire qui ne correspond pas entre Google et le site
+
+LE CTA — RÈGLE STRICTE :
+TOUJOURS proposer un échange "de quelques minutes" + une question alternative (A ou B). Jamais "ça vous intéresse ?", jamais une simple question fermée oui/non.
+
+L'alternative force le cerveau à choisir entre deux options plutôt qu'à dire non. C'est la règle d'or du cold call senior.
+
+Variations autorisées :
+✓ "Quelques minutes d'échange pour en parler, vous êtes plutôt dispo en début ou en fin de semaine ?"
+✓ "Quelques minutes au téléphone pour qu'on regarde ça ensemble, plutôt cette semaine ou la suivante ?"
+✓ "Quelques minutes pour vous présenter le détail, c'est mieux pour vous en début ou en fin de semaine ?"
+✓ "Quelques minutes pour vous le passer, plutôt en début ou en fin de semaine ?"
+✓ "Quelques minutes au téléphone, vous préférez le matin ou l'après-midi ?"
+
+Format à respecter dans le CTA :
+[Phrase qui rappelle ce qui sera partagé]. Quelques minutes [verbe : pour en parler / pour qu'on regarde / pour vous présenter / pour vous le passer], [question alternative A/B] ?
+
+INTERDICTIONS dans le CTA :
+✗ "Je peux vous l'envoyer ?" (pas de RDV proposé)
+✗ "Ça vous intéresse ?" (question oui/non)
+✗ "Quelques minutes pour en parler ?" (pas d'alternative)
+✗ Jour précis ("mardi 14h") ou durée précise ("15 min", "20 min")
+
+L'alternative reste vague (début/fin de semaine, matin/après-midi, cette semaine/la suivante) — pas de date précise.
+
+FIN D'EMAIL — STRUCTURE OBLIGATOIRE :
+
+1. Phrase de VALEUR PRÉCISE (pas vague) — décrit avec chiffres/spécificités CE QUE le prospect va recevoir.
+   ❌ "J'ai cartographié qui capte quoi sur ce segment."
+   ✅ "J'ai listé les 4 acteurs qui captent ce segment, leur positionnement Google et le volume de demandes mensuelles."
+   ❌ "J'ai un comparatif de vos concurrents."
+   ✅ "J'ai un comparatif des 4 plombiers de Toulouse présents sur les recherches d'urgence avec leur stratégie web complète."
+
+2. Saut de ligne, puis CTA QUESTION sur sa propre ligne (toujours alternative A/B).
+
+3. Saut de ligne, puis FORMULE DE POLITESSE :
+   - "Bien à vous,"
+   - "Cordialement,"
+   - "Bien à vous, à lundi." (pour confirmation RDV)
+
+4. Saut de ligne, bloc signature directement (PAS de "Thomas" seul avant — le prénom est déjà dans la signature) :
+Thomas Renard
+Hdigiweb
+thomas@hdigiweb.fr
+
+EXEMPLE DE FIN D'EMAIL (à respecter EXACTEMENT) :
+"J'ai listé les 4 acteurs qui captent ce segment, leur positionnement Google et le volume de demandes mensuelles que représente ce trafic.
+
+Quelques minutes d'échange pour vous le présenter, c'est mieux pour vous en début ou en fin de semaine ?
+
+Bien à vous,
+
+Thomas Renard
+Hdigiweb
+thomas@hdigiweb.fr"
+
+Format complet du body dans le JSON :
+"...mensuelles.\\n\\nQuelques minutes d'échange pour vous le présenter, c'est mieux pour vous en début ou en fin de semaine ?\\n\\nBien à vous,\\n\\nThomas Renard\\nHdigiweb\\nthomas@hdigiweb.fr"
+
+JAMAIS écrire "Thomas" seul juste avant la signature — c'est une duplication.
+
+Règles signature :
+✗ Jamais "Fondateur" / "CEO" (sonne CV LinkedIn)
+✗ Jamais de tiret entre prénom et entreprise
+✗ Jamais de tagline
+
+GESTION DES OBJECTIONS (relance après "j'ai déjà quelqu'un") :
+✗ "Pas de souci si vous êtes déjà accompagné" (familier, banalise)
+✗ "Je comprends" (générique, faible)
+✗ "Compris." (sec, militaire)
+✗ Répéter ou paraphraser l'objection
+
+✓ "Logique." en ouverture (court, naturel, non militaire)
+✓ Pivoter immédiatement sur un angle précis non couvert
+✓ Position haute : "si c'est couvert, je vous laisse tranquille"
+✓ Donner le contrôle au prospect : "vous comparez", "vous voyez"
+
+Modèle objection (à suivre) :
+"Bonjour Franck,
+
+Avant de vous laisser tranquille, une dernière question : votre prestataire actuel a-t-il un travail spécifique sur [angle B2B précis] ?
+
+Beaucoup d'agences font très bien la communication grand public mais n'investissent pas ce segment, qui demande des contenus, des photos et une présence Google différents. C'est l'angle que je voulais évoquer.
+
+Si c'est déjà couvert, parfait, je n'insiste pas. Sinon je vous envoie ce que j'avais préparé, vous comparez avec ce que fait votre prestataire.
+
+Thomas
+[signature]"
+
+EMAIL DE RÉFÉRENCE — niveau top 1% :
+"Bonjour Franck,
+
+Petit message rapide. J'ai regardé votre site et votre offre privatisation est plutôt complète, mais elle n'apparaît qu'en sous-page, pas un mot sur votre homepage ni sur Google quand on cherche un lieu pour un séminaire à Toulouse.
+
+Du coup ce sont des hôtels et co-workings qui captent ces demandes, alors que votre salle est probablement plus adaptée à un déjeuner d'équipe ou un comité.
+
+Je vous envoie ce que j'ai trouvé sur ces recherches chez vos voisins ?
+
+Thomas
+
+Thomas Renard
+Hdigiweb
+thomas@hdigiweb.fr"
+
+CHECKLIST DE VALIDATION (10 points) :
+[ ] Aucune phrase-fragment ("Pas vous.", "Et voilà.", etc.)
+[ ] Aucune triade rythmique (3 actions courtes enchaînées)
+[ ] Aucune formule creuse ("vrai atout", "angle mort", etc.)
+[ ] Observation ultra-spécifique (pas un copy/paste de Google Maps)
+[ ] Au moins 1 mot de tension ("probablement", "à vérifier", "il me semble")
+[ ] Cadence variée (1 phrase courte + 1 longue + 1 moyenne)
+[ ] CTA "permission" plutôt que CTA "action" (sauf relance avancée)
+[ ] Aucun titre dans la signature ("Fondateur", "CEO")
+[ ] Entre 100 et 160 mots dans le corps (signature exclue)
+[ ] Le mot "Hdigiweb" n'apparaît PAS dans le corps (uniquement dans la signature)
+
+INTERDICTIONS ABSOLUES :
+- Tirets longs (—) dans le corps
+- Listes à puces ou numérotées
+- Mots-clés SEO entre guillemets ("plombier urgence Lyon")
+- Chiffres bruts (89 avis, 4.4/5, 2 200 recherches)
+- Liste de concurrents nommés
+- Durée précise pour un RDV
+- Jour précis pour un RDV
+- "Je me permets", "Suite à", "Dans le cadre de"
+- Superlatifs : "meilleur", "unique", "exceptionnel", "innovant", "révolutionnaire"
+- Plus d'un CTA
+- Plus de 2 phrases qui commencent par "J'ai" ou "Je"
+
+TEST DU MIROIR :
+Avant validation, te poser : "Est-ce qu'un dirigeant qui reçoit 50 cold emails par semaine reconnaîtrait celui-ci comme automatisé ?"
+Si oui → réécrire. Si non → envoyer.`
+
+function buildLeadBlock(lead: Lead, type: string): string {
+  const typeMap: Record<string, string> = {
+    initial:    'J+0 — Premier contact. Trouve UNE observation ultra-spécifique sur SON business (pas générique). Utilise un mot de tension. CTA permission.',
+    followup_1: 'J+3 — Relance courte. Apporte un détail observé en plus, pas une répétition. CTA permission.',
+    followup_2: 'J+7 — Cas concret similaire (sans nommer le client). Ton plus chaleureux. CTA permission.',
+    followup_3: 'J+14 — Break-up email. Très court. Proposer un audit gratuit en CTA permission.',
+  }
+
+  const situation = !lead.hasWebsite
+    ? 'Aucun site web. Invisible sur Google pour les recherches directes.'
+    : !lead.hasGoogleAds
+    ? 'Site existant mais aucune présence publicitaire (Google Ads).'
+    : 'Site et ads existants mais sous-performants.'
+
+  return `LEAD :
+- Prénom : ${lead.firstName || '(non disponible — utiliser "Bonjour,")'}
+- Entreprise : ${lead.company}
+- Secteur : ${lead.specialty?.join(', ') || 'non précisé'}
+- Ville : ${lead.city}
+- Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
+- Google Ads : ${lead.hasGoogleAds ? 'oui' : 'NON'}
+- Bonne réputation Google : ${lead.googleRating && lead.googleRating >= 4.0 ? 'oui' : 'non'}
+- Situation : ${situation}
+
+TYPE : ${typeMap[type] || typeMap.initial}
+
+Trouve une observation ULTRA-SPÉCIFIQUE (pas Google Maps visible), utilise un mot de tension, CTA permission, 100-160 mots, cadence variée.
+
+Réponds en JSON uniquement :
+{"subject": "...", "body": "...avec signature complète à la fin..."}`
 }
 
 export async function generateEmail(
   lead: Lead,
   type: 'initial' | 'followup_1' | 'followup_2' | 'followup_3' = 'initial'
 ): Promise<{ subject: string; body: string }> {
-  const audit = auditSummary(lead)
-  const angle = getAngle(lead)
-
-  const typeInstructions: Record<string, string> = {
-    initial:    'Premier contact. Citer UN signal précis observé sur leur business. Accrocher sans vendre.',
-    followup_1: 'Première relance J+2. Apporter un chiffre concret (volume de recherches locales, position concurrents). Court.',
-    followup_2: 'Deuxième relance J+5. Offrir quelque chose de gratuit (audit, chiffre précis). Pas de copier-coller.',
-    followup_3: 'Dernière relance J+10. Clore proprement. Laisser la porte ouverte.',
+  // Load dynamic prompt addon from auto-learning (if DB available)
+  let dynamicAddon = ''
+  if (process.env.DATABASE_URL) {
+    try {
+      const { db } = await import('@/lib/db')
+      const { agent_config } = await import('@/lib/db/schema')
+      const { eq } = await import('drizzle-orm')
+      const [addon] = await db.select().from(agent_config).where(eq(agent_config.key, 'system_prompt_addon'))
+      if (addon?.value) dynamicAddon = '\n\nRECOMMANDATIONS AUTO-LEARNING:\n' + addon.value
+    } catch { /* ignore */ }
   }
 
-  const prompt = `Tu es un commercial senior pour Hdigiweb, agence web à Toulouse qui aide les PME/TPE à être visibles sur internet.
-
-Services Hdigiweb : création de sites web, SEO, Google Ads, Local Service Ads, gestion fiche Google, community management.
-
-Lead à contacter :
-- Entreprise : ${lead.company}
-- Ville : ${lead.city}
-- Secteur : ${lead.specialty?.join(', ') || 'non précisé'}
-- Contact : ${lead.firstName || 'le responsable'}
-- Audit digital : ${audit}
-
-Angle à utiliser : ${angle}
-Type d'email : ${typeInstructions[type]}
-
-RÈGLES ABSOLUES :
-- 80 à 120 mots maximum dans le corps
-- Citer un fait précis et observé sur leur business (pas générique)
-- Ton direct, humain, pas de jargon marketing
-- Pas de "j'espère que vous allez bien" ni de "notre solution révolutionnaire"
-- Un seul CTA à la fin, léger (question ou proposition d'appel)
-- Signature : "Thomas — Hdigiweb"
-
-JSON uniquement :
-{"subject": "...", "body": "..."}`
-
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
-    max_tokens: 600,
-    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 800,
+    system: SYSTEM_PROMPT + dynamicAddon,
+    messages: [{ role: 'user', content: buildLeadBlock(lead, type) }],
   })
 
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
@@ -73,36 +269,3 @@ JSON uniquement :
   return JSON.parse(jsonMatch[0])
 }
 
-export async function generateReply(
-  lead: Lead,
-  incomingReply: string,
-): Promise<{ body: string; classification: 'interested' | 'not_interested' | 'later' | 'info_request' | 'rdv_proposed' }> {
-  const prompt = `Tu es un commercial senior pour Hdigiweb (agence web Toulouse). Tu traites une réponse de prospect.
-
-Lead : ${lead.company} (${lead.city}) — ${lead.specialty?.join(', ')}
-Réponse reçue : "${incomingReply}"
-
-Ton rôle :
-- Si le prospect est intéressé → proposer un appel de 15-20 min, demander disponibilités
-- Si le prospect cite une heure/date → confirmer le RDV, demander un numéro si pas encore eu
-- Si objection "j'ai déjà quelqu'un" → question directe sur ce qui est couvert, laisser ouvrir une porte
-- Si pas intéressé → clore proprement, laisser la porte ouverte, court
-- Si demande d'info → répondre précisément sur le service concerné, enchaîner vers un appel
-
-Ton : commercial senior, direct, pas de bullshit, toujours orienté vers le RDV.
-Max 100 mots. Signature : "Thomas — Hdigiweb"
-
-JSON uniquement :
-{"classification": "interested|not_interested|later|info_request|rdv_proposed", "body": "..."}`
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 400,
-    messages: [{ role: 'user', content: prompt }],
-  })
-
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('No JSON in response')
-  return JSON.parse(jsonMatch[0])
-}
