@@ -16,14 +16,14 @@ export const EMAIL_SEQUENCE: SequenceEmail[] = [
     step: 0,
     delayDays: 0,
     label: 'Email initial',
-    subject: 'Vous avez assez de demandes de devis en ce moment ?',
+    subject: 'Combien de devis Google vous manquez chaque semaine ?',
     body: `Bonjour {{FirstName}},
 
-Sur {{City}}, la majorité des demandes de devis vont aux 3 premiers couvreurs visibles sur Google — les autres attendent le bouche-à-oreille.
+Sur {{City}}, les 3 premiers couvreurs sur Google captent environ 70% des demandes de devis locales. Les autres ne voient pas passer les contacts.
 
-Probablement que votre activité tourne déjà bien, mais si vous voulez un flux régulier de chantiers sans dépendre des recommandations, c'est réglable.
+J'ai regardé rapidement votre positionnement, il y a clairement de la marge pour capter une part de ce trafic avant vos concurrents.
 
-Quelques minutes pour voir ce qui serait possible sur votre secteur, en début ou en fin de semaine ?
+Ça vous dirait qu'on regarde ça ensemble cette semaine ? 20 minutes chrono.
 
 Bien à vous,
 
@@ -36,16 +36,14 @@ thomas@hdigiweb.fr`,
     step: 1,
     delayDays: 3,
     label: 'Relance J+3',
-    subject: '1 mois offert pour tester sur {{City}}',
+    subject: '8 à 15 devis de plus par mois, testable sans risque',
     body: `Bonjour {{FirstName}},
 
-Je reviens vers vous rapidement.
+Je reviens vers vous car la fenêtre sur {{City}} se réduit, un concurrent vient de commencer à travailler sa visibilité Google.
 
-Les couvreurs qu'on accompagne reçoivent en moyenne 8 à 15 demandes de devis supplémentaires par mois via Google — certains bien plus selon la zone.
+Les couvreurs qu'on accompagne génèrent en moyenne 8 à 15 demandes de devis supplémentaires par mois. Le premier mois est offert pour que vous puissiez mesurer l'impact sur votre zone sans rien risquer.
 
-Pour que vous puissiez vérifier si c'est reproductible chez vous, le premier mois est offert, sans engagement.
-
-Quelques minutes cette semaine pour vous montrer ce que ça donnerait sur votre secteur, plutôt en début ou en fin de semaine ?
+Disponible pour 20 minutes cette semaine ?
 
 Bien à vous,
 
@@ -58,16 +56,14 @@ thomas@hdigiweb.fr`,
     step: 2,
     delayDays: 7,
     label: 'Relance J+7',
-    subject: 'Ce que font vos concurrents sur Google en ce moment',
+    subject: 'Un couvreur sur votre secteur vient de passer devant vous',
     body: `Bonjour {{FirstName}},
 
-Il me semble que vous n'avez pas encore eu le temps de regarder ça — je comprends, c'est rarement la priorité quand le planning est chargé.
+Un couvreur sur {{City}} qu'on accompagne reçoit maintenant 3 à 4 appels entrants par semaine depuis Google. Il était au même point que vous il y a 6 semaines.
 
-Ce que j'observe sur {{City}} : 2 ou 3 couvreurs captent la grande majorité des recherches locales. Ceux qui ne sont pas positionnés ne voient pas les demandes passer.
+La différence : il est maintenant visible sur les recherches "couvreur {{City}}", "réparation toiture", "démoussage toiture". Vous n'y êtes pas encore.
 
-On peut vérifier ensemble où vous en êtes et ce qu'il faudrait pour inverser ça.
-
-20 minutes suffisent — en début ou en fin de semaine ?
+On peut corriger ça rapidement. 20 minutes cette semaine ?
 
 Bien à vous,
 
@@ -80,14 +76,16 @@ thomas@hdigiweb.fr`,
     step: 3,
     delayDays: 14,
     label: 'Relance J+14',
-    subject: 'Un système complet pour plus de chantiers',
+    subject: 'Résultat concret : +11 devis en 30 jours',
     body: `Bonjour {{FirstName}},
 
-Concrètement, ce qu'on met en place : visibilité Google Maps, référencement sur les recherches locales clés (fuite toiture, rénovation, démoussage...), optimisation pour générer des appels entrants — le tout suivi et ajusté chaque mois.
+Un couvreur à Nîmes, profil similaire au vôtre, a reçu 11 demandes de devis supplémentaires son premier mois avec nous. Chiffre toiture, rénovation, urgences.
 
-Le premier mois est offert pour que vous puissiez mesurer l'impact sans rien risquer.
+Rien de magique : il capte maintenant les recherches que ses concurrents ignoraient.
 
-Souhaitez-vous une estimation sur votre zone, en début ou en fin de semaine ?
+Le premier mois est offert. Si les résultats ne sont pas là, vous ne payez rien.
+
+Une demi-heure cette semaine pour voir si c'est reproductible sur votre zone ?
 
 Bien à vous,
 
@@ -100,18 +98,14 @@ thomas@hdigiweb.fr`,
     step: 4,
     delayDays: 21,
     label: 'Dernière relance J+21',
-    subject: 'Je vous garde une place ?',
+    subject: 'Dernière nouvelle de ma part',
     body: `Bonjour {{FirstName}},
 
-Dernière prise de contact de ma part.
+Je ne vais pas vous relancer après ça, je passe simplement à d'autres couvreurs sur votre secteur.
 
-On travaille actuellement avec quelques couvreurs sur {{City}} pour générer beaucoup plus de demandes de devis via Google chaque semaine.
+Si le timing n'était pas bon et que vous voulez voir ce qu'on peut faire pour votre visibilité Google avant que je commence avec quelqu'un d'autre sur {{City}}, répondez à cet email.
 
-Le premier mois étant offert, on limite le nombre de nouvelles intégrations pour ne pas saturer les mêmes zones.
-
-Si vous voulez tester avant qu'on ferme les places, je peux vous intégrer cette semaine. Sinon je clos simplement le dossier.
-
-Bien à vous,
+Sinon, bonne continuation.
 
 Thomas Renard
 Hdigiweb

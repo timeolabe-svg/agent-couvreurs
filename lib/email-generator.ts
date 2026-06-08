@@ -192,7 +192,9 @@ CHECKLIST DE VALIDATION (10 points) :
 [ ] Le mot "Hdigiweb" n'apparaît PAS dans le corps (uniquement dans la signature)
 
 INTERDICTIONS ABSOLUES :
-- Tirets longs (—) dans le corps
+- Tirets longs (—) INTERDITS partout dans le corps, c'est le marqueur IA le plus détecté
+- Tirets moyens (–) INTERDITS également
+- Tirets utilisés comme parenthèses (" - ") INTERDITS, utiliser des virgules ou des parenthèses à la place
 - Listes à puces ou numérotées
 - Mots-clés SEO entre guillemets ("plombier urgence Lyon")
 - Chiffres bruts (89 avis, 4.4/5, 2 200 recherches)
