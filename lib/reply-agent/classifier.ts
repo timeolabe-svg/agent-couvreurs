@@ -59,6 +59,19 @@ Réponds en JSON strict :
   "extractedName": "..." ou null
 }`
 
+// Detect opt-out without calling Claude (saves credits + faster)
+function isOptOut(body: string, subject: string): boolean {
+  const text = (body + ' ' + subject).toLowerCase().trim()
+  const optOutPatterns = [
+    /^stop$/m,
+    /^(d[ée]sinscri(re|ption)|unsubscribe|arr[eê]ter|retirer|supprimer|ne plus recevoir|ne plus contacter|plus de mail|plus d'email|pas int[eé]ress[eé])/m,
+    /r[eé]pondez.*stop/,
+    /merci de (me retirer|ne plus|stopper|cesser)/,
+    /souhait(e|ons) (ne plus|pas) [eê]tre contact/,
+  ]
+  return optOutPatterns.some(p => p.test(text))
+}
+
 export async function classifyReply(params: {
   replyBody: string
   replySubject: string
@@ -66,6 +79,16 @@ export async function classifyReply(params: {
   contactName: string
   contactCompany: string
 }): Promise<ClassificationResult> {
+  // Fast opt-out detection before calling Claude
+  if (isOptOut(params.replyBody, params.replySubject)) {
+    return {
+      classification: 'desinterest',
+      action: 'blocklist',
+      confidence: 99,
+      reasoning: 'Opt-out explicite détecté — ajout automatique à la blocklist.',
+    }
+  }
+
   const prompt = CLASSIFICATION_PROMPT
     .replace('{originalEmailBody}', params.originalEmailBody)
     .replace('{contactName}', params.contactName)

@@ -29,7 +29,10 @@ Bien à vous,
 
 Thomas Renard
 Hdigiweb
-thomas@hdigiweb.fr`,
+thomas@hdigiweb.fr
+
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
     active: true,
   },
   {
@@ -49,7 +52,10 @@ Bien à vous,
 
 Thomas Renard
 Hdigiweb
-thomas@hdigiweb.fr`,
+thomas@hdigiweb.fr
+
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
     active: true,
   },
   {
@@ -69,7 +75,10 @@ Bien à vous,
 
 Thomas Renard
 Hdigiweb
-thomas@hdigiweb.fr`,
+thomas@hdigiweb.fr
+
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
     active: true,
   },
   {
@@ -91,7 +100,10 @@ Bien à vous,
 
 Thomas Renard
 Hdigiweb
-thomas@hdigiweb.fr`,
+thomas@hdigiweb.fr
+
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
     active: true,
   },
   {
@@ -109,7 +121,10 @@ Sinon, bonne continuation.
 
 Thomas Renard
 Hdigiweb
-thomas@hdigiweb.fr`,
+thomas@hdigiweb.fr
+
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
     active: true,
   },
 ]

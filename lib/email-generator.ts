@@ -141,6 +141,11 @@ Règles signature :
 ✗ Jamais de tiret entre prénom et entreprise
 ✗ Jamais de tagline
 
+OPT-OUT OBLIGATOIRE (RGPD) :
+Après la signature, toujours ajouter exactement ces 2 lignes :
+---
+Pour ne plus recevoir mes emails, répondez simplement "Stop".
+
 GESTION DES OBJECTIONS (relance après "j'ai déjà quelqu'un") :
 ✗ "Pas de souci si vous êtes déjà accompagné" (familier, banalise)
 ✗ "Je comprends" (générique, faible)
