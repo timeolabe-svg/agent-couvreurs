@@ -47,7 +47,7 @@ export async function GET(req: Request) {
 
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const yesterdayEvening = new Date(todayStart.getTime() - 6 * 60 * 60 * 1000) // 18h yesterday
+    const yesterdayEvening = new Date(todayStart.getTime() - 20 * 60 * 60 * 1000) // last 20 hours
 
     const [
       [{ emailsNight }],

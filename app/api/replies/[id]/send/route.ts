@@ -20,7 +20,7 @@ export async function POST(
 
   try {
     if (incoming) {
-      await sendReply({ reply_to_id: incoming.id, body: draft.body })
+      await sendReply({ reply_to_id: incoming.instantly_reply_id ?? incoming.id, body: draft.body })
     }
     await db.update(reply_drafts).set({ status: 'sent', sent_at: new Date() }).where(eq(reply_drafts.id, id))
     return NextResponse.json({ ok: true })

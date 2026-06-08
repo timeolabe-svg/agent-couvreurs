@@ -80,6 +80,7 @@ export const incoming_replies = pgTable('incoming_replies', {
   body: text('body').notNull(),
   classification: text('classification'), // desinterest/objection/question/interest/rdv_request/oof/spam/other
   action_taken: text('action_taken'), // auto_reply/draft_for_validation/no_action/blocklisted
+  instantly_reply_id: text('instantly_reply_id'), // Instantly's own reply UUID (needed for sendReply)
   processed_at: timestamp('processed_at'),
   created_at: timestamp('created_at').defaultNow(),
 }, (table) => ({

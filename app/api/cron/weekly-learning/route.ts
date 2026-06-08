@@ -224,7 +224,7 @@ Génère un rapport JSON structuré avec :
         </ul>
         <h3>Top insights</h3>
         <ul>
-          ${report.topInsights.map((i) => `<li>${i}</li>`).join('')}
+          ${(Array.isArray(report.topInsights) ? report.topInsights : []).map((i) => `<li>${i}</li>`).join('')}
         </ul>
         <h3>Recommandations</h3>
         <p>Secteurs prioritaires: ${report.recommendations.sectors_to_prioritize.join(', ')}</p>

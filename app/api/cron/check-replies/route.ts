@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
   const { db } = await import('@/lib/db')
   const { contacts, incoming_replies, reply_drafts, blocklist, dashboard_events, email_queue } = await import('@/lib/db/schema')
   const { eq, and, gte, sql } = await import('drizzle-orm')
-  const { getInstantlyReplies, markReplyProcessed } = await import('@/lib/instantly/client')
+  const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
   const { classifyReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
 
@@ -123,6 +123,7 @@ export async function GET(request: NextRequest) {
             body: reply.body,
             classification: classification.classification,
             action_taken: classification.action,
+            instantly_reply_id: reply.id,
             processed_at: new Date(),
           })
           .returning()
@@ -175,15 +176,41 @@ export async function GET(request: NextRequest) {
           contactCity: contact?.city ?? '',
         })
 
-        await db.insert(reply_drafts).values({
-          incoming_reply_id: insertedReply.id,
-          body: draftBody,
-          status: 'pending',
-        })
-
-        drafts++
-
-        if (classification.action === 'draft_for_validation') {
+        if (classification.action === 'auto_reply') {
+          // Auto-send without human validation (for OOF, etc.)
+          try {
+            await sendReply({
+              reply_to_id: reply.id,
+              body: draftBody,
+            })
+            await db.insert(reply_drafts).values({
+              incoming_reply_id: insertedReply.id,
+              body: draftBody,
+              status: 'sent',
+            })
+            // No notification needed for auto-sent replies
+          } catch (err) {
+            console.error('[check-replies] Auto-reply failed, falling back to draft', err)
+            await db.insert(reply_drafts).values({
+              incoming_reply_id: insertedReply.id,
+              body: draftBody,
+              status: 'pending',
+            })
+            await sendNotificationEmail({
+              contactName: contact?.name ?? reply.from_address,
+              contactCompany: contact?.company ?? reply.from_address,
+              classification: classification.classification,
+              replyBody: reply.body,
+              draftBody,
+            })
+          }
+        } else {
+          // draft_for_validation — create pending draft and notify human
+          await db.insert(reply_drafts).values({
+            incoming_reply_id: insertedReply.id,
+            body: draftBody,
+            status: 'pending',
+          })
           await sendNotificationEmail({
             contactName: contact?.name ?? reply.from_address,
             contactCompany: contact?.company ?? reply.from_address,
@@ -192,6 +219,8 @@ export async function GET(request: NextRequest) {
             draftBody,
           })
         }
+
+        drafts++
 
         await db.insert(dashboard_events).values({
           type: 'reply_received',

@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   const { eq, and, gte, lte, sql } = await import('drizzle-orm')
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail } = await import('@/lib/email-generator')
-  const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
+  const { getSequenceStep, renderTemplate, getNextStep } = await import('@/data/sequence')
 
   let sent = 0
   let campaignsProcessed = 0
@@ -178,7 +178,6 @@ export async function GET(request: NextRequest) {
           })
 
           // After marking current step as sent, enqueue next step
-          const { getNextStep } = await import('@/data/sequence')
           const currentStepDef = getSequenceStep(step)
           const nextStep = getNextStep(step)
           if (nextStep && nextStep.active) {
