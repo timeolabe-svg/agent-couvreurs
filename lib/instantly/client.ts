@@ -186,6 +186,34 @@ export async function sendReply(params: {
   })
 }
 
+// ─── Accounts ─────────────────────────────────────────────────────────────────
+
+export interface InstantlyAccount {
+  email: string
+  name?: string
+  daily_limit: number
+  emails_sent_today: number
+  warmup_enabled: boolean
+}
+
+export async function getInstantlyAccounts(): Promise<InstantlyAccount[]> {
+  if (!API_KEY) {
+    warnNoKey('getInstantlyAccounts')
+    return [
+      { email: 'thomas@hdigiweb.fr', name: 'Thomas Renard', daily_limit: 334, emails_sent_today: 0, warmup_enabled: true },
+    ]
+  }
+  const data = await instantlyFetch(`/accounts?api_key=${API_KEY}`)
+  const accounts: Array<Record<string, unknown>> = data.data ?? data ?? []
+  return accounts.map((a) => ({
+    email: String(a.email ?? ''),
+    name: a.name ? String(a.name) : undefined,
+    daily_limit: Number(a.daily_limit ?? 334),
+    emails_sent_today: Number(a.emails_sent_today ?? 0),
+    warmup_enabled: Boolean(a.warmup_enabled ?? a.is_warmup_enabled ?? false),
+  }))
+}
+
 // ─── Warmup stats ─────────────────────────────────────────────────────────────
 
 export interface WarmupStat {

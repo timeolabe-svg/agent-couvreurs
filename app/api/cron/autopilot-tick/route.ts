@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail } = await import('@/lib/email-generator')
   const { getSequenceStep, renderTemplate, getNextStep } = await import('@/data/sequence')
+  const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
   let sent = 0
   let campaignsProcessed = 0
@@ -81,6 +82,9 @@ export async function GET(request: NextRequest) {
         if (sent >= remainingCapacity) break
 
         try {
+          // Pick next inbox via round-robin rotation
+          const inbox = await getNextInbox()
+
           const lead = {
             id: contact.id,
             company: contact.company,
@@ -115,7 +119,7 @@ export async function GET(request: NextRequest) {
           // Steps 1-4: use fixed templates (faster, consistent, proven)
           let generated: { subject: string; body: string }
           if (step === 0) {
-            generated = await generateEmail(lead, emailType)
+            generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
           } else {
             const template = getSequenceStep(step)
             if (template) {
@@ -124,15 +128,19 @@ export async function GET(request: NextRequest) {
                   firstName: lead.firstName,
                   city: lead.city,
                   company: lead.company,
+                  fromEmail: inbox.email,
+                  fromName: inbox.senderName,
                 }),
                 body: renderTemplate(template.body, {
                   firstName: lead.firstName,
                   city: lead.city,
                   company: lead.company,
+                  fromEmail: inbox.email,
+                  fromName: inbox.senderName,
                 }),
               }
             } else {
-              generated = await generateEmail(lead, emailType)
+              generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
             }
           }
 
@@ -160,6 +168,7 @@ export async function GET(request: NextRequest) {
               sent_at: new Date(),
               subject: generated.subject,
               body: generated.body,
+              from_email: inbox.email,
             })
             .where(eq(email_queue.id, queue.id))
 
@@ -190,9 +199,9 @@ export async function GET(request: NextRequest) {
               contact_id: contact.id,
               campaign_id: campaign.id,
               sequence_step: nextStep.step,
-              from_email: queue.from_email,
-              subject: renderTemplate(nextStep.subject, { firstName: lead.firstName, city: lead.city, company: lead.company }),
-              body: renderTemplate(nextStep.body, { firstName: lead.firstName, city: lead.city, company: lead.company }),
+              from_email: inbox.email,
+              subject: renderTemplate(nextStep.subject, { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }),
+              body: renderTemplate(nextStep.body, { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }),
               status: 'pending',
               scheduled_at: nextScheduledAt,
             }).onConflictDoNothing()

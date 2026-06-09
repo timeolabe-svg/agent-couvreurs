@@ -143,9 +143,13 @@ export function renderTemplate(template: string, vars: {
   firstName?: string
   city?: string
   company?: string
+  fromEmail?: string
+  fromName?: string
 }): string {
   return template
     .replace(/{{FirstName}}/g, vars.firstName || 'Monsieur')
     .replace(/{{City}}/g, vars.city || 'votre secteur')
     .replace(/{{Company}}/g, vars.company || 'votre entreprise')
+    .replace(/thomas@hdigiweb\.fr/g, vars.fromEmail || 'thomas@hdigiweb.fr')
+    .replace(/Thomas Renard/g, vars.fromName || 'Thomas Renard')
 }

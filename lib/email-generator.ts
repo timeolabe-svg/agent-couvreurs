@@ -215,7 +215,7 @@ TEST DU MIROIR :
 Avant validation, te poser : "Est-ce qu'un dirigeant qui reçoit 50 cold emails par semaine reconnaîtrait celui-ci comme automatisé ?"
 Si oui → réécrire. Si non → envoyer.`
 
-function buildLeadBlock(lead: Lead, type: string): string {
+function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: string): string {
   const typeMap: Record<string, string> = {
     initial:    'J+0 — Premier contact. Trouve UNE observation ultra-spécifique sur SON business (pas générique). Utilise un mot de tension. CTA permission.',
     followup_1: 'J+3 — Relance courte. Apporte un détail observé en plus, pas une répétition. CTA permission.',
@@ -243,13 +243,20 @@ TYPE : ${typeMap[type] || typeMap.initial}
 
 Trouve une observation ULTRA-SPÉCIFIQUE (pas Google Maps visible), utilise un mot de tension, CTA permission, 100-160 mots, cadence variée.
 
+La signature doit être exactement :
+${fromName}
+Hdigiweb
+${fromEmail}
+
 Réponds en JSON uniquement :
 {"subject": "...", "body": "...avec signature complète à la fin..."}`
 }
 
 export async function generateEmail(
   lead: Lead,
-  type: 'initial' | 'followup_1' | 'followup_2' | 'followup_3' = 'initial'
+  type: 'initial' | 'followup_1' | 'followup_2' | 'followup_3' = 'initial',
+  fromEmail = 'thomas@hdigiweb.fr',
+  fromName = 'Thomas Renard'
 ): Promise<{ subject: string; body: string }> {
   // Load dynamic prompt addon from auto-learning (if DB available)
   let dynamicAddon = ''
@@ -263,11 +270,16 @@ export async function generateEmail(
     } catch { /* ignore */ }
   }
 
+  // Build dynamic system prompt with the correct sender signature
+  const dynamicSystemPrompt = SYSTEM_PROMPT
+    .replace(/thomas@hdigiweb\.fr/g, fromEmail)
+    .replace(/Thomas Renard/g, fromName)
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
-    system: SYSTEM_PROMPT + dynamicAddon,
-    messages: [{ role: 'user', content: buildLeadBlock(lead, type) }],
+    system: dynamicSystemPrompt + dynamicAddon,
+    messages: [{ role: 'user', content: buildLeadBlock(lead, type, fromEmail, fromName) }],
   })
 
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
