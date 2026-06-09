@@ -93,7 +93,8 @@ export const reply_drafts = pgTable('reply_drafts', {
   id: uuid('id').primaryKey().defaultRandom(),
   incoming_reply_id: uuid('incoming_reply_id').references(() => incoming_replies.id),
   body: text('body').notNull(),
-  status: text('status').default('pending'), // pending/sent/rejected/modified
+  status: text('status').default('pending'), // pending/sent/rejected/modified/scheduled
+  send_after: timestamp('send_after'), // for auto_reply: don't send before this time (human delay simulation)
   sent_at: timestamp('sent_at'),
   created_at: timestamp('created_at').defaultNow(),
 }, (table) => ({

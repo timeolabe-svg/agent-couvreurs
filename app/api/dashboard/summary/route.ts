@@ -67,6 +67,11 @@ function getMockSummary() {
     ],
     weeklyLearning: null,
     revenue,
+    monthlyHistory: [
+      { month: 'Mai 2026', rdv: 8, revenue: 400 },
+      { month: 'Avril 2026', rdv: 5, revenue: 250 },
+      { month: 'Mars 2026', rdv: 3, revenue: 150 },
+    ],
     recentEvents: [
       {
         id: 'e1',
@@ -383,6 +388,29 @@ export async function GET() {
     scheduled_at: r.scheduled_at.toISOString(),
   }))
 
+  // Monthly history — last 6 months RDV + revenue
+  const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+  const rdvPerMonth = await db
+    .select({
+      month: sql<string>`TO_CHAR(${rdv.created_at}, 'Month YYYY')`,
+      monthKey: sql<string>`TO_CHAR(${rdv.created_at}, 'YYYY-MM')`,
+      cnt: count(),
+    })
+    .from(rdv)
+    .where(gte(rdv.created_at, sixMonthsAgo))
+    .groupBy(sql`TO_CHAR(${rdv.created_at}, 'Month YYYY'), TO_CHAR(${rdv.created_at}, 'YYYY-MM')`)
+    .orderBy(sql`TO_CHAR(${rdv.created_at}, 'YYYY-MM') DESC`)
+
+  // Exclude current month from history (shown live in main widget)
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  const monthlyHistory = rdvPerMonth
+    .filter(r => r.monthKey !== currentMonthKey)
+    .map(r => ({
+      month: r.month.trim(),
+      rdv: r.cnt,
+      revenue: r.cnt * 50,
+    }))
+
   const weeklyLearning = weeklyLearningRaw[0]
     ? {
         id: weeklyLearningRaw[0].id,
@@ -426,6 +454,7 @@ export async function GET() {
     recentActivity,
     weeklyLearning,
     revenue: rdvThisMonth * 50,
+    monthlyHistory,
     // legacy
     recentEvents,
     pendingDrafts,

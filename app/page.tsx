@@ -86,6 +86,7 @@ interface DashboardSummary {
   recentActivity: RecentActivity[]
   weeklyLearning: WeeklyLearning | null
   revenue: number
+  monthlyHistory?: { month: string; rdv: number; revenue: number }[]
   _demo?: boolean
 }
 
@@ -259,7 +260,7 @@ export default function DashboardPage() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.03em', color: '#e8e8f0', margin: 0, lineHeight: 1.2 }}>
-              Bonjour, Thomas 👋
+              Bonjour, Haris 👋
             </h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
               <BlinkDot />
@@ -333,52 +334,42 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* ── SECTION 3: Revenus ce mois ── */}
-        <div
-          style={{
-            background: '#fff',
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            padding: 20,
-            marginBottom: 16,
-            color: '#111',
-          }}
-        >
+        {/* ── SECTION 3: Facturation ce mois ── */}
+        <div style={{ background: '#111118', border: '1px solid #1e1e2e', borderRadius: 8, padding: 20, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>💰 Revenus ce mois</div>
-            <button style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              fontSize: 12, color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            }}>
-              ✎ Éditer
-            </button>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#e8e8f0' }}>Rendez-vous générés ce mois</div>
+            <span style={{ fontSize: 11, color: '#6b6b80' }}>Remise à zéro chaque mois</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
-            {/* LEFT — costs */}
+
+          {/* 2 big boxes */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+            {/* RDV count */}
+            <div style={{ background: '#1a1a24', border: '1px solid #1e1e2e', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Rendez-vous ce mois</div>
+              <div style={{ fontSize: 40, fontWeight: 700, color: '#7c3aed', letterSpacing: '-0.03em' }}>{rdvCount}</div>
+            </div>
+            {/* Revenue */}
+            <div style={{ background: '#1a1a24', border: '1px solid #1e1e2e', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Valeur ce mois</div>
+              <div style={{ fontSize: 40, fontWeight: 700, color: '#10b981', letterSpacing: '-0.03em' }}>{revenue.toLocaleString('fr-FR')} €</div>
+            </div>
+          </div>
+
+          {/* Monthly history */}
+          {summary?.monthlyHistory && summary.monthlyHistory.length > 0 && (
             <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
-                Hdigiweb — 4 inboxes Instantly
-              </div>
-              {[
-                { label: 'Instantly — 4 boîtes email + warmup', amount: '~80 €' },
-                { label: 'Domains — hdigiweb-digital.com + hdigiweb-agence.com', amount: '~20 €' },
-                { label: 'Agent IA (Claude API)', amount: 'variable' },
-              ].map(row => (
-                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#374151', padding: '5px 0', borderBottom: '1px solid #f3f4f6' }}>
-                  <span>{row.label}</span>
-                  <span style={{ fontWeight: 600, color: '#111', marginLeft: 12, flexShrink: 0 }}>{row.amount}</span>
-                </div>
-              ))}
-            </div>
-            {/* RIGHT — revenue */}
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>RDV générés ce mois : <strong style={{ color: '#111' }}>{rdvCount}</strong></div>
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>À 50 € / RDV</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981' }}>
-                REVENUS CE MOIS : {rdvCount} × 50 = {revenue.toLocaleString('fr-FR')} €
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Historique</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {summary.monthlyHistory.map((m: { month: string; rdv: number; revenue: number }) => (
+                  <div key={m.month} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: '#0a0a0f', borderRadius: 6, fontSize: 12 }}>
+                    <span style={{ color: '#6b6b80' }}>{m.month}</span>
+                    <span style={{ color: '#a78bfa' }}>{m.rdv} RDV</span>
+                    <span style={{ color: '#10b981', fontWeight: 600 }}>{m.revenue} €</span>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* ── SECTION 4: Weekly Learning ── */}
