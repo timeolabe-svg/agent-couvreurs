@@ -41,6 +41,18 @@ function getMockAnalytics(period: Period) {
       rdv: rdvCount,
     },
     bestCity: { city: 'Toulouse', replyRate: 8.3, rdv: Math.round(3 * multiplier) },
+    classificationBreakdown: [
+      { classification: 'interest', count: Math.round(18 * multiplier) },
+      { classification: 'question', count: Math.round(12 * multiplier) },
+      { classification: 'objection', count: Math.round(10 * multiplier) },
+      { classification: 'rdv_request', count: Math.round(8 * multiplier) },
+      { classification: 'desinterest', count: Math.round(9 * multiplier) },
+      { classification: 'oof', count: Math.round(4 * multiplier) },
+      { classification: 'spam', count: Math.round(2 * multiplier) },
+    ],
+    autoRepliesSent: Math.round(27 * multiplier),
+    draftsValidated: Math.round(8 * multiplier),
+    draftsPending: Math.round(3 * multiplier),
     _demo: true,
   }
 }
@@ -174,6 +186,18 @@ export async function GET(request: NextRequest) {
   // Pipeline
   const [{ totalContacts }] = await db.select({ totalContacts: count() }).from(contacts)
 
+  // Classification breakdown
+  const classificationRaw = await db
+    .select({ classification: incoming_replies.classification, cnt: count() })
+    .from(incoming_replies)
+    .where(replyConditions)
+    .groupBy(incoming_replies.classification)
+
+  const classificationBreakdown = classificationRaw.map(r => ({
+    classification: r.classification ?? 'unknown',
+    count: r.cnt,
+  }))
+
   return NextResponse.json({
     period,
     emailsSent,
@@ -193,5 +217,9 @@ export async function GET(request: NextRequest) {
       rdv: rdvCount,
     },
     bestCity: bestCity ? { city: bestCity.city, replyRate: bestCity.replyRate, rdv: bestCity.rdv } : null,
+    classificationBreakdown,
+    autoRepliesSent: replies,
+    draftsValidated: 0,
+    draftsPending: 0,
   })
 }
