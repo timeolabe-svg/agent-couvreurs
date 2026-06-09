@@ -358,78 +358,74 @@ export async function GET(request: NextRequest) {
           })
 
           // --- RDV auto-booking when classification is rdv_request ---
-          if (
-            classification.classification === 'rdv_request' &&
-            (classification as { extractedDate?: string }).extractedDate
-          ) {
-            const extractedDate = (classification as { extractedDate?: string }).extractedDate!
+          if (classification.classification === 'rdv_request') {
+            const extractedDate = (classification as { extractedDate?: string }).extractedDate
             try {
-              const parsedDate = parseExtractedDate(extractedDate)
+              const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+              const availability = await getAvailability()
 
-              if (parsedDate) {
-                const { createCalendarEvent } = await import('@/lib/google-calendar')
+              const parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
+              const scheduledDate = findNextAvailableSlot(parsedDate, availability)
 
-                const endTime = new Date(parsedDate.getTime() + 30 * 60 * 1000)
+              const { createCalendarEvent } = await import('@/lib/google-calendar')
 
-                const exchangeSummary = buildExchangeSummary({
-                  originalEmailBody,
-                  replyBody: reply.body,
-                  draftBody,
-                  contactName: contact?.name ?? reply.from_address,
-                  contactCompany: contact?.company ?? reply.from_address,
+              const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
+
+              const exchangeSummary = buildExchangeSummary({
+                originalEmailBody,
+                replyBody: reply.body,
+                draftBody,
+                contactName: contact?.name ?? reply.from_address,
+                contactCompany: contact?.company ?? reply.from_address,
+              })
+
+              let googleEventId: string | null = null
+              let googleMeetLink: string | null = null
+              let calendarEventUrl: string | null = null
+
+              try {
+                const event = await createCalendarEvent({
+                  summary: `RDV - ${contact?.company ?? reply.from_address}`,
+                  description: exchangeSummary,
+                  startTime: scheduledDate.toISOString(),
+                  endTime: endTime.toISOString(),
+                  attendeeEmail: reply.from_address,
+                  meetLink: true,
                 })
-
-                let googleEventId: string | null = null
-                let googleMeetLink: string | null = null
-                let calendarEventUrl: string | null = null
-
-                try {
-                  const event = await createCalendarEvent({
-                    summary: `RDV - ${contact?.company ?? reply.from_address}`,
-                    description: exchangeSummary,
-                    startTime: parsedDate.toISOString(),
-                    endTime: endTime.toISOString(),
-                    attendeeEmail: reply.from_address,
-                    meetLink: true,
-                  })
-                  googleEventId = event.eventId
-                  googleMeetLink = event.meetLink
-                  calendarEventUrl = event.eventUrl
-                } catch (calErr) {
-                  console.error('[check-replies] Google Calendar error:', calErr)
-                }
-
-                // Save RDV to DB
-                await db.insert(rdvTable).values({
-                  contact_id: contact?.id ?? undefined,
-                  incoming_reply_id: insertedReply.id,
-                  scheduled_at: parsedDate,
-                  duration_min: 30,
-                  status: 'confirmed',
-                  google_event_id: googleEventId,
-                  google_meet_link: googleMeetLink,
-                  notes: `RDV demandé par le prospect. Date extraite: "${extractedDate}"`,
-                })
-
-                // Send enhanced RDV notification
-                await sendRdvNotificationEmail({
-                  contactName: contact?.name ?? reply.from_address,
-                  contactCompany: contact?.company ?? reply.from_address,
-                  scheduledAt: parsedDate,
-                  googleMeetLink,
-                  calendarEventUrl,
-                  exchangeSummary,
-                })
-              } else {
-                // Date not parseable — fall through to standard notification
-                await sendNotificationEmail({
-                  contactName: contact?.name ?? reply.from_address,
-                  contactCompany: contact?.company ?? reply.from_address,
-                  classification: classification.classification,
-                  replyBody: reply.body,
-                  draftBody,
-                })
+                googleEventId = event.eventId
+                googleMeetLink = event.meetLink
+                calendarEventUrl = event.eventUrl
+              } catch (calErr) {
+                console.error('[check-replies] Google Calendar error:', calErr)
               }
+
+              const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
+                ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
+                : extractedDate
+                  ? `Date extraite : "${extractedDate}".`
+                  : 'Aucune date précisée — prochain créneau disponible sélectionné.'
+
+              // Save RDV to DB
+              await db.insert(rdvTable).values({
+                contact_id: contact?.id ?? undefined,
+                incoming_reply_id: insertedReply.id,
+                scheduled_at: scheduledDate,
+                duration_min: availability.slotDurationMin || 30,
+                status: 'confirmed',
+                google_event_id: googleEventId,
+                google_meet_link: googleMeetLink,
+                notes: `RDV demandé par le prospect. ${slotNote}`,
+              })
+
+              // Send enhanced RDV notification
+              await sendRdvNotificationEmail({
+                contactName: contact?.name ?? reply.from_address,
+                contactCompany: contact?.company ?? reply.from_address,
+                scheduledAt: scheduledDate,
+                googleMeetLink,
+                calendarEventUrl,
+                exchangeSummary,
+              })
             } catch (rdvErr) {
               console.error('[check-replies] RDV auto-booking failed:', rdvErr)
               // Fall through to normal draft notification
@@ -442,7 +438,7 @@ export async function GET(request: NextRequest) {
               })
             }
           } else {
-            // Not an rdv_request or no extractedDate — standard notification
+            // Not an rdv_request — standard notification
             await sendNotificationEmail({
               contactName: contact?.name ?? reply.from_address,
               contactCompany: contact?.company ?? reply.from_address,

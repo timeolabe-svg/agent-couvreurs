@@ -31,16 +31,18 @@ import {
   AlertCircle,
   Copy,
   Flame,
+  Clock,
 } from 'lucide-react'
 
-type Tab = 'agence' | 'email' | 'sequence' | 'rdv' | 'mode'
+type Tab = 'agence' | 'email' | 'sequence' | 'rdv' | 'disponibilites' | 'mode'
 
 const TABS: { id: Tab; label: string; icon: any }[] = [
-  { id: 'agence',   label: 'Mon agence',         icon: Building2 },
-  { id: 'email',    label: 'Configuration Email', icon: Mail },
-  { id: 'sequence', label: 'Séquence de relance', icon: RotateCcw },
-  { id: 'rdv',      label: 'Prise de RDV',        icon: CalendarClock },
-  { id: 'mode',     label: 'Mode Test / Prod',    icon: FlaskConical },
+  { id: 'agence',         label: 'Mon agence',         icon: Building2 },
+  { id: 'email',          label: 'Configuration Email', icon: Mail },
+  { id: 'sequence',       label: 'Séquence de relance', icon: RotateCcw },
+  { id: 'rdv',            label: 'Prise de RDV',        icon: CalendarClock },
+  { id: 'disponibilites', label: 'Disponibilités',      icon: Clock },
+  { id: 'mode',           label: 'Mode Test / Prod',    icon: FlaskConical },
 ]
 
 export default function ParametresPage() {
@@ -114,6 +116,7 @@ export default function ParametresPage() {
           {tab === 'email' && <EmailTab />}
           {tab === 'sequence' && <SequenceTab />}
           {tab === 'rdv' && <RdvTab />}
+          {tab === 'disponibilites' && <DisponibilitesTab />}
           {tab === 'mode' && <ModeTab saveSignal={saveSignal} />}
         </div>
       </div>
@@ -1275,6 +1278,308 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── TAB : DISPONIBILITÉS ────────────────────────────────────────────────
+
+interface DaySchedule {
+  enabled: boolean
+  start: string
+  end: string
+}
+
+interface AvailabilityState {
+  timezone: string
+  days: Record<string, DaySchedule>
+  slotDurationMin: number
+  bufferBetweenMin: number
+  lunchBreak: { enabled: boolean; start: string; end: string }
+}
+
+const DEFAULT_AVAILABILITY: AvailabilityState = {
+  timezone: 'Europe/Paris',
+  days: {
+    lundi:    { enabled: true,  start: '09:00', end: '18:00' },
+    mardi:    { enabled: true,  start: '09:00', end: '18:00' },
+    mercredi: { enabled: true,  start: '09:00', end: '18:00' },
+    jeudi:    { enabled: true,  start: '09:00', end: '18:00' },
+    vendredi: { enabled: true,  start: '09:00', end: '17:00' },
+    samedi:   { enabled: false, start: '09:00', end: '12:00' },
+    dimanche: { enabled: false, start: '09:00', end: '12:00' },
+  },
+  slotDurationMin: 30,
+  bufferBetweenMin: 15,
+  lunchBreak: { enabled: true, start: '12:00', end: '14:00' },
+}
+
+const DAY_LABELS: Record<string, string> = {
+  lundi: 'Lundi',
+  mardi: 'Mardi',
+  mercredi: 'Mercredi',
+  jeudi: 'Jeudi',
+  vendredi: 'Vendredi',
+  samedi: 'Samedi',
+  dimanche: 'Dimanche',
+}
+const DAY_ORDER = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+
+function DisponibilitesTab() {
+  const [avail, setAvail] = useState<AvailabilityState>(DEFAULT_AVAILABILITY)
+  const [loading, setLoading] = useState(true)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const s = data.settings ?? {}
+        if (s.availability) {
+          try {
+            const parsed = JSON.parse(s.availability)
+            setAvail({
+              ...DEFAULT_AVAILABILITY,
+              ...parsed,
+              days: { ...DEFAULT_AVAILABILITY.days, ...parsed.days },
+              lunchBreak: { ...DEFAULT_AVAILABILITY.lunchBreak, ...parsed.lunchBreak },
+            })
+          } catch {}
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const updateDay = (day: string, patch: Partial<DaySchedule>) => {
+    setAvail(prev => ({
+      ...prev,
+      days: { ...prev.days, [day]: { ...prev.days[day], ...patch } },
+    }))
+  }
+
+  const handleSave = async () => {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([{ key: 'availability', value: JSON.stringify(avail) }]),
+    }).catch(() => {})
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement...</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <SectionTitle title="Disponibilités" />
+          <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted)' }}>
+            L&apos;IA utilise ces horaires pour proposer et confirmer des RDV automatiquement.
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
+          style={{ background: saved ? '#22c55e' : 'var(--color-accent)', color: '#fff' }}
+        >
+          {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
+        </button>
+      </div>
+
+      {/* Jours de la semaine */}
+      <div
+        className="rounded-lg overflow-hidden"
+        style={{ border: '1px solid var(--color-border)' }}
+      >
+        <div
+          className="px-4 py-2.5 text-[10px] uppercase tracking-wide grid grid-cols-[140px_60px_1fr] gap-4"
+          style={{ background: 'var(--color-surface-2)', color: 'var(--color-muted)', borderBottom: '1px solid var(--color-border)' }}
+        >
+          <div>Jour</div>
+          <div>Actif</div>
+          <div>Horaires</div>
+        </div>
+
+        {DAY_ORDER.map((day, i) => {
+          const schedule = avail.days[day]
+          return (
+            <div
+              key={day}
+              className="px-4 py-3 grid grid-cols-[140px_60px_1fr] gap-4 items-center"
+              style={{
+                background: 'var(--color-surface)',
+                borderBottom: i < DAY_ORDER.length - 1 ? '1px solid var(--color-border)' : undefined,
+                opacity: schedule.enabled ? 1 : 0.5,
+              }}
+            >
+              <span className="text-[12px] font-medium" style={{ color: 'var(--color-text)' }}>
+                {DAY_LABELS[day]}
+              </span>
+
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={schedule.enabled}
+                  onChange={e => updateDay(day, { enabled: e.target.checked })}
+                  className="w-4 h-4 cursor-pointer"
+                  style={{ accentColor: '#22c55e' }}
+                />
+              </label>
+
+              {schedule.enabled ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    value={schedule.start}
+                    onChange={e => updateDay(day, { start: e.target.value })}
+                    className="px-2.5 py-1.5 rounded text-[12px] outline-none"
+                    style={{
+                      background: 'var(--color-surface-2)',
+                      color: 'var(--color-text)',
+                      border: '1px solid var(--color-border)',
+                    }}
+                  />
+                  <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>→</span>
+                  <input
+                    type="time"
+                    value={schedule.end}
+                    onChange={e => updateDay(day, { end: e.target.value })}
+                    className="px-2.5 py-1.5 rounded text-[12px] outline-none"
+                    style={{
+                      background: 'var(--color-surface-2)',
+                      color: 'var(--color-text)',
+                      border: '1px solid var(--color-border)',
+                    }}
+                  />
+                </div>
+              ) : (
+                <span className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>Non disponible</span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Pause déjeuner */}
+      <div
+        className="rounded-lg p-4 space-y-3"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--color-text)' }}>Pause déjeuner</p>
+            <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-muted)' }}>Aucun RDV ne sera proposé pendant cette période.</p>
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={avail.lunchBreak.enabled}
+              onChange={e => setAvail(prev => ({ ...prev, lunchBreak: { ...prev.lunchBreak, enabled: e.target.checked } }))}
+              className="w-4 h-4 cursor-pointer"
+              style={{ accentColor: '#22c55e' }}
+            />
+            <span className="text-[11px]" style={{ color: avail.lunchBreak.enabled ? '#22c55e' : 'var(--color-muted)' }}>
+              {avail.lunchBreak.enabled ? 'Activée' : 'Désactivée'}
+            </span>
+          </label>
+        </div>
+        {avail.lunchBreak.enabled && (
+          <div className="flex items-center gap-2">
+            <input
+              type="time"
+              value={avail.lunchBreak.start}
+              onChange={e => setAvail(prev => ({ ...prev, lunchBreak: { ...prev.lunchBreak, start: e.target.value } }))}
+              className="px-2.5 py-1.5 rounded text-[12px] outline-none"
+              style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+            />
+            <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>→</span>
+            <input
+              type="time"
+              value={avail.lunchBreak.end}
+              onChange={e => setAvail(prev => ({ ...prev, lunchBreak: { ...prev.lunchBreak, end: e.target.value } }))}
+              className="px-2.5 py-1.5 rounded text-[12px] outline-none"
+              style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Durée et buffer */}
+      <div className="grid grid-cols-2 gap-4">
+        <div
+          className="rounded-lg p-4"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+        >
+          <p className="text-[11px] mb-2" style={{ color: 'var(--color-muted)' }}>Durée d&apos;un créneau</p>
+          <select
+            value={avail.slotDurationMin}
+            onChange={e => setAvail(prev => ({ ...prev, slotDurationMin: Number(e.target.value) }))}
+            className="w-full px-3 py-2 rounded text-[12px] outline-none"
+            style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+          >
+            <option value={15}>15 minutes</option>
+            <option value={30}>30 minutes</option>
+            <option value={45}>45 minutes</option>
+            <option value={60}>60 minutes</option>
+          </select>
+        </div>
+
+        <div
+          className="rounded-lg p-4"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+        >
+          <p className="text-[11px] mb-2" style={{ color: 'var(--color-muted)' }}>Buffer entre RDV</p>
+          <select
+            value={avail.bufferBetweenMin}
+            onChange={e => setAvail(prev => ({ ...prev, bufferBetweenMin: Number(e.target.value) }))}
+            className="w-full px-3 py-2 rounded text-[12px] outline-none"
+            style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+          >
+            <option value={0}>Pas de buffer</option>
+            <option value={15}>15 minutes</option>
+            <option value={30}>30 minutes</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Fuseau horaire */}
+      <div
+        className="rounded-lg p-4"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+      >
+        <p className="text-[11px] mb-2" style={{ color: 'var(--color-muted)' }}>Fuseau horaire</p>
+        <select
+          value={avail.timezone}
+          onChange={e => setAvail(prev => ({ ...prev, timezone: e.target.value }))}
+          className="w-full px-3 py-2 rounded text-[12px] outline-none"
+          style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+        >
+          <option value="Europe/Paris">Europe/Paris (UTC+1/+2)</option>
+          <option value="Europe/London">Europe/London (UTC+0/+1)</option>
+          <option value="America/New_York">America/New_York (UTC-5/-4)</option>
+          <option value="America/Los_Angeles">America/Los_Angeles (UTC-8/-7)</option>
+        </select>
+      </div>
+
+      {/* Résumé */}
+      <div
+        className="rounded-lg p-3 flex gap-3"
+        style={{ background: '#3b82f608', border: '1px solid #3b82f630' }}
+      >
+        <Clock size={14} style={{ color: '#3b82f6', flexShrink: 0, marginTop: 1 }} />
+        <p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-muted)' }}>
+          L&apos;IA utilisera ces horaires pour trouver le prochain créneau disponible lors d&apos;une demande de RDV par email.
+          Si le prospect propose une date hors plage horaire, le système cherchera automatiquement le créneau le plus proche.
+        </p>
       </div>
     </div>
   )
