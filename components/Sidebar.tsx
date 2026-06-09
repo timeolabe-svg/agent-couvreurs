@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain, Users, LogOut } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, MessageSquare, Brain, Users, LogOut } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 
 const NAV_BEFORE_BELL = [
@@ -27,11 +27,10 @@ export default function Sidebar() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch('/api/replies?status=pending&limit=50')
+        const res = await fetch('/api/reply-drafts?count=true')
         if (!res.ok) return
-        const json = await res.json() as { data: Array<{ draft: unknown | null }> }
-        const count = (json.data ?? []).filter((item) => item.draft !== null).length
-        setPendingCount(count)
+        const json = await res.json() as { count: number }
+        setPendingCount(json.count ?? 0)
       } catch {
         // ignore
       }
@@ -98,7 +97,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
         {NAV_BEFORE_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
-        {renderLink('/reponses-a-valider', 'À valider', Bell, pendingCount)}
+        {renderLink('/reponses-a-valider', 'À valider', MessageSquare, pendingCount)}
         {NAV_AFTER_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
       </nav>
 

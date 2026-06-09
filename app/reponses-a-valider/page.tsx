@@ -1,22 +1,21 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Bell, RefreshCw, CheckCircle, X, Edit2, Building2, MapPin } from 'lucide-react'
+import { MessageSquare, RefreshCw, CheckCircle, X, Edit2, Building2, MapPin } from 'lucide-react'
+import Link from 'next/link'
 
-interface ReplyDraft {
-  reply: {
+interface DraftItem {
+  id: string
+  body: string
+  status: string
+  created_at: string | null
+  incomingReply: {
     id: string
     from_email: string
     subject: string | null
     body: string
     classification: string | null
-    created_at: string | null
-  }
-  draft: {
-    id: string
-    body: string
-    status: string
-    created_at: string | null
+    instantly_reply_id: string | null
   } | null
   contact: {
     id: string
@@ -29,16 +28,16 @@ interface ReplyDraft {
 }
 
 const CLASSIFICATION_STYLES: Record<string, { bg: string; color: string; label: string }> = {
-  objection:    { bg: '#f9731610', color: '#f97316', label: 'Objection' },
-  question:     { bg: '#3b82f610', color: '#3b82f6', label: 'Question' },
-  interest:     { bg: '#22c55e10', color: '#22c55e', label: 'Intérêt' },
-  rdv_request:  { bg: '#22c55e15', color: '#22c55e', label: 'Demande RDV' },
-  desinterest:  { bg: '#6b728010', color: '#6b7280', label: 'Désintérêt' },
-  other:        { bg: '#8b5cf610', color: '#8b5cf6', label: 'Autre' },
+  objection:   { bg: '#f9731610', color: '#f97316', label: 'Objection' },
+  question:    { bg: '#eab30810', color: '#eab308', label: 'Question' },
+  interest:    { bg: '#3b82f610', color: '#3b82f6', label: 'Intérêt' },
+  rdv_request: { bg: '#22c55e15', color: '#22c55e', label: 'Demande RDV' },
+  desinterest: { bg: '#6b728010', color: '#6b7280', label: 'Désintérêt' },
+  other:       { bg: '#8b5cf610', color: '#8b5cf6', label: 'Autre' },
 }
 
 export default function ReponsesAValiderPage() {
-  const [items, setItems] = useState<ReplyDraft[]>([])
+  const [items, setItems] = useState<DraftItem[]>([])
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editBody, setEditBody] = useState<Record<string, string>>({})
@@ -49,11 +48,10 @@ export default function ReponsesAValiderPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch('/api/replies?status=pending&limit=50')
+      const res = await fetch('/api/reply-drafts')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json() as { data: ReplyDraft[] }
-      const valid = (json.data ?? []).filter((item) => item.draft !== null)
-      setItems(valid)
+      const json = await res.json() as { drafts: DraftItem[] }
+      setItems(json.drafts ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue')
     } finally {
@@ -65,11 +63,27 @@ export default function ReponsesAValiderPage() {
     void load()
   }, [load])
 
+  const patch = async (draftId: string, payload: { body?: string; action: 'send' | 'reject' | 'update' }) => {
+    const res = await fetch(`/api/reply-drafts/${draftId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const json = await res.json() as { error?: string }
+      throw new Error(json.error ?? `HTTP ${res.status}`)
+    }
+  }
+
   const fadeOut = (draftId: string, then: () => Promise<void>) => {
     setFading((prev) => new Set(prev).add(draftId))
     setTimeout(async () => {
-      await then()
-      setItems((prev) => prev.filter((item) => item.draft?.id !== draftId))
+      try {
+        await then()
+      } catch (err) {
+        console.error('[reponses-a-valider]', err)
+      }
+      setItems((prev) => prev.filter((item) => item.id !== draftId))
       setFading((prev) => {
         const next = new Set(prev)
         next.delete(draftId)
@@ -78,19 +92,16 @@ export default function ReponsesAValiderPage() {
     }, 300)
   }
 
-  const handleSend = (draftId: string) => {
+  const handleSend = (draftId: string, currentBody: string) => {
     fadeOut(draftId, async () => {
-      const body = editBody[draftId]
-      if (body) {
-        await fetch(`/api/replies/${draftId}/draft`, { method: 'PATCH', body: JSON.stringify({ body }), headers: { 'Content-Type': 'application/json' } })
-      }
-      await fetch(`/api/replies/${draftId}/send`, { method: 'POST' })
+      const body = editBody[draftId] ?? currentBody
+      await patch(draftId, { body, action: 'send' })
     })
   }
 
   const handleReject = (draftId: string) => {
     fadeOut(draftId, async () => {
-      await fetch(`/api/replies/${draftId}/reject`, { method: 'POST' })
+      await patch(draftId, { action: 'reject' })
     })
   }
 
@@ -113,7 +124,7 @@ export default function ReponsesAValiderPage() {
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
         <div className="flex items-center gap-3">
-          <Bell size={14} style={{ color: 'var(--color-muted)' }} />
+          <MessageSquare size={14} style={{ color: 'var(--color-muted)' }} />
           <h1 className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>
             Réponses à valider
           </h1>
@@ -122,7 +133,7 @@ export default function ReponsesAValiderPage() {
               className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
               style={{ background: '#ef444420', color: '#ef4444', border: '1px solid #ef444430' }}
             >
-              {pending}
+              {pending} en attente
             </span>
           )}
         </div>
@@ -138,7 +149,7 @@ export default function ReponsesAValiderPage() {
           }}
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-          Tout rafraîchir
+          Rafraîchir
         </button>
       </div>
 
@@ -160,9 +171,9 @@ export default function ReponsesAValiderPage() {
           >
             <CheckCircle size={32} style={{ color: '#22c55e', opacity: 0.6 }} />
             <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
-              Tout est validé !
+              Aucune réponse en attente ✓
             </p>
-            <p className="text-[12px]">Aucune réponse en attente de validation.</p>
+            <p className="text-[12px]">Tout est validé, rien à traiter pour l&apos;instant.</p>
           </div>
         )}
 
@@ -177,16 +188,14 @@ export default function ReponsesAValiderPage() {
 
         <div className="flex flex-col gap-4 max-w-3xl">
           {items.map((item) => {
-            if (!item.draft) return null
-            const draftId = item.draft.id
-            const isFading = fading.has(draftId)
-            const isEditing = editingId === draftId
-            const cls = item.reply.classification ?? 'other'
+            const isFading = fading.has(item.id)
+            const isEditing = editingId === item.id
+            const cls = item.incomingReply?.classification ?? 'other'
             const clsStyle = CLASSIFICATION_STYLES[cls] ?? CLASSIFICATION_STYLES.other
 
             return (
               <div
-                key={draftId}
+                key={item.id}
                 className="rounded-xl overflow-hidden transition-all duration-300"
                 style={{
                   background: 'var(--color-surface)',
@@ -208,9 +217,19 @@ export default function ReponsesAValiderPage() {
                       <Building2 size={12} style={{ color: 'var(--color-muted)' }} />
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[13px] font-semibold leading-tight truncate" style={{ color: 'var(--color-text)' }}>
-                        {item.contact?.company ?? item.reply.from_email}
-                      </p>
+                      {item.contact ? (
+                        <Link
+                          href={`/leads/${item.contact.id}`}
+                          className="text-[13px] font-semibold leading-tight truncate hover:underline block"
+                          style={{ color: 'var(--color-text)' }}
+                        >
+                          {item.contact.company}
+                        </Link>
+                      ) : (
+                        <p className="text-[13px] font-semibold leading-tight truncate" style={{ color: 'var(--color-text)' }}>
+                          {item.incomingReply?.from_email ?? '—'}
+                        </p>
+                      )}
                       <div className="flex items-center gap-2 mt-0.5">
                         {item.contact?.name && (
                           <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
@@ -243,10 +262,15 @@ export default function ReponsesAValiderPage() {
                     className="rounded-lg p-3 text-[12px] leading-relaxed"
                     style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-muted)' }}
                   >
-                    <p className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>
-                      {item.reply.subject ?? '(sans objet)'}
+                    {item.incomingReply?.subject && (
+                      <p className="font-medium mb-1" style={{ color: 'var(--color-text)' }}>
+                        {item.incomingReply.subject}
+                      </p>
+                    )}
+                    <p className="whitespace-pre-wrap">
+                      {(item.incomingReply?.body ?? '').substring(0, 600)}
+                      {(item.incomingReply?.body ?? '').length > 600 ? '…' : ''}
                     </p>
-                    <p className="whitespace-pre-wrap">{item.reply.body.substring(0, 600)}{item.reply.body.length > 600 ? '…' : ''}</p>
                   </div>
                 </div>
 
@@ -257,8 +281,8 @@ export default function ReponsesAValiderPage() {
                   </p>
                   {isEditing ? (
                     <textarea
-                      value={editBody[draftId] ?? item.draft.body}
-                      onChange={(e) => setEditBody((prev) => ({ ...prev, [draftId]: e.target.value }))}
+                      value={editBody[item.id] ?? item.body}
+                      onChange={(e) => setEditBody((prev) => ({ ...prev, [item.id]: e.target.value }))}
                       rows={8}
                       className="w-full text-[12px] rounded-lg p-3 resize-y leading-relaxed"
                       style={{
@@ -278,7 +302,7 @@ export default function ReponsesAValiderPage() {
                         color: 'var(--color-text)',
                       }}
                     >
-                      {editBody[draftId] ?? item.draft.body}
+                      {editBody[item.id] ?? item.body}
                     </div>
                   )}
                 </div>
@@ -289,7 +313,7 @@ export default function ReponsesAValiderPage() {
                   style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-surface-2)' }}
                 >
                   <button
-                    onClick={() => handleSend(draftId)}
+                    onClick={() => handleSend(item.id, item.body)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
                     style={{ background: '#22c55e20', color: '#22c55e', border: '1px solid #22c55e40' }}
                   >
@@ -297,7 +321,7 @@ export default function ReponsesAValiderPage() {
                     Envoyer
                   </button>
                   <button
-                    onClick={() => handleEdit(draftId, item.draft!.body)}
+                    onClick={() => handleEdit(item.id, item.body)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
                     style={{
                       background: isEditing ? '#3b82f620' : 'transparent',
@@ -309,7 +333,7 @@ export default function ReponsesAValiderPage() {
                     {isEditing ? 'Terminer' : 'Modifier'}
                   </button>
                   <button
-                    onClick={() => handleReject(draftId)}
+                    onClick={() => handleReject(item.id)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all ml-auto"
                     style={{ background: '#ef444410', color: '#ef4444', border: '1px solid #ef444430' }}
                   >
