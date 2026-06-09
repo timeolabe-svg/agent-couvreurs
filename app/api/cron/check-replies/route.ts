@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Random delay: 4 to 12 minutes (feels human)
+function randomDelayMs(): number {
+  return (4 + Math.floor(Math.random() * 9)) * 60 * 1000 // 4-12 min in ms
+}
+
 const CLIENT_NOTIFY_EMAIL = process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr'
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hdigiweb.fr'
 const RESEND_API_KEY = process.env.RESEND_API_KEY
@@ -180,6 +185,7 @@ export async function GET(request: NextRequest) {
   const { db } = await import('@/lib/db')
   const { contacts, incoming_replies, reply_drafts, blocklist, dashboard_events, email_queue, rdv: rdvTable } = await import('@/lib/db/schema')
   const { eq, and, gte, sql } = await import('drizzle-orm')
+  const { lte: lteOp } = await import('drizzle-orm')
   const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
   const { classifyReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
@@ -187,6 +193,39 @@ export async function GET(request: NextRequest) {
   let processed = 0
   let drafts = 0
   let blocked = 0
+
+  // Send scheduled auto-replies that are ready
+  try {
+    const readyDrafts = await db
+      .select({ draft: reply_drafts, reply: incoming_replies })
+      .from(reply_drafts)
+      .innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
+      .where(
+        and(
+          eq(reply_drafts.status, 'scheduled'),
+          lteOp(reply_drafts.send_after!, new Date())
+        )
+      )
+      .limit(10)
+
+    for (const { draft, reply } of readyDrafts) {
+      try {
+        if (reply.instantly_reply_id) {
+          await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body })
+        }
+        await db.update(reply_drafts)
+          .set({ status: 'sent', sent_at: new Date() })
+          .where(eq(reply_drafts.id, draft.id))
+        await db.update(incoming_replies)
+          .set({ action_taken: 'replied' })
+          .where(eq(incoming_replies.id, reply.id))
+      } catch (err) {
+        console.error('[check-replies] Failed to send scheduled reply', draft.id, err)
+      }
+    }
+  } catch (err) {
+    console.error('[check-replies] Error processing scheduled drafts', err)
+  }
 
   try {
     const replies = await getInstantlyReplies({ limit: 50 })
@@ -302,33 +341,14 @@ export async function GET(request: NextRequest) {
         })
 
         if (classification.action === 'auto_reply') {
-          // Auto-send without human validation (for OOF, etc.)
-          try {
-            await sendReply({
-              reply_to_id: reply.id,
-              body: draftBody,
-            })
-            await db.insert(reply_drafts).values({
-              incoming_reply_id: insertedReply.id,
-              body: draftBody,
-              status: 'sent',
-            })
-            // No notification needed for auto-sent replies
-          } catch (err) {
-            console.error('[check-replies] Auto-reply failed, falling back to draft', err)
-            await db.insert(reply_drafts).values({
-              incoming_reply_id: insertedReply.id,
-              body: draftBody,
-              status: 'pending',
-            })
-            await sendNotificationEmail({
-              contactName: contact?.name ?? reply.from_address,
-              contactCompany: contact?.company ?? reply.from_address,
-              classification: classification.classification,
-              replyBody: reply.body,
-              draftBody,
-            })
-          }
+          // Schedule auto-reply with human-like delay (4-12 min)
+          await db.insert(reply_drafts).values({
+            incoming_reply_id: insertedReply.id,
+            body: draftBody,
+            status: 'scheduled',
+            send_after: new Date(Date.now() + randomDelayMs()),
+          })
+          // No notification needed — will be sent by scheduled loop on next cron run
         } else {
           // draft_for_validation — create pending draft and notify human
           await db.insert(reply_drafts).values({
