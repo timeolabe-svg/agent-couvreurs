@@ -754,6 +754,7 @@ function DnsModal({ domain, onClose }: { domain: string; onClose: () => void }) 
             La propagation DNS peut prendre jusqu&apos;à 48h.
           </p>
           <button
+            onClick={() => window.open('https://mxtoolbox.com/', '_blank')}
             className="px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
             style={{ background: 'var(--color-accent)', color: '#fff' }}
           >

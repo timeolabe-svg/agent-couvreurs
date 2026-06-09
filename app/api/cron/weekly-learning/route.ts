@@ -16,7 +16,10 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'agent@hdigiweb.fr',
+      // RESEND_FROM_EMAIL must be set to a verified Resend domain
+      // e.g. agent@hdigiweb.fr (requires DNS verification in resend.com)
+      // Falls back to onboarding@resend.dev for testing
+      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
       to,
       subject,
       html,
@@ -213,25 +216,83 @@ Génère un rapport JSON structuré avec :
     // ── Send summary email ─────────────────────────────────────────────────────
     const notifyEmail = process.env.CLIENT_NOTIFY_EMAIL
     if (notifyEmail) {
+      const insightsHtml = (Array.isArray(report.topInsights) ? report.topInsights : [])
+        .map((i) => `<li style="margin-bottom:6px">${i}</li>`)
+        .join('')
+      const subjectPatternsHtml = (report.recommendations.subject_patterns_to_use ?? [])
+        .map((p) => `<li style="margin-bottom:4px"><code style="background:#1e2130;padding:2px 6px;border-radius:3px;font-size:12px">${p}</code></li>`)
+        .join('')
+
       const summaryHtml = `
-        <h2>Rapport hebdomadaire — ${startStr} au ${endStr}</h2>
-        <p>${report.summary}</p>
-        <h3>Métriques</h3>
-        <ul>
-          <li>Emails envoyés: <strong>${sent}</strong></li>
-          <li>Taux de réponse: <strong>${replyRate}%</strong></li>
-          <li>RDV générés: <strong>${rdvCount}</strong></li>
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:system-ui,sans-serif;background:#0f1117;color:#e1e4e8;margin:0;padding:24px">
+  <div style="max-width:640px;margin:0 auto">
+
+    <div style="background:linear-gradient(135deg,#1a1d27,#16213e);border-radius:10px 10px 0 0;padding:24px 28px">
+      <p style="margin:0 0 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">RAPPORT HEBDOMADAIRE — IA AGENT</p>
+      <h1 style="margin:0;font-size:20px;font-weight:700;color:#e1e4e8">${startStr} → ${endStr}</h1>
+      <p style="margin:8px 0 0;font-size:13px;color:#8b949e;line-height:1.5">${report.summary}</p>
+    </div>
+
+    <div style="background:#1a1d27;padding:24px 28px;border-left:1px solid #30363d;border-right:1px solid #30363d">
+
+      <!-- Métriques clés -->
+      <p style="margin:0 0 12px;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">PERFORMANCES DE LA SEMAINE</p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:24px">
+        <tr>
+          <td width="25%" style="padding:12px;background:#161b22;border:1px solid #30363d;border-radius:6px 0 0 6px;text-align:center">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#3b82f6">${sent}</p>
+            <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Emails envoyés</p>
+          </td>
+          <td width="25%" style="padding:12px;background:#161b22;border-top:1px solid #30363d;border-bottom:1px solid #30363d;text-align:center">
+            <p style="margin:0;font-size:22px;font-weight:700;color:${replyRate >= 5 ? '#22c55e' : replyRate >= 2 ? '#f59e0b' : '#ef4444'}">${replyRate}%</p>
+            <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Taux de réponse</p>
+          </td>
+          <td width="25%" style="padding:12px;background:#161b22;border-top:1px solid #30363d;border-bottom:1px solid #30363d;text-align:center">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#a855f7">${replies}</p>
+            <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Réponses reçues</p>
+          </td>
+          <td width="25%" style="padding:12px;background:#161b22;border:1px solid #30363d;border-radius:0 6px 6px 0;text-align:center">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#22c55e">${rdvCount}</p>
+            <p style="margin:4px 0 0;font-size:10px;color:#8b949e">RDV obtenus</p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Ce que l'IA a appris -->
+      <p style="margin:0 0 12px;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">CE QUE L'IA A DÉTECTÉ CETTE SEMAINE</p>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:24px">
+        <ul style="margin:0;padding-left:20px;color:#c9d1d9;font-size:13px;line-height:1.7">
+          ${insightsHtml}
         </ul>
-        <h3>Top insights</h3>
-        <ul>
-          ${(Array.isArray(report.topInsights) ? report.topInsights : []).map((i) => `<li>${i}</li>`).join('')}
-        </ul>
-        <h3>Recommandations</h3>
-        <p>Secteurs prioritaires: ${report.recommendations.sectors_to_prioritize.join(', ')}</p>
-        <p>Créneaux optimaux: ${report.recommendations.best_send_hours.join('h, ')}h</p>
-        <p>Ajustement prompt: <em>${report.recommendations.prompt_adjustments}</em></p>
-      `
-      await sendEmail(notifyEmail, `Rapport IA semaine du ${startStr}`, summaryHtml)
+      </div>
+
+      <!-- Ajustements IA -->
+      <p style="margin:0 0 12px;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">AJUSTEMENTS APPLIQUÉS PAR L'IA</p>
+      <div style="background:#161b22;border-left:3px solid #22c55e;border-radius:0 6px 6px 0;padding:14px 16px;margin-bottom:24px">
+        <p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;font-style:italic">${report.recommendations.prompt_adjustments}</p>
+      </div>
+
+      <!-- Recommandations pour la semaine -->
+      <p style="margin:0 0 12px;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">RECOMMANDATIONS POUR LA SEMAINE SUIVANTE</p>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:24px">
+        <p style="margin:0 0 8px;font-size:12px;color:#e1e4e8"><strong>Secteurs à prioriser :</strong> ${report.recommendations.sectors_to_prioritize.join(', ') || 'N/A'}</p>
+        <p style="margin:0 0 8px;font-size:12px;color:#e1e4e8"><strong>Créneaux optimaux :</strong> ${report.recommendations.best_send_hours.join('h, ')}h</p>
+        ${subjectPatternsHtml ? `<p style="margin:0 0 8px;font-size:12px;color:#e1e4e8"><strong>Objets performants :</strong></p><ul style="margin:0;padding-left:20px">${subjectPatternsHtml}</ul>` : ''}
+      </div>
+
+    </div>
+
+    <div style="background:#161b22;border-radius:0 0 10px 10px;border:1px solid #30363d;border-top:none;padding:16px 28px;text-align:center">
+      <p style="margin:0;font-size:11px;color:#8b949e">Rapport généré automatiquement par l'agent IA · Hdigiweb</p>
+    </div>
+
+  </div>
+</body>
+</html>`
+      await sendEmail(notifyEmail, `📊 Rapport IA semaine du ${startStr} — ${sent} emails · ${replyRate}% réponses · ${rdvCount} RDV`, summaryHtml)
     }
 
     return NextResponse.json({

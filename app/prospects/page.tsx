@@ -1,12 +1,14 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, Upload, ChevronDown } from 'lucide-react'
 
 const STATUS_OPTIONS = ['Tous', 'Nouveau', 'Contacté', 'Réponse', 'Intéressé', 'RDV réservé', 'Plus tard', 'Pas intéressé']
 const SEGMENT_OPTIONS = ['Tous les segments', 'Avec site', 'Sans site', 'Google Ads actif', 'Passif']
 
 export default function ProspectsPage() {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('Tous')
   const [segment, setSegment] = useState('Tous les segments')
@@ -19,6 +21,7 @@ export default function ProspectsPage() {
           <h1 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Prospects</h1>
         </div>
         <button
+          onClick={() => router.push('/leads')}
           className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
           style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
         >

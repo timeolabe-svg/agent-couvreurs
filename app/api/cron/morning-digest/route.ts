@@ -15,7 +15,10 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: 'agent@hdigiweb.fr',
+      // RESEND_FROM_EMAIL must be set to a verified Resend domain
+      // e.g. agent@hdigiweb.fr (requires DNS verification in resend.com)
+      // Falls back to onboarding@resend.dev for testing
+      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
       to,
       subject,
       html,

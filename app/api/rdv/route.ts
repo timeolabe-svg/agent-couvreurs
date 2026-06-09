@@ -195,7 +195,10 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: 'agent@hdigiweb.fr',
+        // RESEND_FROM_EMAIL must be set to a verified Resend domain
+        // e.g. agent@hdigiweb.fr (requires DNS verification in resend.com)
+        // Falls back to onboarding@resend.dev for testing
+        from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
         to: CLIENT_NOTIFY_EMAIL,
         subject: `🎯 Nouveau RDV — ${contact.company}`,
         html: buildRdvEmailHtml({

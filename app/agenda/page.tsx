@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Calendar, Phone, CheckCircle, Mail, Plus, X } from 'lucide-react'
 import Link from 'next/link'
 
@@ -72,6 +72,13 @@ export default function AgendaPage() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
+  // Contact autocomplete state
+  const [contactSearch, setContactSearch] = useState('')
+  const [contactSuggestions, setContactSuggestions] = useState<Array<{ id: string; name: string | null; company: string; city: string | null }>>([])
+  const [selectedContact, setSelectedContact] = useState<{ id: string; name: string | null; company: string } | null>(null)
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const contactInputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     setWeekDays(getCurrentWeekDays())
   }, [])
@@ -94,9 +101,27 @@ export default function AgendaPage() {
     void loadRdvs()
   }, [loadRdvs])
 
+  // Debounced contact search
+  useEffect(() => {
+    if (contactSearch.length < 2) {
+      setContactSuggestions([])
+      return
+    }
+    const timer = setTimeout(() => {
+      fetch(`/api/leads?search=${encodeURIComponent(contactSearch)}&limit=8`)
+        .then(r => r.json())
+        .then((data: { leads?: Array<{ id: string; name: string | null; company: string; city: string | null }> }) => {
+          setContactSuggestions(data.leads ?? [])
+          setShowSuggestions(true)
+        })
+        .catch(() => {})
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [contactSearch])
+
   const handleCreate = async () => {
     if (!form.contactId || !form.scheduledAt) {
-      setCreateError('Contact ID et date/heure requis')
+      setCreateError('Contact et date/heure requis')
       return
     }
     setCreating(true)
@@ -119,6 +144,9 @@ export default function AgendaPage() {
       }
       setShowNewRdv(false)
       setForm({ contactId: '', scheduledAt: '', durationMin: '30', notes: '' })
+      setContactSearch('')
+      setSelectedContact(null)
+      setContactSuggestions([])
       await loadRdvs()
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Erreur inconnue')
@@ -169,7 +197,7 @@ export default function AgendaPage() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(0,0,0,0.7)' }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowNewRdv(false) }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowNewRdv(false); setContactSearch(''); setSelectedContact(null); setContactSuggestions([]) } }}
         >
           <div
             className="rounded-xl w-full max-w-md p-6"
@@ -177,19 +205,55 @@ export default function AgendaPage() {
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>Nouveau RDV</h2>
-              <button onClick={() => setShowNewRdv(false)}><X size={16} style={{ color: 'var(--color-muted)' }} /></button>
+              <button onClick={() => { setShowNewRdv(false); setContactSearch(''); setSelectedContact(null); setContactSuggestions([]) }}><X size={16} style={{ color: 'var(--color-muted)' }} /></button>
             </div>
 
             <div className="flex flex-col gap-3">
-              <div>
-                <label className="text-[11px] mb-1 block" style={{ color: 'var(--color-muted)' }}>Contact ID *</label>
+              <div className="relative">
+                <label className="text-[11px] mb-1 block" style={{ color: 'var(--color-muted)' }}>Contact *</label>
                 <input
-                  value={form.contactId}
-                  onChange={(e) => setForm((f) => ({ ...f, contactId: e.target.value }))}
-                  placeholder="UUID du contact"
+                  ref={contactInputRef}
+                  value={selectedContact ? `${selectedContact.name ?? selectedContact.company} — ${selectedContact.company}` : contactSearch}
+                  onChange={(e) => {
+                    setSelectedContact(null)
+                    setForm((f) => ({ ...f, contactId: '' }))
+                    setContactSearch(e.target.value)
+                    setShowSuggestions(true)
+                  }}
+                  onFocus={() => { if (contactSuggestions.length > 0) setShowSuggestions(true) }}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  placeholder="Rechercher par nom ou entreprise…"
                   className="w-full text-[12px] px-3 py-2 rounded-md"
-                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)', outline: 'none' }}
+                  style={{ background: 'var(--color-surface-2)', border: `1px solid ${form.contactId ? '#22c55e60' : 'var(--color-border)'}`, color: 'var(--color-text)', outline: 'none' }}
                 />
+                {showSuggestions && contactSuggestions.length > 0 && (
+                  <div
+                    className="absolute left-0 right-0 z-50 rounded-md overflow-hidden"
+                    style={{ top: '100%', marginTop: 4, background: 'var(--color-surface)', border: '1px solid var(--color-border)', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}
+                  >
+                    {contactSuggestions.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onMouseDown={() => {
+                          setSelectedContact(c)
+                          setForm((f) => ({ ...f, contactId: c.id }))
+                          setContactSearch('')
+                          setShowSuggestions(false)
+                        }}
+                        className="w-full text-left px-3 py-2 text-[12px] transition-colors hover:bg-black/20"
+                        style={{ color: 'var(--color-text)', borderBottom: '1px solid var(--color-border)' }}
+                      >
+                        <span className="font-medium">{c.company}</span>
+                        {c.name && <span style={{ color: 'var(--color-muted)' }}> · {c.name}</span>}
+                        {c.city && <span style={{ color: 'var(--color-muted-2)' }}> — {c.city}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {contactSearch.length >= 2 && contactSuggestions.length === 0 && (
+                  <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted)' }}>Aucun contact trouvé</p>
+                )}
               </div>
               <div>
                 <label className="text-[11px] mb-1 block" style={{ color: 'var(--color-muted)' }}>Date et heure *</label>
@@ -236,7 +300,7 @@ export default function AgendaPage() {
                   {creating ? 'Création…' : 'Créer le RDV'}
                 </button>
                 <button
-                  onClick={() => setShowNewRdv(false)}
+                  onClick={() => { setShowNewRdv(false); setContactSearch(''); setSelectedContact(null); setContactSuggestions([]) }}
                   className="px-4 py-2 rounded-md text-[13px]"
                   style={{ background: 'var(--color-surface-2)', color: 'var(--color-muted)', border: '1px solid var(--color-border)' }}
                 >
@@ -315,7 +379,7 @@ export default function AgendaPage() {
                     const contactName = r.contact?.name ?? r.contact_name ?? ''
 
                     return (
-                      <Link key={r.id} href={r.leadId ? `/leads/${r.leadId}` : '#'}>
+                      <Link key={r.id} href={r.contact_id ? `/leads/${r.contact_id}` : r.leadId ? `/leads/${r.leadId}` : '#'}>
                         <div
                           className="absolute left-1 right-1 rounded-md px-2 py-1.5 cursor-pointer"
                           style={{
