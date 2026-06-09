@@ -4,6 +4,128 @@ const CLIENT_NOTIFY_EMAIL = process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hdigiweb.fr'
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 
+// ---------------------------------------------------------------------------
+// Helper: parse a French date string into a real Date
+// ---------------------------------------------------------------------------
+function parseExtractedDate(dateStr: string): Date | null {
+  // Try direct parse first
+  const direct = new Date(dateStr)
+  if (!isNaN(direct.getTime()) && direct.getFullYear() > 2020) return direct
+
+  const now = new Date()
+  const lower = dateStr.toLowerCase()
+
+  // "mardi 14h", "jeudi 10h30", "lundi matin", "vendredi après-midi"
+  const dayMap: Record<string, number> = {
+    lundi: 1,
+    mardi: 2,
+    mercredi: 3,
+    jeudi: 4,
+    vendredi: 5,
+    samedi: 6,
+    dimanche: 0,
+  }
+
+  for (const [day, dayNum] of Object.entries(dayMap)) {
+    if (lower.includes(day)) {
+      const target = new Date(now)
+      const currentDay = target.getDay()
+      let daysUntil = dayNum - currentDay
+      if (daysUntil <= 0) daysUntil += 7
+      target.setDate(target.getDate() + daysUntil)
+
+      // Extract hour
+      const hourMatch = lower.match(/(\d{1,2})h(\d{0,2})/)
+      if (hourMatch) {
+        target.setHours(parseInt(hourMatch[1]), parseInt(hourMatch[2] || '0'), 0, 0)
+      } else if (lower.includes('matin')) {
+        target.setHours(9, 0, 0, 0)
+      } else if (lower.includes('après-midi') || lower.includes('apres-midi')) {
+        target.setHours(14, 0, 0, 0)
+      } else {
+        target.setHours(10, 0, 0, 0)
+      }
+      return target
+    }
+  }
+
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// Helper: build exchange summary for calendar description
+// ---------------------------------------------------------------------------
+function buildExchangeSummary(params: {
+  originalEmailBody: string
+  replyBody: string
+  draftBody: string
+  contactName: string
+  contactCompany: string
+}): string {
+  return `=== RÉSUMÉ DE L'ÉCHANGE ===
+
+PROSPECT : ${params.contactName} (${params.contactCompany})
+
+EMAIL ENVOYÉ :
+${params.originalEmailBody.substring(0, 500)}${params.originalEmailBody.length > 500 ? '...' : ''}
+
+RÉPONSE DU PROSPECT :
+${params.replyBody.substring(0, 500)}${params.replyBody.length > 500 ? '...' : ''}
+
+DRAFT DE RÉPONSE PRÉPARÉ :
+${params.draftBody.substring(0, 300)}${params.draftBody.length > 300 ? '...' : ''}
+
+=== FIN DU RÉSUMÉ ===`
+}
+
+// ---------------------------------------------------------------------------
+// Helper: send RDV notification email (auto-booked)
+// ---------------------------------------------------------------------------
+async function sendRdvNotificationEmail(params: {
+  contactName: string
+  contactCompany: string
+  scheduledAt: Date
+  googleMeetLink: string | null
+  calendarEventUrl: string | null
+  exchangeSummary: string
+}) {
+  if (!RESEND_API_KEY) return
+
+  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+      to: CLIENT_NOTIFY_EMAIL,
+      subject: `🎯 RDV automatiquement calé — ${params.contactCompany}`,
+      html: `
+        <h2 style="color:#22c55e">🎯 RDV calé automatiquement !</h2>
+        <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
+        <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
+        ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}
+        ${params.calendarEventUrl ? `<p>📆 <a href="${params.calendarEventUrl}">Voir dans Google Calendar</a></p>` : ''}
+        <hr/>
+        <h3>Résumé de l'échange</h3>
+        <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
+      `,
+    }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Helper: send standard draft-validation notification email
+// ---------------------------------------------------------------------------
 async function sendNotificationEmail(params: {
   contactName: string
   contactCompany: string
@@ -56,7 +178,7 @@ export async function GET(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts, incoming_replies, reply_drafts, blocklist, dashboard_events, email_queue } = await import('@/lib/db/schema')
+  const { contacts, incoming_replies, reply_drafts, blocklist, dashboard_events, email_queue, rdv: rdvTable } = await import('@/lib/db/schema')
   const { eq, and, gte, sql } = await import('drizzle-orm')
   const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
   const { classifyReply } = await import('@/lib/reply-agent/classifier')
@@ -214,13 +336,101 @@ export async function GET(request: NextRequest) {
             body: draftBody,
             status: 'pending',
           })
-          await sendNotificationEmail({
-            contactName: contact?.name ?? reply.from_address,
-            contactCompany: contact?.company ?? reply.from_address,
-            classification: classification.classification,
-            replyBody: reply.body,
-            draftBody,
-          })
+
+          // --- RDV auto-booking when classification is rdv_request ---
+          if (
+            classification.classification === 'rdv_request' &&
+            (classification as { extractedDate?: string }).extractedDate
+          ) {
+            const extractedDate = (classification as { extractedDate?: string }).extractedDate!
+            try {
+              const parsedDate = parseExtractedDate(extractedDate)
+
+              if (parsedDate) {
+                const { createCalendarEvent } = await import('@/lib/google-calendar')
+
+                const endTime = new Date(parsedDate.getTime() + 30 * 60 * 1000)
+
+                const exchangeSummary = buildExchangeSummary({
+                  originalEmailBody,
+                  replyBody: reply.body,
+                  draftBody,
+                  contactName: contact?.name ?? reply.from_address,
+                  contactCompany: contact?.company ?? reply.from_address,
+                })
+
+                let googleEventId: string | null = null
+                let googleMeetLink: string | null = null
+                let calendarEventUrl: string | null = null
+
+                try {
+                  const event = await createCalendarEvent({
+                    summary: `RDV - ${contact?.company ?? reply.from_address}`,
+                    description: exchangeSummary,
+                    startTime: parsedDate.toISOString(),
+                    endTime: endTime.toISOString(),
+                    attendeeEmail: reply.from_address,
+                    meetLink: true,
+                  })
+                  googleEventId = event.eventId
+                  googleMeetLink = event.meetLink
+                  calendarEventUrl = event.eventUrl
+                } catch (calErr) {
+                  console.error('[check-replies] Google Calendar error:', calErr)
+                }
+
+                // Save RDV to DB
+                await db.insert(rdvTable).values({
+                  contact_id: contact?.id ?? undefined,
+                  incoming_reply_id: insertedReply.id,
+                  scheduled_at: parsedDate,
+                  duration_min: 30,
+                  status: 'confirmed',
+                  google_event_id: googleEventId,
+                  google_meet_link: googleMeetLink,
+                  notes: `RDV demandé par le prospect. Date extraite: "${extractedDate}"`,
+                })
+
+                // Send enhanced RDV notification
+                await sendRdvNotificationEmail({
+                  contactName: contact?.name ?? reply.from_address,
+                  contactCompany: contact?.company ?? reply.from_address,
+                  scheduledAt: parsedDate,
+                  googleMeetLink,
+                  calendarEventUrl,
+                  exchangeSummary,
+                })
+              } else {
+                // Date not parseable — fall through to standard notification
+                await sendNotificationEmail({
+                  contactName: contact?.name ?? reply.from_address,
+                  contactCompany: contact?.company ?? reply.from_address,
+                  classification: classification.classification,
+                  replyBody: reply.body,
+                  draftBody,
+                })
+              }
+            } catch (rdvErr) {
+              console.error('[check-replies] RDV auto-booking failed:', rdvErr)
+              // Fall through to normal draft notification
+              await sendNotificationEmail({
+                contactName: contact?.name ?? reply.from_address,
+                contactCompany: contact?.company ?? reply.from_address,
+                classification: classification.classification,
+                replyBody: reply.body,
+                draftBody,
+              })
+            }
+          } else {
+            // Not an rdv_request or no extractedDate — standard notification
+            await sendNotificationEmail({
+              contactName: contact?.name ?? reply.from_address,
+              contactCompany: contact?.company ?? reply.from_address,
+              classification: classification.classification,
+              replyBody: reply.body,
+              draftBody,
+            })
+          }
         }
 
         drafts++
