@@ -4,6 +4,32 @@ export const dynamic = 'force-dynamic'
 
 function getMockSummary() {
   const rdvThisMonth = 12
+  const revenue = rdvThisMonth * 50
+
+  const now = new Date()
+  const day = now.getDay()
+  const diffToMon = day === 0 ? -6 : 1 - day
+  const weekStart = new Date(now)
+  weekStart.setDate(now.getDate() + diffToMon)
+  weekStart.setHours(0, 0, 0, 0)
+
+  const weekCalendar = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart)
+    d.setDate(weekStart.getDate() + i)
+    const dayNames = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM']
+    return {
+      date: d.toISOString().slice(0, 10),
+      dayName: dayNames[d.getDay()],
+      rdvCount: i === 2 ? 1 : i === 4 ? 2 : 0,
+    }
+  })
+
+  const emailsSentThisWeek = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date()
+    d.setDate(d.getDate() - (6 - i))
+    return { date: d.toISOString().slice(0, 10), count: Math.floor(Math.random() * 30) + 5 }
+  })
+
   return {
     totalEmailsSent: 847,
     totalReplies: 63,
@@ -20,7 +46,27 @@ function getMockSummary() {
     activeCampaigns: 2,
     totalCampaigns: 3,
     lastTickMinutesAgo: 8,
-    revenue_this_month: rdvThisMonth * 50,
+    revenue_this_month: revenue,
+    // new fields
+    repliesReceived: 63,
+    clientsSigned: 3,
+    emailsSentThisWeek,
+    replyRateVsLastWeek: 12,
+    pendingFollowups: 4,
+    weekCalendar,
+    topCampaigns: [
+      { name: 'Couvreurs IDF — Relance Q2', sentThisMonth: 234, replyRate: 7.7, rdvCount: 5, status: 'active' },
+      { name: 'Couvreurs Lyon — Initial', sentThisMonth: 98, replyRate: 4.1, rdvCount: 2, status: 'active' },
+      { name: 'Toitures Nord — Test A/B', sentThisMonth: 45, replyRate: 0, rdvCount: 0, status: 'paused' },
+    ],
+    recentActivity: [
+      { id: 'a1', type: 'rdv_created', time: '09:42', text: 'RDV pris avec Couverture Martin', daysAgo: 0, created_at: new Date().toISOString() },
+      { id: 'a2', type: 'reply_received', time: '08:15', text: 'Réponse reçue de Toitures Vidal & Fils', daysAgo: 0, created_at: new Date(Date.now() - 3600000).toISOString() },
+      { id: 'a3', type: 'email_sent', time: '07:30', text: 'Email envoyé à Couverture Roussel', daysAgo: 0, created_at: new Date(Date.now() - 7200000).toISOString() },
+      { id: 'a4', type: 'email_sent', time: '06:00', text: 'Email envoyé à Toitures Dupont', daysAgo: 1, created_at: new Date(Date.now() - 86400000).toISOString() },
+    ],
+    weeklyLearning: null,
+    revenue,
     recentEvents: [
       {
         id: 'e1',
@@ -49,14 +95,10 @@ function getMockSummary() {
       { id: 'r1', company: 'Toiture Carpentier', scheduled_at: new Date(Date.now() + 86400000).toISOString() },
       { id: 'r2', company: 'Toitures Vidal & Fils', scheduled_at: new Date(Date.now() + 172800000).toISOString() },
     ],
-    dailyActivity: Array.from({ length: 7 }, (_, i) => {
-      const d = new Date()
-      d.setDate(d.getDate() - (6 - i))
-      return { date: d.toISOString().slice(0, 10), sent: Math.floor(Math.random() * 30) + 5, replies: Math.floor(Math.random() * 5) }
-    }),
+    dailyActivity: emailsSentThisWeek.map(d => ({ date: d.date, sent: d.count, replies: 0 })),
     pipeline: {
-      prospects: 312,
-      contacted: 847,
+      prospects: 847,
+      contacted: 234,
       replied: 63,
       rdv: 12,
       signed: 3,
@@ -73,17 +115,17 @@ export async function GET() {
   const { db } = await import('@/lib/db')
   const {
     email_queue, incoming_replies, reply_drafts, rdv, contacts,
-    dashboard_events, campaigns, agent_config,
+    dashboard_events, campaigns, agent_config, learning_reports,
   } = await import('@/lib/db/schema')
-  const { count, eq, gte, and, desc, sql } = await import('drizzle-orm')
+  const { count, eq, gte, and, desc, sql, lte } = await import('drizzle-orm')
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
 
   // This week Mon..Sun
   const day = now.getDay()
-  const weekStart = new Date(now)
   const diffToMon = day === 0 ? -6 : 1 - day
+  const weekStart = new Date(now)
   weekStart.setDate(now.getDate() + diffToMon)
   weekStart.setHours(0, 0, 0, 0)
   const weekEnd = new Date(weekStart)
@@ -91,6 +133,11 @@ export async function GET() {
 
   // This month
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+
+  // Last week
+  const lastWeekStart = new Date(weekStart)
+  lastWeekStart.setDate(weekStart.getDate() - 7)
+  const lastWeekEnd = new Date(weekStart)
 
   const [
     [{ totalEmailsSent }],
@@ -103,12 +150,16 @@ export async function GET() {
     [{ draftsAwaitingValidation }],
     [{ totalContacts }],
     [{ rdvThisMonth }],
+    [{ repliesReceived }],
+    [{ clientsSigned }],
+    [{ pendingFollowups }],
     recentEvents,
     pendingDraftsRaw,
     upcomingRdvsRaw,
     activeCampaignsCount,
     totalCampaignsCount,
     lastTickRow,
+    weeklyLearningRaw,
   ] = await Promise.all([
     db.select({ totalEmailsSent: count() }).from(email_queue).where(eq(email_queue.status, 'sent')),
     db.select({ totalReplies: count() }).from(incoming_replies),
@@ -120,6 +171,18 @@ export async function GET() {
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
     db.select({ rdvThisMonth: count() }).from(rdv).where(gte(rdv.created_at, monthStart)),
+    // repliesReceived this month
+    db.select({ repliesReceived: count() }).from(incoming_replies).where(gte(incoming_replies.created_at, monthStart)),
+    // clientsSigned this month
+    db.select({ clientsSigned: count() }).from(rdv).where(and(eq(rdv.status, 'signed'), gte(rdv.created_at, monthStart))),
+    // pendingFollowups: pending emails scheduled within next 24h
+    db.select({ pendingFollowups: count() }).from(email_queue).where(
+      and(
+        eq(email_queue.status, 'pending'),
+        gte(email_queue.scheduled_at, now),
+        lte(email_queue.scheduled_at, new Date(now.getTime() + 86400000)),
+      )
+    ),
     db.select().from(dashboard_events).orderBy(desc(dashboard_events.created_at)).limit(10),
     // Pending drafts with company info
     db.select({
@@ -151,6 +214,8 @@ export async function GET() {
       .where(eq(dashboard_events.type, 'agent_decision'))
       .orderBy(desc(dashboard_events.created_at))
       .limit(1),
+    // Latest learning report
+    db.select().from(learning_reports).orderBy(desc(learning_reports.created_at)).limit(1),
   ])
 
   // RDV this week
@@ -160,7 +225,7 @@ export async function GET() {
     .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`))
   const rdvThisWeek = weekRdvRows.length
 
-  // Daily activity last 7 days
+  // Daily activity last 7 days (for bar chart)
   const sevenDaysAgo = new Date(now)
   sevenDaysAgo.setDate(now.getDate() - 6)
   sevenDaysAgo.setHours(0, 0, 0, 0)
@@ -182,13 +247,14 @@ export async function GET() {
     return { date: dateStr, sent: sentMap[dateStr] ?? 0, replies: 0 }
   })
 
+  const emailsSentThisWeek = dailyActivity.map(d => ({ date: d.date, count: d.sent }))
+
   // Last tick minutes ago
   let lastTickMinutesAgo: number | null = null
   if (lastTickRow.length > 0 && lastTickRow[0].created_at) {
     lastTickMinutesAgo = Math.floor((now.getTime() - new Date(lastTickRow[0].created_at).getTime()) / 60000)
   }
 
-  // Also try agent_config for last tick
   if (lastTickMinutesAgo === null) {
     const lastTickConfig = await db.select().from(agent_config).where(eq(agent_config.key, 'last_tick_at')).limit(1)
     if (lastTickConfig[0]) {
@@ -196,10 +262,113 @@ export async function GET() {
     }
   }
 
+  // Reply rate vs last week
+  const [lastWeekSent] = await db
+    .select({ cnt: count() })
+    .from(email_queue)
+    .where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, lastWeekStart), sql`${email_queue.sent_at} < ${lastWeekEnd}`))
+  const [lastWeekReplies] = await db
+    .select({ cnt: count() })
+    .from(incoming_replies)
+    .where(and(gte(incoming_replies.created_at, lastWeekStart), sql`${incoming_replies.created_at} < ${lastWeekEnd}`))
+
   const contacted = totalEmailsSent
   const replied = totalReplies
   const replyRate = contacted > 0 ? +((replied / contacted) * 100).toFixed(1) : 0
   const rdvRate = replied > 0 ? +((totalRdv / replied) * 100).toFixed(1) : 0
+
+  const lastWeekRate = lastWeekSent.cnt > 0 ? (lastWeekReplies.cnt / lastWeekSent.cnt) * 100 : 0
+  const thisWeekSentRows = await db
+    .select({ cnt: count() })
+    .from(email_queue)
+    .where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, weekStart), sql`${email_queue.sent_at} < ${weekEnd}`))
+  const thisWeekRepliesRows = await db
+    .select({ cnt: count() })
+    .from(incoming_replies)
+    .where(and(gte(incoming_replies.created_at, weekStart), sql`${incoming_replies.created_at} < ${weekEnd}`))
+  const thisWeekRate = thisWeekSentRows[0]?.cnt > 0
+    ? (thisWeekRepliesRows[0]?.cnt / thisWeekSentRows[0]?.cnt) * 100
+    : 0
+  const replyRateVsLastWeek = lastWeekRate > 0
+    ? +((((thisWeekRate - lastWeekRate) / lastWeekRate) * 100).toFixed(1))
+    : 0
+
+  // Week calendar
+  const dayNames = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM']
+  const rdvThisWeekRows = await db
+    .select({ scheduled_at: rdv.scheduled_at })
+    .from(rdv)
+    .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`))
+
+  const rdvByDate: Record<string, number> = {}
+  for (const r of rdvThisWeekRows) {
+    const d = new Date(r.scheduled_at).toISOString().slice(0, 10)
+    rdvByDate[d] = (rdvByDate[d] ?? 0) + 1
+  }
+
+  const weekCalendar = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart)
+    d.setDate(weekStart.getDate() + i)
+    const dateStr = d.toISOString().slice(0, 10)
+    return {
+      date: dateStr,
+      dayName: dayNames[d.getDay()],
+      rdvCount: rdvByDate[dateStr] ?? 0,
+    }
+  })
+
+  // Top campaigns
+  const campaignsRaw = await db
+    .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
+    .from(campaigns)
+    .orderBy(desc(campaigns.created_at))
+    .limit(5)
+
+  const topCampaigns = await Promise.all(
+    campaignsRaw.map(async (c) => {
+      const [{ sentThisMonth }] = await db
+        .select({ sentThisMonth: count() })
+        .from(email_queue)
+        .where(and(eq(email_queue.campaign_id, c.id), eq(email_queue.status, 'sent'), gte(email_queue.sent_at, monthStart)))
+      const [{ rdvCnt }] = await db
+        .select({ rdvCnt: count() })
+        .from(rdv)
+        .where(and(eq((rdv as typeof rdv & { campaign_id?: unknown }).campaign_id as Parameters<typeof eq>[0], c.id), gte(rdv.created_at, monthStart)))
+        .catch(() => [{ rdvCnt: 0 }])
+      const [{ repliesCnt }] = await db
+        .select({ repliesCnt: count() })
+        .from(incoming_replies)
+        .where(gte(incoming_replies.created_at, monthStart))
+      const rr = sentThisMonth > 0 ? +((repliesCnt / sentThisMonth) * 100).toFixed(1) : 0
+      return {
+        name: c.name,
+        sentThisMonth,
+        replyRate: rr,
+        rdvCount: rdvCnt ?? 0,
+        status: c.status ?? 'draft',
+      }
+    })
+  ).catch(() => [] as { name: string; sentThisMonth: number; replyRate: number; rdvCount: number; status: string }[])
+
+  // Recent activity
+  const recentActivity = recentEvents.slice(0, 10).map(ev => {
+    const d = ev.data as Record<string, unknown>
+    let text = ''
+    const time = new Date(ev.created_at!).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    const diffDays = Math.floor((now.getTime() - new Date(ev.created_at!).getTime()) / 86400000)
+    if (ev.type === 'rdv_created') text = `RDV pris avec ${String(d?.company ?? '')}`
+    else if (ev.type === 'email_sent') text = `Email envoyé à ${String(d?.company ?? '')}`
+    else if (ev.type === 'reply_received') text = `Réponse reçue de ${String(d?.company ?? d?.from_email ?? '')}`
+    else text = String(d?.message ?? ev.type)
+    return {
+      id: ev.id,
+      type: ev.type,
+      time,
+      text,
+      daysAgo: diffDays,
+      created_at: ev.created_at!.toISOString(),
+    }
+  })
 
   const pendingDrafts = pendingDraftsRaw.map(r => ({
     id: r.id,
@@ -213,6 +382,21 @@ export async function GET() {
     company: r.company ?? 'Contact',
     scheduled_at: r.scheduled_at.toISOString(),
   }))
+
+  const weeklyLearning = weeklyLearningRaw[0]
+    ? {
+        id: weeklyLearningRaw[0].id,
+        period_start: weeklyLearningRaw[0].period_start.toISOString(),
+        period_end: weeklyLearningRaw[0].period_end.toISOString(),
+        emails_sent: weeklyLearningRaw[0].emails_sent,
+        reply_rate: weeklyLearningRaw[0].reply_rate,
+        rdv_count: weeklyLearningRaw[0].rdv_count,
+        top_sectors: weeklyLearningRaw[0].top_sectors,
+        top_subject_patterns: weeklyLearningRaw[0].top_subject_patterns,
+        recommendations: weeklyLearningRaw[0].recommendations as Record<string, unknown> | null,
+        created_at: weeklyLearningRaw[0].created_at!.toISOString(),
+      }
+    : null
 
   return NextResponse.json({
     totalEmailsSent,
@@ -231,6 +415,18 @@ export async function GET() {
     totalCampaigns: totalCampaignsCount[0]?.cnt ?? 0,
     lastTickMinutesAgo,
     revenue_this_month: rdvThisMonth * 50,
+    // new
+    repliesReceived,
+    clientsSigned,
+    emailsSentThisWeek,
+    replyRateVsLastWeek,
+    pendingFollowups,
+    weekCalendar,
+    topCampaigns,
+    recentActivity,
+    weeklyLearning,
+    revenue: rdvThisMonth * 50,
+    // legacy
     recentEvents,
     pendingDrafts,
     upcomingRdvs,

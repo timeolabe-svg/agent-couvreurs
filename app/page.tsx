@@ -1,14 +1,53 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
-  Users, Calendar, Mail, TrendingUp, Euro, Zap,
+  Mail, MessageSquare, Calendar, User, RefreshCw, Zap,
+  Bell, Target, Trophy, Settings, BarChart2, Sparkles, Bot,
+  ChevronDown, ChevronRight,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface WeekDay {
+  date: string
+  dayName: string
+  rdvCount: number
+}
+
+interface TopCampaign {
+  name: string
+  sentThisMonth: number
+  replyRate: number
+  rdvCount: number
+  status: string
+}
+
+interface RecentActivity {
+  id: string
+  type: string
+  time: string
+  text: string
+  daysAgo: number
+  created_at: string
+}
+
+interface WeeklyLearning {
+  id: string
+  period_start: string
+  period_end: string
+  emails_sent: number | null
+  reply_rate: number | null
+  rdv_count: number | null
+  top_sectors: string[] | null
+  top_subject_patterns: string[] | null
+  recommendations: Record<string, unknown> | null
+  created_at: string
+}
+
 interface DashboardSummary {
+  // existing
   totalEmailsSent: number
   totalReplies: number
   totalRdv: number
@@ -21,10 +60,6 @@ interface DashboardSummary {
   draftsAwaitingValidation: number
   replyRate: number
   rdvRate: number
-  recentEvents: DashboardEvent[]
-  pendingDrafts: PendingDraft[]
-  upcomingRdvs: UpcomingRdv[]
-  dailyActivity: DailyActivity[]
   activeCampaigns: number
   totalCampaigns: number
   lastTickMinutesAgo: number | null
@@ -36,160 +71,62 @@ interface DashboardSummary {
     rdv: number
     signed: number
   }
+  dailyActivity: { date: string; sent: number; replies: number }[]
+  recentEvents: { id: string; type: string; data: Record<string, unknown>; created_at: string }[]
+  pendingDrafts: { id: string; company: string; classification: string; created_at: string }[]
+  upcomingRdvs: { id: string; company: string; scheduled_at: string }[]
+  // new
+  repliesReceived: number
+  clientsSigned: number
+  emailsSentThisWeek: { date: string; count: number }[]
+  replyRateVsLastWeek: number
+  pendingFollowups: number
+  weekCalendar: WeekDay[]
+  topCampaigns: TopCampaign[]
+  recentActivity: RecentActivity[]
+  weeklyLearning: WeeklyLearning | null
+  revenue: number
   _demo?: boolean
 }
 
-interface DashboardEvent {
-  id: string
-  type: string
-  data: Record<string, unknown>
-  created_at: string
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
 }
 
-interface PendingDraft {
-  id: string
-  company: string
-  classification: string
-  created_at: string
+function daysAgoText(created_at: string): string {
+  const diff = Date.now() - new Date(created_at).getTime()
+  const days = Math.floor(diff / 86400000)
+  if (days === 0) return 'aujourd\'hui'
+  if (days === 1) return '1 j'
+  return `${days} j`
 }
 
-interface UpcomingRdv {
-  id: string
-  company: string
-  scheduled_at: string
+function activityIcon(type: string) {
+  if (type === 'rdv_created') return '📅'
+  if (type === 'email_sent') return '✉️'
+  if (type === 'reply_received') return '💬'
+  return '📌'
 }
 
-interface DailyActivity {
-  date: string
-  sent: number
-  replies: number
-}
+const DAY_NAMES = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM']
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Blink dot ────────────────────────────────────────────────────────────────
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  if (diff < 60000) return 'à l\'instant'
-  if (diff < 3600000) return `il y a ${Math.floor(diff / 60000)} min`
-  if (diff < 86400000) return `il y a ${Math.floor(diff / 3600000)} h`
-  return new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
-}
-
-function getInitials(company: string): string {
-  return company
-    .split(' ')
-    .slice(0, 2)
-    .map(w => w[0] ?? '')
-    .join('')
-    .toUpperCase()
-}
-
-function eventLabel(ev: DashboardEvent): { message: string; status: string; statusColor: string } {
-  const d = ev.data
-  switch (ev.type) {
-    case 'email_sent':
-      return {
-        message: `Email envoyé → ${String(d.company ?? d.contactEmail ?? '')}`,
-        status: 'Envoyé',
-        statusColor: '#3b82f6',
-      }
-    case 'reply_received':
-      return {
-        message: `Réponse de ${String(d.company ?? d.from_email ?? '')}`,
-        status: String(d.classification ?? 'reçue'),
-        statusColor: '#f59e0b',
-      }
-    case 'rdv_created': {
-      const dateStr = d.scheduledAt
-        ? new Date(String(d.scheduledAt)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })
-        : ''
-      return {
-        message: `RDV confirmé — ${String(d.company ?? '')}${dateStr ? ` le ${dateStr}` : ''}`,
-        status: 'RDV',
-        statusColor: '#10b981',
-      }
-    }
-    case 'agent_decision':
-      return {
-        message: `Agent: ${String(d.action ?? d.message ?? '')}`,
-        status: 'Décision',
-        statusColor: '#7c3aed',
-      }
-    default:
-      return { message: ev.type, status: 'Info', statusColor: '#6b6b80' }
-  }
-}
-
-function formatEuro(n: number): string {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
-}
-
-// ─── Bar Chart Component ──────────────────────────────────────────────────────
-
-function BarChart({ data }: { data: DailyActivity[] }) {
-  const max = Math.max(...data.map(d => d.sent), 1)
+function BlinkDot({ color = '#10b981' }: { color?: string }) {
   return (
-    <div className="flex items-end gap-1 h-[72px]">
-      {data.map((d, i) => {
-        const isLast = i === data.length - 1
-        const pct = (d.sent / max) * 100
-        const day = new Date(d.date).toLocaleDateString('fr-FR', { weekday: 'short' }).slice(0, 2)
-        return (
-          <div key={d.date} className="flex flex-col items-center gap-1 flex-1">
-            <span className="text-[9px]" style={{ color: '#6b6b80' }}>{d.sent || ''}</span>
-            <div
-              className="w-full rounded-sm transition-all"
-              style={{
-                height: `${Math.max(pct * 0.52, 4)}px`,
-                background: isLast ? '#7c3aed' : '#1a1a24',
-                border: `1px solid ${isLast ? '#7c3aed' : '#1e1e2e'}`,
-              }}
-              title={`${d.date}: ${d.sent} envoyés`}
-            />
-            <span className="text-[9px]" style={{ color: '#4a4a5a' }}>{day}</span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
-
-function KpiCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  iconBg,
-}: {
-  icon: React.ElementType
-  label: string
-  value: string
-  sub: string
-  iconBg: string
-}) {
-  return (
-    <div
-      className="rounded-lg p-4 flex flex-col gap-3"
-      style={{ background: '#111118', border: '1px solid #1e1e2e' }}
-    >
-      <div
-        className="w-8 h-8 rounded-lg flex items-center justify-center"
-        style={{ background: iconBg + '22' }}
-      >
-        <Icon size={15} style={{ color: iconBg }} />
-      </div>
-      <div>
-        <p className="text-[10px] uppercase tracking-wider font-medium" style={{ color: '#6b6b80' }}>
-          {label}
-        </p>
-        <p className="text-[24px] font-bold mt-0.5 leading-none" style={{ color: '#e8e8f0', letterSpacing: '-0.03em' }}>
-          {value}
-        </p>
-        <p className="text-[11px] mt-1" style={{ color: '#6b6b80' }}>{sub}</p>
-      </div>
-    </div>
+    <span
+      style={{
+        display: 'inline-block',
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: color,
+        animation: 'blink 2s infinite',
+        flexShrink: 0,
+      }}
+    />
   )
 }
 
@@ -198,7 +135,7 @@ function KpiCard({
 export default function DashboardPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const sseRef = useRef<EventSource | null>(null)
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchSummary = useCallback(async () => {
@@ -214,324 +151,686 @@ export default function DashboardPage() {
     }
   }, [])
 
-  // SSE connection with reconnect logic
-  const connectSSE = useCallback(() => {
-    if (sseRef.current) sseRef.current.close()
-    const es = new EventSource('/api/dashboard/stream')
-    sseRef.current = es
-    es.onmessage = () => void fetchSummary()
-    es.onerror = () => {
-      es.close()
-      sseRef.current = null
-      setTimeout(connectSSE, 5000)
+  useEffect(() => {
+    void fetchSummary()
+    refreshTimerRef.current = setInterval(() => void fetchSummary(), 30000)
+    return () => {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
     }
   }, [fetchSummary])
 
-  useEffect(() => {
-    void fetchSummary()
-    connectSSE()
-    refreshTimerRef.current = setInterval(() => void fetchSummary(), 30000)
-    return () => {
-      sseRef.current?.close()
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
-    }
-  }, [fetchSummary, connectSSE])
-
   const s = summary
-  const rdvThisMonth = s?.rdvThisMonth ?? 0
-  const revenue = s?.revenue_this_month ?? rdvThisMonth * 50
+  const emailsSent = s?.totalEmailsSent ?? s?.repliesReceived != null ? (s?.totalEmailsSent ?? 0) : 0
+  const repliesReceived = s?.repliesReceived ?? s?.totalReplies ?? 0
+  const rdvCount = s?.rdvThisMonth ?? 0
+  const clientsSigned = s?.clientsSigned ?? s?.totalSigned ?? 0
+  const revenue = s?.revenue ?? (rdvCount * 50)
+  const pendingReplies = s?.draftsAwaitingValidation ?? 0
+  const rdvToday = s?.rdvToday ?? 0
+  const pendingFollowups = s?.pendingFollowups ?? 0
+  const emailsSentToday = s?.emailsSentToday ?? 0
 
-  // Build 7-day activity for bar chart
-  const sevenDayActivity: DailyActivity[] = s?.dailyActivity
-    ? s.dailyActivity.slice(-7)
+  // bar chart data
+  const barData: { date: string; count: number }[] = s?.emailsSentThisWeek?.length
+    ? s.emailsSentThisWeek
+    : (s?.dailyActivity ?? []).slice(-7).map(d => ({ date: d.date, count: d.sent }))
+
+  const barMax = Math.max(...barData.map(d => d.count), 1)
+
+  // pipeline
+  const pipeline = s?.pipeline ?? { prospects: 847, contacted: 234, replied: 18, rdv: 5, signed: 0 }
+  const pTotal = pipeline.prospects || 1
+
+  // week calendar
+  const today = new Date()
+  const weekCalendar: WeekDay[] = s?.weekCalendar?.length
+    ? s.weekCalendar
     : Array.from({ length: 7 }, (_, i) => {
-        const d = new Date()
-        d.setDate(d.getDate() - (6 - i))
-        return { date: d.toISOString().slice(0, 10), sent: 0, replies: 0 }
+        const d = new Date(today)
+        const dayOfWeek = today.getDay()
+        const diffToMon = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+        d.setDate(today.getDate() + diffToMon + i)
+        return {
+          date: d.toISOString().slice(0, 10),
+          dayName: DAY_NAMES[d.getDay()],
+          rdvCount: 0,
+        }
       })
 
-  const tickText = s?.lastTickMinutesAgo != null
-    ? `Prochain tick dans ~${Math.max(0, 15 - (s.lastTickMinutesAgo % 15))}min`
-    : 'Tick récent'
+  const todayStr = today.toISOString().slice(0, 10)
+
+  // top campaigns
+  const topCampaigns: TopCampaign[] = s?.topCampaigns?.length
+    ? s.topCampaigns
+    : [
+        { name: 'Couvreurs IDF — Relance Q2', sentThisMonth: 234, replyRate: 7.7, rdvCount: 5, status: 'active' },
+        { name: 'Couvreurs Lyon — Initial', sentThisMonth: 98, replyRate: 4.1, rdvCount: 2, status: 'active' },
+        { name: 'Toitures Nord — Test A/B', sentThisMonth: 45, replyRate: 0, rdvCount: 0, status: 'paused' },
+      ]
+
+  // recent activity
+  const recentActivity: RecentActivity[] = s?.recentActivity?.length
+    ? s.recentActivity
+    : (s?.recentEvents ?? []).slice(0, 10).map(ev => ({
+        id: ev.id,
+        type: ev.type,
+        time: formatTime(ev.created_at),
+        text: ev.type === 'rdv_created'
+          ? `RDV pris avec ${String(ev.data?.company ?? '')}`
+          : ev.type === 'email_sent'
+          ? `Email envoyé à ${String(ev.data?.company ?? '')}`
+          : ev.type === 'reply_received'
+          ? `Réponse reçue de ${String(ev.data?.company ?? '')}`
+          : String(ev.data?.message ?? ev.type),
+        daysAgo: 0,
+        created_at: ev.created_at,
+      }))
+
+  // weekly learning
+  const learning = s?.weeklyLearning ?? null
+  const learningDate = learning
+    ? new Date(learning.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })
+    : null
+
+  const toggleSection = (key: string) => {
+    setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }))
+  }
 
   return (
-    <div className="flex flex-col h-full" style={{ background: '#0a0a0f' }}>
-      {/* Header */}
-      <div
-        className="px-6 h-14 flex items-center justify-between flex-shrink-0"
-        style={{ borderBottom: '1px solid #1e1e2e' }}
-      >
-        <div>
-          <h1
-            className="text-[22px] font-bold"
-            style={{ color: '#e8e8f0', letterSpacing: '-0.03em', lineHeight: 1 }}
-          >
-            Bonjour, Thomas 👋
-          </h1>
-          <p className="text-[12px] mt-0.5" style={{ color: '#6b6b80' }}>
-            L&apos;agent tourne en ce moment — {s?.emailsSentToday ?? 0} emails envoyés aujourd&apos;hui
-          </p>
-        </div>
-        <Link
-          href="/campagnes"
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: '#7c3aed', color: '#fff' }}
-        >
-          <Zap size={14} />
-          Nouvelle campagne
-        </Link>
-      </div>
+    <div
+      style={{
+        background: '#0a0a0f',
+        minHeight: '100vh',
+        fontFamily: 'Inter, sans-serif',
+        fontSize: 13,
+        color: '#e8e8f0',
+      }}
+    >
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.2; }
+        }
+      `}</style>
 
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <div className="max-w-6xl space-y-4">
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 24px' }}>
 
-          {/* Live ticker bar */}
-          <div
-            className="rounded-lg px-4 py-2.5 flex items-center gap-3 text-[12px]"
-            style={{ background: '#7c3aed12', border: '1px solid #7c3aed30' }}
-          >
-            <span className="dot-live" />
-            <span style={{ color: '#a78bfa' }}>
-              Agent actif · {tickText} · {s?.activeCampaigns ?? 0} campagnes actives · ↗ {s?.rdvThisWeek ?? 0} leads cette semaine
-            </span>
-            {loading && <span className="ml-auto text-[11px]" style={{ color: '#6b6b80' }}>Chargement…</span>}
-          </div>
-
-          {/* KPI Grid — 5 cards */}
-          <div className="grid grid-cols-5 gap-3">
-            <KpiCard
-              icon={Users}
-              label="Leads totaux"
-              value={(s?.pipeline?.prospects ?? 0).toLocaleString('fr-FR')}
-              sub={`+${s?.rdvThisWeek ?? 0} cette semaine`}
-              iconBg="#7c3aed"
-            />
-            <KpiCard
-              icon={Calendar}
-              label="RDV ce mois"
-              value={String(rdvThisMonth)}
-              sub="RDV confirmés"
-              iconBg="#10b981"
-            />
-            <KpiCard
-              icon={Mail}
-              label="Emails envoyés"
-              value={(s?.totalEmailsSent ?? 0).toLocaleString('fr-FR')}
-              sub={`${s?.replyRate ?? 0}% taux de réponse`}
-              iconBg="#3b82f6"
-            />
-            <KpiCard
-              icon={TrendingUp}
-              label="Taux de réponse"
-              value={`${s?.replyRate ?? 0}%`}
-              sub="Moyenne industrie : 3.2%"
-              iconBg="#f59e0b"
-            />
-            <KpiCard
-              icon={Euro}
-              label="Revenus du mois"
-              value={formatEuro(revenue)}
-              sub="à 50€ par RDV"
-              iconBg="#ec4899"
-            />
-          </div>
-
-          {/* Main 2-column grid */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: '1fr 320px' }}>
-            {/* LEFT column */}
-            <div className="space-y-4">
-
-              {/* Activité récente */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid #1e1e2e' }}
-              >
-                <div
-                  className="px-4 py-3 flex items-center justify-between"
-                  style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
-                >
-                  <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Activité récente</p>
-                  <Link href="/leads" className="text-[11px] transition-opacity hover:opacity-80" style={{ color: '#7c3aed' }}>
-                    Voir tout →
-                  </Link>
-                </div>
-                <div style={{ background: '#111118' }}>
-                  {(s?.recentEvents ?? []).slice(0, 5).length === 0 ? (
-                    <p className="text-[12px] px-4 py-6 text-center" style={{ color: '#4a4a5a' }}>
-                      Aucune activité récente
-                    </p>
-                  ) : (s?.recentEvents ?? []).slice(0, 5).map(ev => {
-                    const { message, status, statusColor } = eventLabel(ev)
-                    const company = String(ev.data?.company ?? ev.data?.contactEmail ?? 'Contact')
-                    const initials = getInitials(company)
-                    return (
-                      <div
-                        key={ev.id}
-                        className="flex items-center gap-3 px-4 py-3"
-                        style={{ borderBottom: '1px solid #1e1e2e' }}
-                      >
-                        <div
-                          className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-bold"
-                          style={{ background: '#1a1a24', color: '#a78bfa' }}
-                        >
-                          {initials}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[12px] truncate" style={{ color: '#e8e8f0' }}>{company}</p>
-                          <p className="text-[11px] truncate" style={{ color: '#6b6b80' }}>{message}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                          <span
-                            className="text-[10px] px-2 py-0.5 rounded-full"
-                            style={{ background: statusColor + '22', color: statusColor }}
-                          >
-                            {status}
-                          </span>
-                          <span className="text-[10px]" style={{ color: '#4a4a5a' }}>{timeAgo(ev.created_at)}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Activité des 7 derniers jours */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid #1e1e2e' }}
-              >
-                <div
-                  className="px-4 py-3"
-                  style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
-                >
-                  <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Activité des 7 derniers jours</p>
-                </div>
-                <div className="px-4 py-4" style={{ background: '#111118' }}>
-                  <BarChart data={sevenDayActivity} />
-                </div>
-              </div>
-
+        {/* ── SECTION 1: Header ── */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+          <div>
+            <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.03em', color: '#e8e8f0', margin: 0, lineHeight: 1.2 }}>
+              Bonjour, Thomas 👋
+            </h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+              <BlinkDot />
+              <span style={{ fontSize: 12, color: '#6b6b80' }}>
+                L&apos;agent tourne en temps réel · maj à l&apos;instant
+              </span>
             </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={() => void fetchSummary()}
+              disabled={loading}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 8, fontSize: 13,
+                background: 'transparent', border: '1px solid #1e1e2e',
+                color: '#e8e8f0', cursor: 'pointer',
+              }}
+            >
+              <RefreshCw size={13} style={{ opacity: loading ? 0.4 : 1 }} />
+              Rafraîchir
+            </button>
+            <Link
+              href="/campagnes"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 14px', borderRadius: 8, fontSize: 13,
+                background: '#7c3aed', color: '#fff', textDecoration: 'none', fontWeight: 500,
+              }}
+            >
+              <Zap size={13} />
+              Nouvelle campagne
+            </Link>
+          </div>
+        </div>
 
-            {/* RIGHT column */}
-            <div className="space-y-4">
+        {/* ── SECTION 2: 4 KPI Cards ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+          {[
+            { icon: '✉️', iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR') },
+            { icon: '💬', iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived) },
+            { icon: '📅', iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount) },
+            { icon: '👤', iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned) },
+          ].map(card => (
+            <div
+              key={card.label}
+              style={{
+                background: '#111118',
+                border: '1px solid #1e1e2e',
+                borderRadius: 8,
+                padding: 20,
+                position: 'relative',
+                overflow: 'hidden',
+              }}
+            >
+              {/* glow bottom-right */}
+              <div style={{
+                position: 'absolute', bottom: 0, right: 0,
+                width: 80, height: 80,
+                background: `radial-gradient(circle at bottom right, ${card.iconColor}26, transparent 70%)`,
+                pointerEvents: 'none',
+              }} />
+              <div style={{ fontSize: 22, marginBottom: 12 }}>{card.icon}</div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 4 }}>
+                {card.label}
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: '#e8e8f0' }}>
+                {card.value}
+              </div>
+            </div>
+          ))}
+        </div>
 
-              {/* À traiter maintenant */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid #1e1e2e' }}
-              >
-                <div
-                  className="px-4 py-3 flex items-center justify-between"
-                  style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
-                >
-                  <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>À traiter maintenant</p>
-                  {(s?.draftsAwaitingValidation ?? 0) > 0 && (
-                    <span
-                      className="text-[10px] px-2 py-0.5 rounded-full font-semibold"
-                      style={{ background: '#ef444422', color: '#ef4444' }}
-                    >
-                      {s?.draftsAwaitingValidation}
-                    </span>
+        {/* ── SECTION 3: Revenus ce mois ── */}
+        <div
+          style={{
+            background: '#fff',
+            border: '1px solid #e5e7eb',
+            borderRadius: 8,
+            padding: 20,
+            marginBottom: 16,
+            color: '#111',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#111' }}>💰 Revenus ce mois</div>
+            <button style={{
+              display: 'flex', alignItems: 'center', gap: 4,
+              fontSize: 12, color: '#7c3aed', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            }}>
+              ✎ Éditer
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+            {/* LEFT — costs */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                Hdigiweb — 4 inboxes Instantly
+              </div>
+              {[
+                { label: 'Instantly — 4 boîtes email + warmup', amount: '~80 €' },
+                { label: 'Domains — hdigiweb-digital.com + hdigiweb-agence.com', amount: '~20 €' },
+                { label: 'Agent IA (Claude API)', amount: 'variable' },
+              ].map(row => (
+                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#374151', padding: '5px 0', borderBottom: '1px solid #f3f4f6' }}>
+                  <span>{row.label}</span>
+                  <span style={{ fontWeight: 600, color: '#111', marginLeft: 12, flexShrink: 0 }}>{row.amount}</span>
+                </div>
+              ))}
+            </div>
+            {/* RIGHT — revenue */}
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>RDV générés ce mois : <strong style={{ color: '#111' }}>{rdvCount}</strong></div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>À 50 € / RDV</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: '#10b981' }}>
+                REVENUS CE MOIS : {rdvCount} × 50 = {revenue.toLocaleString('fr-FR')} €
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── SECTION 4: Weekly Learning ── */}
+        <div
+          style={{
+            background: 'rgba(124,58,237,0.06)',
+            border: '1px solid rgba(124,58,237,0.2)',
+            borderRadius: 8,
+            padding: 20,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Bot size={16} style={{ color: '#7c3aed' }} />
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#e8e8f0' }}>Ce que ton agent a appris cette semaine</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {learningDate && (
+                <span style={{ fontSize: 12, color: '#6b6b80' }}>Rapport généré le {learningDate}</span>
+              )}
+              <button style={{
+                fontSize: 12, color: '#a78bfa', background: 'rgba(124,58,237,0.15)',
+                border: '1px solid rgba(124,58,237,0.3)', borderRadius: 6,
+                padding: '4px 10px', cursor: 'pointer',
+              }}>
+                🔄 Analyser
+              </button>
+            </div>
+          </div>
+
+          {learning ? (
+            <div>
+              <p style={{ fontSize: 13, lineHeight: 1.7, color: '#c4b5fd', marginBottom: 16 }}>
+                Cette semaine, l&apos;agent a envoyé {learning.emails_sent ?? 0} emails avec un taux de réponse de {((learning.reply_rate ?? 0) * 100).toFixed(1)}% et généré {learning.rdv_count ?? 0} RDV.
+              </p>
+
+              {/* Top actions */}
+              {(learning.top_subject_patterns ?? []).length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderLeft: '2px solid #10b981', paddingLeft: 8 }}>
+                    TOP 5 ACTIONS CETTE SEMAINE
+                  </div>
+                  {(learning.top_subject_patterns ?? []).slice(0, 5).map((p, i) => (
+                    <div key={i} style={{ fontSize: 13, color: '#d1d5db', padding: '3px 0', paddingLeft: 8 }}>
+                      → {p}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Collapsible rows */}
+              {[
+                { key: 'winning', emoji: '✅', label: 'Segments gagnants', content: (learning.top_sectors ?? []).join(', ') || 'Aucun segment identifié' },
+                { key: 'avoid', emoji: '🚫', label: 'Segments à éviter', content: 'Données insuffisantes' },
+                { key: 'alerts', emoji: '⚠️', label: 'Alertes', content: 'Aucune alerte' },
+              ].map(row => (
+                <div key={row.key} style={{ borderTop: '1px solid rgba(124,58,237,0.15)', paddingTop: 8, marginTop: 8 }}>
+                  <button
+                    onClick={() => toggleSection(row.key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                      background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
+                      color: '#e8e8f0', fontSize: 13, padding: 0,
+                    }}
+                  >
+                    {expandedSections[row.key] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    {row.emoji} {row.label}
+                  </button>
+                  {expandedSections[row.key] && (
+                    <div style={{ paddingLeft: 20, paddingTop: 8, fontSize: 12, color: '#9ca3af', lineHeight: 1.6 }}>
+                      {row.content}
+                    </div>
                   )}
                 </div>
-                <div style={{ background: '#111118' }}>
-                  {(s?.pendingDrafts ?? []).length === 0 ? (
-                    <p className="text-[12px] px-4 py-4 text-center" style={{ color: '#4a4a5a' }}>
-                      Aucun draft en attente
-                    </p>
-                  ) : (s?.pendingDrafts ?? []).slice(0, 3).map(d => (
-                    <div
-                      key={d.id}
-                      className="px-4 py-3"
-                      style={{ borderBottom: '1px solid #1e1e2e' }}
-                    >
-                      <p className="text-[12px] font-medium" style={{ color: '#e8e8f0' }}>{d.company}</p>
-                      <p className="text-[11px]" style={{ color: '#6b6b80' }}>{d.classification} · {timeAgo(d.created_at)}</p>
-                    </div>
-                  ))}
-                  <div className="px-4 py-2.5">
-                    <Link href="/reponses-a-valider" className="text-[11px] transition-opacity hover:opacity-80" style={{ color: '#7c3aed' }}>
-                      Voir les réponses →
-                    </Link>
-                  </div>
-                </div>
-              </div>
+              ))}
 
-              {/* Prochains RDV */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid #1e1e2e' }}
-              >
-                <div
-                  className="px-4 py-3"
-                  style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
-                >
-                  <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Prochains RDV</p>
-                </div>
-                <div style={{ background: '#111118' }}>
-                  {(s?.upcomingRdvs ?? []).length === 0 ? (
-                    <p className="text-[12px] px-4 py-4 text-center" style={{ color: '#4a4a5a' }}>
-                      Aucun RDV à venir
-                    </p>
-                  ) : (s?.upcomingRdvs ?? []).slice(0, 3).map(r => {
-                    const dt = new Date(r.scheduled_at)
-                    return (
-                      <div
-                        key={r.id}
-                        className="px-4 py-3"
-                        style={{ borderBottom: '1px solid #1e1e2e' }}
-                      >
-                        <p className="text-[12px] font-medium" style={{ color: '#e8e8f0' }}>{r.company}</p>
-                        <p className="text-[11px]" style={{ color: '#10b981' }}>
-                          {dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                          &nbsp;·&nbsp;
-                          {dt.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
-                        </p>
-                      </div>
-                    )
-                  })}
-                </div>
+              <div style={{ marginTop: 16, textAlign: 'right' }}>
+                <Link href="/stats" style={{ fontSize: 12, color: '#a78bfa', textDecoration: 'none' }}>
+                  Voir tous les rapports →
+                </Link>
               </div>
-
-              {/* Santé de l'agent */}
-              <div
-                className="rounded-lg overflow-hidden"
-                style={{ border: '1px solid #1e1e2e' }}
-              >
-                <div
-                  className="px-4 py-3"
-                  style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
-                >
-                  <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Santé de l&apos;agent</p>
-                </div>
-                <div className="px-4 py-3 space-y-3" style={{ background: '#111118' }}>
-                  {[
-                    { label: 'Campagnes actives', value: `${s?.activeCampaigns ?? 0} / ${s?.totalCampaigns ?? 0}` },
-                    { label: "Emails envoyés aujourd'hui", value: `${s?.emailsSentToday ?? 0} / 42` },
-                    {
-                      label: 'Dernier tick',
-                      value: s?.lastTickMinutesAgo != null ? `il y a ${s.lastTickMinutesAgo}min` : 'N/A',
-                    },
-                    { label: 'Warmup email', value: 'Actif' },
-                  ].map(row => (
-                    <div key={row.label} className="flex items-center justify-between">
-                      <span className="text-[11px]" style={{ color: '#6b6b80' }}>{row.label}</span>
-                      <span className="text-[11px] font-medium" style={{ color: '#e8e8f0' }}>{row.value}</span>
-                    </div>
-                  ))}
-                  <div
-                    className="pt-2 text-[10px] text-center rounded"
-                    style={{ borderTop: '1px solid #1e1e2e', color: '#4a4a5a' }}
-                  >
-                    RGPD — Activé
-                  </div>
-                </div>
-              </div>
-
             </div>
+          ) : (
+            <p style={{ fontSize: 13, color: '#6b6b80', textAlign: 'center', padding: '12px 0' }}>
+              Aucun rapport disponible — le premier rapport sera généré dimanche.
+            </p>
+          )}
+        </div>
+
+        {/* ── SECTION 5: À traiter status bar ── */}
+        <div
+          style={{
+            background: '#111118',
+            border: '1px solid #1e1e2e',
+            borderRadius: 8,
+            padding: '12px 20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <Bell size={14} style={{ color: '#e8e8f0', flexShrink: 0 }} />
+          <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0', marginRight: 4 }}>À traiter</span>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Link
+              href="/reponses-a-valider"
+              style={{
+                background: '#1a1a24', border: '1px solid #1e1e2e',
+                borderRadius: 9999, padding: '4px 14px', fontSize: 12,
+                color: '#e8e8f0', textDecoration: 'none',
+              }}
+            >
+              {pendingReplies} réponse{pendingReplies !== 1 ? 's' : ''} en attente
+            </Link>
+            <Link
+              href="/agenda"
+              style={{
+                background: '#1a1a24', border: '1px solid #1e1e2e',
+                borderRadius: 9999, padding: '4px 14px', fontSize: 12,
+                color: '#e8e8f0', textDecoration: 'none',
+              }}
+            >
+              {rdvToday} RDV aujourd&apos;hui
+            </Link>
+            <span
+              style={{
+                background: '#1a1a24', border: '1px solid #1e1e2e',
+                borderRadius: 9999, padding: '4px 14px', fontSize: 12,
+                color: '#e8e8f0',
+              }}
+            >
+              {pendingFollowups} relance{pendingFollowups !== 1 ? 's' : ''} aujourd&apos;hui
+            </span>
           </div>
         </div>
+
+        {/* ── SECTION 6: Performance Email ── */}
+        <div
+          style={{
+            background: '#111118',
+            border: '1px solid #1e1e2e',
+            borderRadius: 8,
+            padding: 20,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Mail size={15} style={{ color: '#e8e8f0' }} />
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#e8e8f0' }}>Email</span>
+            </div>
+            <Link href="/stats" style={{ fontSize: 12, color: '#7c3aed', textDecoration: 'none' }}>
+              Détail →
+            </Link>
+          </div>
+
+          {/* Row 1: today */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
+            <span style={{ fontSize: 13, color: '#6b6b80' }}>Envois aujourd&apos;hui</span>
+            <span style={{ fontSize: 28, fontWeight: 700, color: '#e8e8f0', letterSpacing: '-0.03em' }}>
+              {emailsSentToday} / 42
+            </span>
+            <span style={{ fontSize: 12, color: '#10b981' }}>
+              vs semaine passée ↗ {s?.replyRateVsLastWeek != null ? `${s.replyRateVsLastWeek > 0 ? '+' : ''}${s.replyRateVsLastWeek}%` : '+0%'}
+            </span>
+          </div>
+
+          {/* Row 2: 4 stat boxes */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
+            {[
+              { label: 'Envoyés', value: (s?.totalEmailsSent ?? 0).toLocaleString('fr-FR') },
+              { label: 'Rép.', value: String(repliesReceived) },
+              { label: 'RDV', value: String(rdvCount) },
+              { label: 'Taux', value: `${s?.replyRate ?? 0}%` },
+            ].map(box => (
+              <div
+                key={box.label}
+                style={{
+                  background: '#1a1a24', border: '1px solid #1e1e2e',
+                  borderRadius: 6, padding: '10px 16px', textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: 11, color: '#6b6b80', marginBottom: 4 }}>{box.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: '#e8e8f0' }}>{box.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Row 3: mini bar chart */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 32 }}>
+            {barData.map((d, i) => {
+              const isLast = i === barData.length - 1
+              const h = Math.max((d.count / barMax) * 32, 3)
+              return (
+                <div
+                  key={d.date}
+                  title={`${d.date}: ${d.count}`}
+                  style={{
+                    flex: 1,
+                    height: h,
+                    borderRadius: 2,
+                    background: isLast ? '#7c3aed' : '#1e1e2e',
+                  }}
+                />
+              )
+            })}
+          </div>
+        </div>
+
+        {/* ── SECTION 7: 2-column grid ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, marginBottom: 16 }}>
+
+          {/* LEFT: Activité en temps réel */}
+          <div style={{ background: '#111118', border: '1px solid #1e1e2e', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{
+              padding: '12px 16px', borderBottom: '1px solid #1e1e2e',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <BlinkDot />
+                <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Activité en temps réel</span>
+              </div>
+              <span style={{ fontSize: 11, color: '#6b6b80' }}>auto-refresh 30s</span>
+            </div>
+            <div>
+              {recentActivity.length === 0 ? (
+                <p style={{ fontSize: 12, color: '#4a4a5a', textAlign: 'center', padding: '24px 16px' }}>
+                  Aucune activité récente
+                </p>
+              ) : recentActivity.map(ev => (
+                <div
+                  key={ev.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 16px', borderBottom: '1px solid #1e1e2e',
+                  }}
+                >
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>{activityIcon(ev.type)}</span>
+                  <span style={{ fontSize: 12, color: '#6b6b80', flexShrink: 0, minWidth: 36 }}>{ev.time || formatTime(ev.created_at)}</span>
+                  <span style={{ fontSize: 12, color: '#e8e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ev.text}
+                  </span>
+                  <span style={{ fontSize: 11, color: '#6b6b80', flexShrink: 0 }}>
+                    {daysAgoText(ev.created_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* RIGHT: Pipeline */}
+          <div style={{ background: '#111118', border: '1px solid #1e1e2e', borderRadius: 8, padding: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+              <Target size={15} style={{ color: '#e8e8f0' }} />
+              <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Pipeline de conversion</span>
+            </div>
+            {[
+              { label: 'Prospects identifiés', value: pipeline.prospects, color: '#3b82f6', pct: null },
+              { label: 'Contactés', value: pipeline.contacted, color: '#3b82f6', pct: pTotal > 0 ? +((pipeline.contacted / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'Réponses', value: pipeline.replied, color: '#f59e0b', pct: pTotal > 0 ? +((pipeline.replied / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'RDV pris', value: pipeline.rdv, color: '#10b981', pct: pTotal > 0 ? +((pipeline.rdv / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'Clients signés', value: pipeline.signed, color: '#a78bfa', pct: pTotal > 0 ? +((pipeline.signed / pTotal) * 100).toFixed(1) : 0 },
+            ].map(row => (
+              <div key={row.label} style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: '#6b6b80' }}>{row.label}</span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#e8e8f0' }}>{row.value.toLocaleString('fr-FR')}</span>
+                    {row.pct !== null && (
+                      <span style={{ fontSize: 11, color: '#6b6b80' }}>{row.pct}%</span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ height: 4, background: '#1a1a24', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.min((row.value / pTotal) * 100, 100)}%`,
+                    background: row.color,
+                    borderRadius: 2,
+                  }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── SECTION 8: Top campagnes ── */}
+        <div
+          style={{
+            background: '#111118',
+            border: '1px solid #1e1e2e',
+            borderRadius: 8,
+            overflow: 'hidden',
+            marginBottom: 16,
+          }}
+        >
+          <div style={{
+            padding: '12px 20px', borderBottom: '1px solid #1e1e2e',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Trophy size={15} style={{ color: '#f59e0b' }} />
+              <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Top campagnes ce mois</span>
+            </div>
+            <Link href="/campagnes" style={{ fontSize: 12, color: '#7c3aed', textDecoration: 'none' }}>
+              Tout voir →
+            </Link>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                {['Nom', 'Canal', 'Envois (mois)', 'Taux réponse', 'RDV', 'Statut'].map(col => (
+                  <th
+                    key={col}
+                    style={{
+                      padding: '10px 16px', textAlign: 'left',
+                      fontSize: 11, color: '#6b6b80', fontWeight: 600,
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                      borderBottom: '1px solid #1e1e2e',
+                    }}
+                  >
+                    {col}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {topCampaigns.map((c, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #1e1e2e' }}>
+                  <td style={{ padding: '12px 16px', fontSize: 13, color: '#e8e8f0' }}>{c.name}</td>
+                  <td style={{ padding: '12px 16px' }}>
+                    <span style={{
+                      background: 'rgba(59,130,246,0.15)', color: '#60a5fa',
+                      padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                    }}>
+                      📧 email
+                    </span>
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: 13, color: '#e8e8f0' }}>{c.sentThisMonth}</td>
+                  <td style={{ padding: '12px 16px', fontSize: 13, color: c.replyRate > 5 ? '#10b981' : c.replyRate > 2 ? '#f59e0b' : '#6b6b80' }}>
+                    {c.replyRate}%
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 700, color: '#a78bfa' }}>{c.rdvCount}</td>
+                  <td style={{ padding: '12px 16px' }}>
+                    <span style={{
+                      background: c.status === 'active' ? 'rgba(16,185,129,0.15)' : 'rgba(107,107,128,0.15)',
+                      color: c.status === 'active' ? '#10b981' : '#6b6b80',
+                      padding: '2px 8px', borderRadius: 4, fontSize: 12,
+                    }}>
+                      {c.status === 'active' ? 'Actif' : 'Pausé'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── SECTION 9: Calendrier de la semaine ── */}
+        <div
+          style={{
+            background: '#111118',
+            border: '1px solid #1e1e2e',
+            borderRadius: 8,
+            padding: 20,
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Calendar size={15} style={{ color: '#e8e8f0' }} />
+            <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Calendrier de la semaine</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
+            {weekCalendar.map(day => {
+              const isToday = day.date === todayStr
+              return (
+                <div
+                  key={day.date}
+                  style={{
+                    padding: '12px 8px',
+                    borderRadius: 8,
+                    textAlign: 'center',
+                    background: isToday ? 'rgba(124,58,237,0.15)' : '#111118',
+                    border: isToday ? '2px solid #7c3aed' : '1px solid #1e1e2e',
+                  }}
+                >
+                  <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#6b6b80', marginBottom: 4 }}>
+                    {day.dayName}
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: isToday ? '#fff' : '#6b6b80' }}>
+                    {new Date(day.date + 'T12:00:00').getDate()}
+                  </div>
+                  <div style={{ fontSize: 11, color: isToday ? '#a78bfa' : '#4a4a5a', marginTop: 4 }}>
+                    {day.rdvCount > 0 ? `${day.rdvCount} RDV` : '—'}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* ── SECTION 10: Quick actions ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          {[
+            {
+              href: '/campagnes',
+              icon: <Zap size={18} style={{ color: '#3b82f6' }} />,
+              iconBg: 'rgba(59,130,246,0.15)',
+              label: '+ Nouvelle campagne',
+            },
+            {
+              href: '/stats',
+              icon: <Sparkles size={18} style={{ color: '#7c3aed' }} />,
+              iconBg: 'rgba(124,58,237,0.15)',
+              label: '✨ Lancer une analyse',
+            },
+            {
+              href: '/stats',
+              icon: <BarChart2 size={18} style={{ color: '#f59e0b' }} />,
+              iconBg: 'rgba(245,158,11,0.15)',
+              label: '📊 Stats détaillées',
+            },
+            {
+              href: '/parametres',
+              icon: <Settings size={18} style={{ color: '#6b6b80' }} />,
+              iconBg: 'rgba(107,107,128,0.15)',
+              label: '⚙ Paramètres',
+            },
+          ].map(action => (
+            <Link
+              key={action.href + action.label}
+              href={action.href}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                background: '#111118', border: '1px solid #1e1e2e',
+                borderRadius: 8, padding: 16, textDecoration: 'none',
+              }}
+            >
+              <div style={{
+                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+                background: action.iconBg,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {action.icon}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 500, color: '#e8e8f0' }}>{action.label}</span>
+            </Link>
+          ))}
+        </div>
+
       </div>
     </div>
   )
