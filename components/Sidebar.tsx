@@ -3,7 +3,8 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain, Users } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain, Users, LogOut } from 'lucide-react'
+import { signOut } from 'next-auth/react'
 
 const NAV_BEFORE_BELL = [
   { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
@@ -101,8 +102,15 @@ export default function Sidebar() {
         {NAV_AFTER_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
       </nav>
 
-      <div className="px-4 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>
-        <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>Toulouse · PME/TPE</p>
+      <div className="px-2 py-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <p className="text-[11px] px-2 mb-2" style={{ color: 'var(--color-muted-2)' }}>Toulouse · PME/TPE</p>
+        <button
+          onClick={() => signOut({ callbackUrl: '/login' })}
+          className="flex items-center gap-2 text-gray-400 hover:text-white text-sm px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors w-full"
+        >
+          <LogOut className="w-4 h-4" />
+          Déconnexion
+        </button>
       </div>
     </aside>
   )
