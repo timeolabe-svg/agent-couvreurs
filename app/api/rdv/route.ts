@@ -178,6 +178,34 @@ export async function POST(request: NextRequest) {
     },
   })
 
+  // Auto-charge 50€ if customer has a saved payment method
+  if (process.env.STRIPE_SECRET_KEY) {
+    try {
+      const { stripe } = await import('@/lib/stripe')
+      const { agent_config } = await import('@/lib/db/schema')
+
+      const [customerRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
+      const [pmRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
+
+      if (customerRow?.value && pmRow?.value) {
+        await stripe.paymentIntents.create({
+          amount: 5000, // 50€ in cents
+          currency: 'eur',
+          customer: customerRow.value,
+          payment_method: pmRow.value,
+          confirm: true,
+          off_session: true,
+          description: `RDV Hdigiweb — ${contact.company} — ${startTime.toLocaleDateString('fr-FR')}`,
+          metadata: { rdv_id: inserted.id, contact_company: contact.company },
+        })
+        console.log('[api/rdv] Stripe charge 50€ OK for', contact.company)
+      }
+    } catch (stripeErr) {
+      console.error('[api/rdv] Stripe charge failed:', stripeErr)
+      // Don't block RDV creation on payment failure
+    }
+  }
+
   // Notification email
   if (RESEND_API_KEY) {
     const dateStr = startTime.toLocaleDateString('fr-FR', {

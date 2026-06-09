@@ -32,9 +32,10 @@ import {
   Copy,
   Flame,
   Clock,
+  CreditCard,
 } from 'lucide-react'
 
-type Tab = 'agence' | 'email' | 'sequence' | 'rdv' | 'disponibilites' | 'mode'
+type Tab = 'agence' | 'email' | 'sequence' | 'rdv' | 'disponibilites' | 'mode' | 'facturation'
 
 const TABS: { id: Tab; label: string; icon: any }[] = [
   { id: 'agence',         label: 'Mon agence',         icon: Building2 },
@@ -43,6 +44,7 @@ const TABS: { id: Tab; label: string; icon: any }[] = [
   { id: 'rdv',            label: 'Prise de RDV',        icon: CalendarClock },
   { id: 'disponibilites', label: 'Disponibilités',      icon: Clock },
   { id: 'mode',           label: 'Mode Test / Prod',    icon: FlaskConical },
+  { id: 'facturation',    label: 'Facturation',         icon: CreditCard },
 ]
 
 export default function ParametresPage() {
@@ -118,6 +120,7 @@ export default function ParametresPage() {
           {tab === 'rdv' && <RdvTab />}
           {tab === 'disponibilites' && <DisponibilitesTab />}
           {tab === 'mode' && <ModeTab saveSignal={saveSignal} />}
+          {tab === 'facturation' && <FacturationTab />}
         </div>
       </div>
     </div>
@@ -1580,6 +1583,173 @@ function DisponibilitesTab() {
           L&apos;IA utilisera ces horaires pour trouver le prochain créneau disponible lors d&apos;une demande de RDV par email.
           Si le prospect propose une date hors plage horaire, le système cherchera automatiquement le créneau le plus proche.
         </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── TAB : FACTURATION (STRIPE) ───────────────────────────────────────────
+
+interface CardInfo {
+  last4: string
+  brand: string
+  exp_month: number
+  exp_year: number
+}
+
+function FacturationTab() {
+  const [cardInfo, setCardInfo] = useState<CardInfo | null>(null)
+  const [loadingCard, setLoadingCard] = useState(true)
+  const [redirecting, setRedirecting] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/stripe/setup')
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.last4) setCardInfo(data as CardInfo)
+      })
+      .catch(() => {})
+      .finally(() => setLoadingCard(false))
+
+    // Check for success param
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get('stripe') === 'success') {
+        // Reload card info after successful setup
+        setTimeout(() => {
+          fetch('/api/stripe/setup')
+            .then(r => r.json())
+            .then(data => { if (data && data.last4) setCardInfo(data as CardInfo) })
+            .catch(() => {})
+        }, 2000)
+      }
+    }
+  }, [])
+
+  const handleSetupCard = async () => {
+    setRedirecting(true)
+    try {
+      const res = await fetch('/api/stripe/create-setup-session', { method: 'POST' })
+      const data = await res.json() as { url?: string; error?: string }
+      if (data.url) {
+        window.location.href = data.url
+      } else {
+        alert(data.error ?? 'Erreur lors de la création de la session Stripe')
+        setRedirecting(false)
+      }
+    } catch {
+      alert('Erreur réseau')
+      setRedirecting(false)
+    }
+  }
+
+  const brandLabel = (brand: string) => {
+    const map: Record<string, string> = { visa: 'Visa', mastercard: 'Mastercard', amex: 'Amex', cartes_bancaires: 'CB' }
+    return map[brand] ?? brand.toUpperCase()
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <SectionTitle title="Facturation automatique" />
+        <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted)' }}>
+          50€ sont prélevés automatiquement à chaque RDV confirmé par l&apos;agent.
+        </p>
+      </div>
+
+      {/* Pricing info */}
+      <div
+        className="rounded-lg p-4"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>Modèle à la performance</p>
+            <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted)' }}>Vous payez uniquement pour les RDV générés par l&apos;agent.</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[28px] font-bold" style={{ color: '#7c3aed', letterSpacing: '-0.03em' }}>50€</p>
+            <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>par RDV confirmé</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Card section */}
+      <div
+        className="rounded-lg p-4 space-y-4"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+      >
+        <p className="text-[10px] font-medium uppercase tracking-wide" style={{ color: 'var(--color-muted)' }}>
+          Moyen de paiement
+        </p>
+
+        {loadingCard ? (
+          <p className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement…</p>
+        ) : cardInfo ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-7 rounded flex items-center justify-center text-[11px] font-bold"
+                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              >
+                {brandLabel(cardInfo.brand)}
+              </div>
+              <div>
+                <p className="text-[12px] font-medium" style={{ color: 'var(--color-text)' }}>
+                  {brandLabel(cardInfo.brand)} •••• {cardInfo.last4}
+                </p>
+                <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                  Expire {String(cardInfo.exp_month).padStart(2, '0')}/{cardInfo.exp_year}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span
+                className="text-[11px] px-2 py-0.5 rounded flex items-center gap-1"
+                style={{ background: '#10b98122', color: '#10b981' }}
+              >
+                <Check size={10} />
+                Actif
+              </span>
+              <button
+                onClick={() => void handleSetupCard()}
+                disabled={redirecting}
+                className="text-[12px] px-3 py-1.5 rounded transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}
+              >
+                Modifier
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[12px]" style={{ color: 'var(--color-muted)' }}>
+              Aucun moyen de paiement enregistré. Ajoutez une carte pour activer la facturation automatique.
+            </p>
+            <button
+              onClick={() => void handleSetupCard()}
+              disabled={redirecting}
+              className="flex items-center gap-2 px-4 py-2 rounded text-[12px] font-medium transition-opacity hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--color-accent)', color: '#fff' }}
+            >
+              <CreditCard size={14} />
+              {redirecting ? 'Redirection…' : 'Ajouter une carte'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Info box */}
+      <div
+        className="rounded-lg p-4 flex gap-3"
+        style={{ background: '#7c3aed08', border: '1px solid #7c3aed30' }}
+      >
+        <AlertCircle size={15} style={{ color: '#a78bfa', flexShrink: 0, marginTop: 1 }} />
+        <div className="text-[11px] leading-relaxed" style={{ color: 'var(--color-muted)' }}>
+          <p className="font-semibold mb-1" style={{ color: 'var(--color-text)' }}>Comment ça marche ?</p>
+          <p>À chaque fois que l&apos;agent IA confirme un RDV (automatiquement via email ou manuellement), 50€ sont prélevés sur la carte enregistrée. Vous recevez une facture Stripe par email.</p>
+          <p className="mt-1">Variables d&apos;environnement nécessaires : <code style={{ color: '#a78bfa' }}>STRIPE_SECRET_KEY</code>, <code style={{ color: '#a78bfa' }}>STRIPE_PUBLISHABLE_KEY</code>, <code style={{ color: '#a78bfa' }}>STRIPE_WEBHOOK_SECRET</code></p>
+        </div>
       </div>
     </div>
   )

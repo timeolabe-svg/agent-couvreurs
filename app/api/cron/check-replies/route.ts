@@ -406,7 +406,7 @@ export async function GET(request: NextRequest) {
                   : 'Aucune date précisée — prochain créneau disponible sélectionné.'
 
               // Save RDV to DB
-              await db.insert(rdvTable).values({
+              const [insertedRdv] = await db.insert(rdvTable).values({
                 contact_id: contact?.id ?? undefined,
                 incoming_reply_id: insertedReply.id,
                 scheduled_at: scheduledDate,
@@ -415,7 +415,34 @@ export async function GET(request: NextRequest) {
                 google_event_id: googleEventId,
                 google_meet_link: googleMeetLink,
                 notes: `RDV demandé par le prospect. ${slotNote}`,
-              })
+              }).returning()
+
+              // Auto-charge 50€ if customer has a saved payment method
+              if (process.env.STRIPE_SECRET_KEY && insertedRdv) {
+                try {
+                  const { stripe } = await import('@/lib/stripe')
+                  const { agent_config } = await import('@/lib/db/schema')
+
+                  const [customerRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
+                  const [pmRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
+
+                  if (customerRow?.value && pmRow?.value) {
+                    await stripe.paymentIntents.create({
+                      amount: 5000,
+                      currency: 'eur',
+                      customer: customerRow.value,
+                      payment_method: pmRow.value,
+                      confirm: true,
+                      off_session: true,
+                      description: `RDV Hdigiweb auto — ${contact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
+                      metadata: { rdv_id: insertedRdv.id, contact_company: contact?.company ?? reply.from_address },
+                    })
+                    console.log('[check-replies] Stripe charge 50€ OK for', contact?.company)
+                  }
+                } catch (stripeErr) {
+                  console.error('[check-replies] Stripe charge failed:', stripeErr)
+                }
+              }
 
               // Send enhanced RDV notification
               await sendRdvNotificationEmail({
