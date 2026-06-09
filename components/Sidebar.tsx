@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, Bell, Brain, Users } from 'lucide-react'
 
 const NAV_BEFORE_BELL = [
   { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
+  { href: '/leads',     label: 'Leads',       icon: Users },
   { href: '/agenda',    label: 'Agenda',      icon: Calendar },
 ]
 

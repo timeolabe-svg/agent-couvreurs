@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Pin, Check, Zap, MapPin, Globe, Mail, Users, Plus, Pause, Play, Trash2, X, TrendingUp, Activity, Flame } from 'lucide-react'
 
 const METIERS = [
@@ -53,12 +53,42 @@ type Campaign = {
   rdv: number
 }
 
+const DEFAULT_CAMPAIGNS: Campaign[] = [
+  { id: '1', name: 'Couvreurs — Toulouse & région', metier: 'couvreur', zone: 'ville', city: 'Toulouse', radius: 50, percentage: 70, status: 'active', sent: 68, replied: 12, rdv: 2 },
+  { id: '2', name: 'Électriciens — Bordeaux', metier: 'electricien', zone: 'ville', city: 'Bordeaux', radius: 30, percentage: 10, status: 'active', sent: 24, replied: 3, rdv: 0 },
+  { id: '3', name: 'Maçons — France', metier: 'macon', zone: 'france', percentage: 5, status: 'paused', sent: 8, replied: 1, rdv: 0 },
+]
+
 export default function CampagnesPage() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([
-    { id: '1', name: 'Couvreurs — Toulouse & région', metier: 'couvreur', zone: 'ville', city: 'Toulouse', radius: 50, percentage: 70, status: 'active', sent: 68, replied: 12, rdv: 2 },
-    { id: '2', name: 'Électriciens — Bordeaux', metier: 'electricien', zone: 'ville', city: 'Bordeaux', radius: 30, percentage: 10, status: 'active', sent: 24, replied: 3, rdv: 0 },
-    { id: '3', name: 'Maçons — France', metier: 'macon', zone: 'france', percentage: 5, status: 'paused', sent: 8, replied: 1, rdv: 0 },
-  ])
+  const [campaigns, setCampaigns] = useState<Campaign[]>(DEFAULT_CAMPAIGNS)
+
+  // Load campaigns from API on mount
+  useEffect(() => {
+    fetch('/api/campaigns')
+      .then(r => r.json())
+      .then(data => {
+        const rows = data.campaigns ?? []
+        if (rows.length > 0) {
+          // Map DB shape to UI Campaign shape
+          const mapped: Campaign[] = rows.map((c: { id: string; name: string; sector: string; cities?: string[] | null; status: string; allocation_pct?: number | null }) => ({
+            id: c.id,
+            name: c.name,
+            metier: c.sector,
+            zone: (c.cities && c.cities.length > 0 ? 'ville' : 'france') as 'france' | 'ville',
+            city: c.cities?.[0],
+            radius: 30,
+            percentage: c.allocation_pct ?? 10,
+            status: (c.status === 'active' ? 'active' : 'paused') as 'active' | 'paused',
+            sent: 0,
+            replied: 0,
+            rdv: 0,
+          }))
+          setCampaigns(mapped)
+        }
+        // if rows is empty, keep default local state
+      })
+      .catch(() => {}) // keep local state on error
+  }, [])
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [newCampaign, setNewCampaign] = useState({
@@ -79,24 +109,43 @@ export default function CampagnesPage() {
   const filteredCities = VILLES_FRANCE.filter(v => v.toLowerCase().startsWith(cityQuery.toLowerCase())).slice(0, 8)
 
   const updatePercentage = (id: string, pct: number) => {
-    setCampaigns(campaigns.map(c => c.id === id ? { ...c, percentage: Math.max(0, Math.min(100, pct)) } : c))
+    const clamped = Math.max(0, Math.min(100, pct))
+    setCampaigns(campaigns.map(c => c.id === id ? { ...c, percentage: clamped } : c))
+    // Persist to API
+    fetch('/api/campaigns', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, allocation_pct: clamped }),
+    }).catch(() => {})
   }
 
   const toggleStatus = (id: string) => {
-    setCampaigns(campaigns.map(c => c.id === id ? { ...c, status: c.status === 'active' ? 'paused' : 'active' } : c))
+    const campaign = campaigns.find(c => c.id === id)
+    if (!campaign) return
+    const newStatus = campaign.status === 'active' ? 'paused' : 'active'
+    setCampaigns(campaigns.map(c => c.id === id ? { ...c, status: newStatus } : c))
+    // Persist to API
+    fetch('/api/campaigns', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status: newStatus }),
+    }).catch(() => {})
   }
 
   const removeCampaign = (id: string) => {
     setCampaigns(campaigns.filter(c => c.id !== id))
+    // Note: DELETE not implemented in API yet, just remove from local state
   }
 
   const addCampaign = () => {
     if (totalAllocated + newCampaign.percentage > 100) return
     const metier = METIERS.find(m => m.id === newCampaign.metier)
     const zoneLabel = newCampaign.zone === 'france' ? 'France' : `${newCampaign.city} +${newCampaign.radius}km`
-    setCampaigns([...campaigns, {
-      id: String(Date.now()),
-      name: newCampaign.name || `${metier?.label} — ${zoneLabel}`,
+    const campaignName = newCampaign.name || `${metier?.label} — ${zoneLabel}`
+    const tempId = String(Date.now())
+    const newEntry: Campaign = {
+      id: tempId,
+      name: campaignName,
       metier: newCampaign.metier,
       zone: newCampaign.zone,
       city: newCampaign.city,
@@ -106,9 +155,30 @@ export default function CampagnesPage() {
       sent: 0,
       replied: 0,
       rdv: 0,
-    }])
+    }
+    setCampaigns([...campaigns, newEntry])
     setNewCampaign({ name: '', metier: 'couvreur', zone: 'ville', city: 'Toulouse', radius: 30, percentage: 10 })
     setShowAddForm(false)
+    // Persist to API
+    fetch('/api/campaigns', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: campaignName,
+        sector: newCampaign.metier,
+        cities: newCampaign.zone === 'ville' && newCampaign.city ? [newCampaign.city] : [],
+        status: 'active',
+        allocation_pct: newCampaign.percentage,
+      }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.campaign?.id) {
+          // Update tempId with real DB id
+          setCampaigns(prev => prev.map(c => c.id === tempId ? { ...c, id: data.campaign.id } : c))
+        }
+      })
+      .catch(() => {})
   }
 
   return (

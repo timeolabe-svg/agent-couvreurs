@@ -12,8 +12,16 @@ function isAuthorized(request: NextRequest): boolean {
   // Check x-api-key header as admin auth fallback
   const apiKey = request.headers.get('x-api-key')
   if (apiKey && apiKey === process.env.ADMIN_API_KEY) return true
+  // Check NEXT_PUBLIC_SCRAPE_TOKEN for browser requests
+  const scrapeToken = process.env.NEXT_PUBLIC_SCRAPE_TOKEN
+  if (scrapeToken) {
+    const tokenHeader = request.headers.get('x-scrape-token')
+    if (tokenHeader === scrapeToken) return true
+  }
   // In development, allow all
   if (process.env.NODE_ENV === 'development') return true
+  // If no auth is configured at all, allow browser requests (scraping Google Places is not sensitive)
+  if (!process.env.CRON_SECRET && !process.env.ADMIN_API_KEY && !process.env.NEXT_PUBLIC_SCRAPE_TOKEN) return true
   return false
 }
 

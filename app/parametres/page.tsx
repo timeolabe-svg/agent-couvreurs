@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Building2,
   Mail,
@@ -46,8 +46,10 @@ const TABS: { id: Tab; label: string; icon: any }[] = [
 export default function ParametresPage() {
   const [tab, setTab] = useState<Tab>('agence')
   const [saved, setSaved] = useState(false)
+  const [saveSignal, setSaveSignal] = useState(0)
 
   const handleSave = () => {
+    setSaveSignal(s => s + 1)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
@@ -108,11 +110,11 @@ export default function ParametresPage() {
 
       <div className="flex-1 overflow-auto px-6 py-5">
         <div className="max-w-3xl">
-          {tab === 'agence' && <AgenceTab />}
+          {tab === 'agence' && <AgenceTab saveSignal={saveSignal} />}
           {tab === 'email' && <EmailTab />}
           {tab === 'sequence' && <SequenceTab />}
           {tab === 'rdv' && <RdvTab />}
-          {tab === 'mode' && <ModeTab />}
+          {tab === 'mode' && <ModeTab saveSignal={saveSignal} />}
         </div>
       </div>
     </div>
@@ -120,7 +122,7 @@ export default function ParametresPage() {
 }
 
 // ─── TAB : MON AGENCE ─────────────────────────────────────────────────────
-function AgenceTab() {
+function AgenceTab({ saveSignal }: { saveSignal: number }) {
   const [agence, setAgence] = useState({
     nom: 'Hdigiweb',
     telephone: '06 12 34 56 78',
@@ -129,6 +131,42 @@ function AgenceTab() {
     linkedin: '',
     adresse: '12 rue de Metz, 31000 Toulouse',
   })
+
+  // Load settings from API on mount
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const s = data.settings ?? {}
+        setAgence(prev => ({
+          nom: s.agence_nom ?? prev.nom,
+          telephone: s.agence_telephone ?? prev.telephone,
+          email: s.agence_email ?? prev.email,
+          site: s.agence_site ?? prev.site,
+          linkedin: s.agence_linkedin ?? prev.linkedin,
+          adresse: s.agence_adresse ?? prev.adresse,
+        }))
+      })
+      .catch(() => {})
+  }, [])
+
+  // Watch saveSignal to persist
+  useEffect(() => {
+    if (saveSignal === 0) return
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([
+        { key: 'agence_nom', value: agence.nom },
+        { key: 'agence_telephone', value: agence.telephone },
+        { key: 'agence_email', value: agence.email },
+        { key: 'agence_site', value: agence.site },
+        { key: 'agence_linkedin', value: agence.linkedin },
+        { key: 'agence_adresse', value: agence.adresse },
+      ]),
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveSignal])
 
   return (
     <div className="space-y-5">
@@ -728,6 +766,9 @@ function DnsModal({ domain, onClose }: { domain: string; onClose: () => void }) 
 }
 
 // ─── TAB : SÉQUENCE DE RELANCE ────────────────────────────────────────────
+// NOTE: Template changes here are UI-only. To persist templates permanently,
+// they must be updated in code and redeployed. Dynamic template storage
+// via DB is not implemented for email sequence bodies.
 type Step = { id: string; jour: number; label: string; objet: string; body: string; actif: boolean }
 
 function SequenceTab() {
@@ -1083,9 +1124,35 @@ function RdvTab() {
 }
 
 // ─── TAB : MODE TEST / PROD ───────────────────────────────────────────────
-function ModeTab() {
+function ModeTab({ saveSignal }: { saveSignal: number }) {
   const [mode, setMode] = useState<'test' | 'prod'>('prod')
   const [ton, setTon] = useState<'pro' | 'neutre' | 'decontracte'>('neutre')
+
+  // Load settings from API on mount
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const s = data.settings ?? {}
+        if (s.mode === 'test' || s.mode === 'prod') setMode(s.mode)
+        if (s.ton === 'pro' || s.ton === 'neutre' || s.ton === 'decontracte') setTon(s.ton)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Watch saveSignal to persist
+  useEffect(() => {
+    if (saveSignal === 0) return
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([
+        { key: 'mode', value: mode },
+        { key: 'ton', value: ton },
+      ]),
+    }).catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saveSignal])
 
   const MODES = [
     {

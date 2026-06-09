@@ -301,6 +301,29 @@ export default function DashboardPage() {
             ))}
           </div>
 
+          {/* Pipeline funnel */}
+          {s?.pipeline && (
+            <div
+              className="grid grid-cols-5 gap-px rounded-lg overflow-hidden mb-5"
+              style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}
+            >
+              {[
+                { label: 'Prospects',  value: s.pipeline.prospects,  color: '#737373' },
+                { label: 'Contactés',  value: s.pipeline.contacted,  color: '#3b82f6' },
+                { label: 'Réponses',   value: s.pipeline.replied,    color: '#f59e0b' },
+                { label: 'RDV',        value: s.pipeline.rdv,        color: '#22c55e' },
+                { label: 'Signés',     value: s.pipeline.signed,     color: '#8b5cf6' },
+              ].map((stage) => (
+                <div key={stage.label} className="px-5 py-4" style={{ background: 'var(--color-surface)' }}>
+                  <p className="text-2xl font-semibold tabular-nums" style={{ color: stage.color }}>
+                    <CountUp target={stage.value} />
+                  </p>
+                  <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-text)' }}>{stage.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Live activity feed */}
           <div
             className="rounded-lg overflow-hidden mb-5"

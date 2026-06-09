@@ -1,12 +1,13 @@
 'use client'
 
-import { use } from 'react'
-import { notFound } from 'next/navigation'
-import { DEMO_LEADS } from '@/data/demo'
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import { EmailMessage, LeadStage } from '@/types'
 import { formatTime, formatDate } from '@/lib/utils'
 import { ArrowLeft, Globe, Phone, Mail, Star, Cpu, Calendar, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
+
+// formatDate may not be used but keep import for compatibility
 
 const STAGE_LABEL: Record<LeadStage, string> = {
   prospected: 'Prospecté',
@@ -36,12 +37,51 @@ const STEP_LABEL: Record<string, string> = {
   reply: 'Réponse agent',
 }
 
-export default function LeadDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params)
-  const lead = DEMO_LEADS.find(l => l.id === id)
-  if (!lead) notFound()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Lead = any
 
-  const stageColor = STAGE_COLOR[lead.stage]
+export default function LeadDetailPage() {
+  const params = useParams()
+  const router = useRouter()
+  const id = params?.id as string
+  const [lead, setLead] = useState<Lead | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+
+  useEffect(() => {
+    if (!id) return
+    fetch(`/api/leads/${id}`)
+      .then(r => {
+        if (r.status === 404) { setNotFound(true); return null }
+        return r.json()
+      })
+      .then(data => {
+        if (data) setLead(data.lead)
+      })
+      .catch(() => setNotFound(true))
+      .finally(() => setLoading(false))
+  }, [id])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <span className="text-[13px]" style={{ color: 'var(--color-muted)' }}>Chargement…</span>
+      </div>
+    )
+  }
+
+  if (notFound || !lead) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3">
+        <p className="text-[13px]" style={{ color: 'var(--color-muted)' }}>Lead introuvable</p>
+        <Link href="/leads" className="text-[12px]" style={{ color: 'var(--color-accent)' }}>
+          ← Retour aux leads
+        </Link>
+      </div>
+    )
+  }
+
+  const stageColor = STAGE_COLOR[lead.stage as LeadStage] ?? '#737373'
 
   return (
     <div className="flex h-full">
@@ -66,14 +106,14 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
             className="text-[11px] px-2 py-0.5 rounded ml-1"
             style={{ background: `${stageColor}15`, color: stageColor }}
           >
-            {STAGE_LABEL[lead.stage]}
+            {STAGE_LABEL[lead.stage as LeadStage] ?? lead.stage}
           </span>
         </div>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4">
-          {lead.thread.map((msg, i) => (
-            <MessageBubble key={msg.id} msg={msg} firstName={lead.firstName} isLast={i === lead.thread.length - 1} />
+          {(lead.thread ?? []).map((msg: EmailMessage, i: number) => (
+            <MessageBubble key={msg.id} msg={msg} firstName={lead.firstName} isLast={i === (lead.thread ?? []).length - 1} />
           ))}
 
           {lead.rdvDate && (
@@ -108,6 +148,12 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
               </p>
             </div>
           )}
+
+          {(lead.thread ?? []).length === 0 && (
+            <p className="text-[12px] text-center py-8" style={{ color: 'var(--color-muted-2)' }}>
+              Aucun message pour ce lead
+            </p>
+          )}
         </div>
       </div>
 
@@ -135,7 +181,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--color-border)' }}>
             <p className="text-[11px] font-medium mb-2" style={{ color: 'var(--color-muted)' }}>SPECIALITES</p>
             <div className="flex flex-wrap gap-1">
-              {lead.specialty.map(s => (
+              {(lead.specialty ?? []).map((s: string) => (
                 <span
                   key={s}
                   className="text-[11px] px-2 py-0.5 rounded"
@@ -180,7 +226,7 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--color-border)' }}>
             <p className="text-[11px] font-medium mb-2" style={{ color: 'var(--color-muted)' }}>SEQUENCE</p>
             <div className="flex flex-col gap-1">
-              {lead.thread.filter(m => m.author === 'agent').map((m, i) => (
+              {(lead.thread ?? []).filter((m: EmailMessage) => m.author === 'agent').map((m: EmailMessage, i: number) => (
                 <div key={m.id} className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--color-accent)' }} />
                   <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
