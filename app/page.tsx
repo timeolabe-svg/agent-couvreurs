@@ -532,10 +532,7 @@ export default function DashboardPage() {
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
             <span style={{ fontSize: 13, color: '#6b6b80' }}>Envois aujourd&apos;hui</span>
             <span style={{ fontSize: 28, fontWeight: 700, color: '#e8e8f0', letterSpacing: '-0.03em' }}>
-              {emailsSentToday} / 42
-            </span>
-            <span style={{ fontSize: 12, color: '#10b981' }}>
-              vs semaine passée ↗ {s?.replyRateVsLastWeek != null ? `${s.replyRateVsLastWeek > 0 ? '+' : ''}${s.replyRateVsLastWeek}%` : '+0%'}
+              {emailsSentToday}
             </span>
           </div>
 
@@ -560,25 +557,6 @@ export default function DashboardPage() {
             ))}
           </div>
 
-          {/* Row 3: mini bar chart */}
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 32 }}>
-            {barData.map((d, i) => {
-              const isLast = i === barData.length - 1
-              const h = Math.max((d.count / barMax) * 32, 3)
-              return (
-                <div
-                  key={d.date}
-                  title={`${d.date}: ${d.count}`}
-                  style={{
-                    flex: 1,
-                    height: h,
-                    borderRadius: 2,
-                    background: isLast ? '#7c3aed' : '#1e1e2e',
-                  }}
-                />
-              )
-            })}
-          </div>
         </div>
 
         {/* ── SECTION 7: 2-column grid ── */}
