@@ -58,6 +58,7 @@ export async function GET(request: NextRequest) {
       activeCampaignId = existingCampaign.id
     } else {
       // Aucune campagne active — l'agent en crée une automatiquement
+      const instantlyCampaignId = process.env.INSTANTLY_CAMPAIGN_ID ?? null
       const [newCampaign] = await db
         .insert(campaigns)
         .values({
@@ -67,6 +68,7 @@ export async function GET(request: NextRequest) {
           status: 'active',
           allocation_pct: 100,
           sequence_delay_days: [0, 3, 7, 14],
+          instantly_campaign_id: instantlyCampaignId,
         })
         .returning({ id: campaigns.id })
 
@@ -384,7 +386,14 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          await addLeadsToCampaign(campaign.id, [
+          // Utiliser l'ID de campagne Instantly réel (pas notre UUID interne)
+          const instantlyId = campaign.instantly_campaign_id ?? process.env.INSTANTLY_CAMPAIGN_ID
+          if (!instantlyId) {
+            console.warn('[autopilot-tick] Pas d\'INSTANTLY_CAMPAIGN_ID — email ignoré pour', contact.email)
+            continue
+          }
+
+          await addLeadsToCampaign(instantlyId, [
             {
               email: contact.email,
               first_name: lead.firstName || undefined,

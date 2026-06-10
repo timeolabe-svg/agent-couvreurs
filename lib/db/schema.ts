@@ -45,6 +45,7 @@ export const campaigns = pgTable('campaigns', {
   status: text('status').default('draft'), // draft/active/paused/done
   allocation_pct: integer('allocation_pct').default(10),
   sequence_delay_days: integer('sequence_delay_days').array().default([0, 3, 7, 14]),
+  instantly_campaign_id: text('instantly_campaign_id'), // ID réel de la campagne dans Instantly
   created_at: timestamp('created_at').defaultNow(),
 })
 
