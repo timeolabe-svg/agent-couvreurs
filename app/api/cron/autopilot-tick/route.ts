@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
   let scrapedCity = ''
   let agentDecisions: string[] = []
   let dailyCapacity = 24 // valeur par défaut semaine 1
+  let firstSendError: string | null = null // diagnostic temporaire
 
   // ─── ÉTAPE 0 : Auto-ramp — calcule la capacité selon les semaines écoulées ─
   try {
@@ -611,6 +612,9 @@ export async function GET(request: NextRequest) {
           sent++
         } catch (err) {
           console.error('[autopilot-tick] Error processing lead', queue.id, err)
+          if (!firstSendError) {
+            firstSendError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+          }
         }
       }
     }
@@ -632,5 +636,6 @@ export async function GET(request: NextRequest) {
     leads_scraped: leadsScraped,
     scraped_city: scrapedCity || null,
     agent_decisions: agentDecisions,
+    first_send_error: firstSendError,
   })
 }
