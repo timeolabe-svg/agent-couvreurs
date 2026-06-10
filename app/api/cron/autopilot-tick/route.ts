@@ -52,8 +52,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts, campaigns, email_queue, dashboard_events, agent_config } = await import('@/lib/db/schema')
-  const { eq, and, gte, lte, sql, isNull, or } = await import('drizzle-orm')
+  const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
+  const { eq, and, gte, lte, sql } = await import('drizzle-orm')
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail } = await import('@/lib/email-generator')
   const { getSequenceStep, renderTemplate, getNextStep } = await import('@/data/sequence')
@@ -202,12 +202,32 @@ export async function GET(request: NextRequest) {
           console.error('[autopilot] Scraping Google Places échoué :', scrapeErr)
         }
 
-        // Filtrer les leads avec email
-        const leadsWithEmail = rawLeads.filter((l) => l.email && l.email.includes('@'))
+        const hasMillionVerifier = Boolean(process.env.MILLION_VERIFIER_API_KEY)
+        // Sans MillionVerifier : n'envoyer QUE les emails sûrs (confiance >= 70).
+        // 70+ = mailto explicite ou préfixe pro (contact@/devis@) sur leur propre domaine.
+        // Avec MillionVerifier : on accepte plus large, MV tranche ensuite.
+        const MIN_CONFIDENCE = hasMillionVerifier ? 40 : 70
+
+        // Filtrer : email présent ET confiance suffisante
+        const leadsWithEmail = rawLeads.filter(
+          (l) => l.email && l.email.includes('@') && l.emailConfidence >= MIN_CONFIDENCE
+        )
+
+        const skippedLowConfidence = rawLeads.filter(
+          (l) => l.email && l.emailConfidence < MIN_CONFIDENCE
+        ).length
 
         for (const lead of leadsWithEmail) {
           try {
-            // Insérer le contact (ignorer si email déjà présent)
+            // Ne jamais recontacter une adresse blocklistée (opt-out)
+            const [isBlocked] = await db
+              .select({ id: blocklist.id })
+              .from(blocklist)
+              .where(eq(blocklist.email, lead.email!))
+              .limit(1)
+            if (isBlocked) continue
+
+            // Insérer le contact (ignorer si email/place_id déjà présent → pas de recontact)
             const [inserted] = await db
               .insert(contacts)
               .values({
@@ -223,29 +243,16 @@ export async function GET(request: NextRequest) {
                 google_reviews_count: lead.reviewsCount,
                 source: 'google_places',
                 email_validated: false,
+                email_confidence_score: lead.emailConfidence,
               })
               .onConflictDoNothing()
               .returning({ id: contacts.id })
 
-            if (!inserted) continue // contact déjà en base
-
-            // Vérifier qu'il n'est pas déjà dans la queue pour cette campagne
-            const [alreadyInQueue] = await db
-              .select({ id: email_queue.id })
-              .from(email_queue)
-              .where(
-                and(
-                  eq(email_queue.contact_id, inserted.id),
-                  eq(email_queue.campaign_id, activeCampaignId!)
-                )
-              )
-              .limit(1)
-
-            if (alreadyInQueue) continue
+            if (!inserted) continue // contact déjà en base → déjà contacté ou en cours, on ne recontacte pas
 
             // Valider l'email avec MillionVerifier si clé disponible
             let emailValid = true
-            if (process.env.MILLION_VERIFIER_API_KEY) {
+            if (hasMillionVerifier) {
               try {
                 const mvResp = await fetch(
                   `https://api.millionverifier.com/api/v3/?api=${process.env.MILLION_VERIFIER_API_KEY}&email=${encodeURIComponent(lead.email!)}`,
@@ -253,16 +260,15 @@ export async function GET(request: NextRequest) {
                 )
                 if (mvResp.ok) {
                   const mvData = (await mvResp.json()) as { result?: string; quality?: string }
-                  if (mvData.result === 'invalid' || mvData.quality === 'bad') {
+                  if (mvData.result === 'invalid' || mvData.quality === 'bad' || mvData.result === 'catch_all') {
                     emailValid = false
-                    console.log(`[autopilot] Email invalide ignoré : ${lead.email}`)
+                    console.log(`[autopilot] Email invalide ignoré (MV) : ${lead.email}`)
                   } else {
-                    // Mettre à jour le statut de validation
                     await db
                       .update(contacts)
                       .set({
                         email_validated: true,
-                        email_confidence_score: mvData.quality === 'good' ? 95 : 60,
+                        email_confidence_score: mvData.result === 'ok' ? 99 : 80,
                       })
                       .where(eq(contacts.id, inserted.id))
                   }
@@ -279,7 +285,7 @@ export async function GET(request: NextRequest) {
               contact_id: inserted.id,
               campaign_id: activeCampaignId!,
               sequence_step: 0,
-              from_email: 'thomas@hdigiweb.fr', // sera remplacé par inbox-rotation au moment d'envoyer
+              from_email: 'gabin@hdigiweb-agence.com', // remplacé par inbox-rotation à l'envoi
               subject: '__pending_generation__',
               body: '__pending_generation__',
               status: 'pending',
@@ -296,6 +302,10 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        if (skippedLowConfidence > 0 && !hasMillionVerifier) {
+          console.log(`[autopilot] ${skippedLowConfidence} emails ignorés (confiance < ${MIN_CONFIDENCE}, MillionVerifier non connecté)`)
+        }
+
         // Avancer l'index de ville
         const nextIndex = cityIndex + 1
         await db
@@ -306,7 +316,12 @@ export async function GET(request: NextRequest) {
             set: { value: String(nextIndex), updated_at: new Date() },
           })
 
+        // ── Détection fin de marché : si une rotation complète ne ramène rien ──
+        const [emptyRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'consecutive_empty_scrapes'))
+        let consecutiveEmpty = parseInt(emptyRow?.value ?? '0')
+
         if (leadsScraped > 0) {
+          consecutiveEmpty = 0
           agentDecisions.push(`${leadsScraped} nouveaux leads importés depuis Google Maps (${scrapedCity})`)
           await db.insert(dashboard_events).values({
             type: 'agent_decision',
@@ -320,7 +335,58 @@ export async function GET(request: NextRequest) {
             },
           })
         } else {
-          console.log(`[autopilot] Aucun nouveau lead trouvé pour ${scrapedCity} (${rawLeads.length} places, ${leadsWithEmail.length} avec email)`)
+          consecutiveEmpty++
+          console.log(`[autopilot] Aucun nouveau lead pour ${scrapedCity} (${consecutiveEmpty}/${OCCITANIE_CITIES.length} villes vides d'affilée)`)
+        }
+
+        await db.insert(agent_config)
+          .values({ key: 'consecutive_empty_scrapes', value: String(consecutiveEmpty) })
+          .onConflictDoUpdate({ target: agent_config.key, set: { value: String(consecutiveEmpty), updated_at: new Date() } })
+
+        // Une rotation complète sans rien de neuf = marché Occitanie épuisé
+        if (consecutiveEmpty >= OCCITANIE_CITIES.length) {
+          const [notifiedRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'market_exhausted_notified'))
+          if (notifiedRow?.value !== 'true') {
+            console.log('[autopilot] MARCHÉ ÉPUISÉ — notification envoyée')
+            agentDecisions.push('Marché couvreurs Occitanie épuisé — notification envoyée au client')
+
+            await db.insert(dashboard_events).values({
+              type: 'agent_decision',
+              data: {
+                decision: 'market_exhausted',
+                sector: 'couvreur',
+                region: 'Occitanie',
+                reason: 'Tous les couvreurs Occitanie avec email fiable ont été contactés. En attente de validation pour tester un autre marché.',
+              },
+            })
+
+            // Notifier le client par email (Resend)
+            if (process.env.RESEND_API_KEY) {
+              try {
+                await fetch('https://api.resend.com/emails', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
+                  body: JSON.stringify({
+                    from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+                    to: process.env.CLIENT_NOTIFY_EMAIL ?? 'smma.ranked@gmail.com',
+                    subject: '🏁 Marché couvreurs Occitanie épuisé — quel marché ensuite ?',
+                    html: `
+                      <h2>Marché couvreurs Occitanie épuisé</h2>
+                      <p>L'agent IA a contacté tous les couvreurs d'Occitanie avec un email fiable.</p>
+                      <p>Il est prêt à attaquer un nouveau marché (autre secteur ou autre région), mais il attend ta validation avant de se lancer.</p>
+                      <p>Dis-moi quel secteur / région cibler ensuite et je le configure.</p>
+                    `,
+                  }),
+                })
+              } catch (notifErr) {
+                console.error('[autopilot] Notification fin de marché échouée :', notifErr)
+              }
+            }
+
+            await db.insert(agent_config)
+              .values({ key: 'market_exhausted_notified', value: 'true' })
+              .onConflictDoUpdate({ target: agent_config.key, set: { value: 'true', updated_at: new Date() } })
+          }
         }
       } else {
         console.log(`[autopilot] Pipeline OK (${pendingCount} leads en attente) — pas de scraping`)
@@ -396,6 +462,22 @@ export async function GET(request: NextRequest) {
         if (sent >= remainingCapacity) break
 
         try {
+          // Sécurité opt-out : ne jamais envoyer à une adresse blocklistée.
+          // Annule la file restante de ce contact (relances comprises).
+          const [blockedAtSend] = await db
+            .select({ id: blocklist.id })
+            .from(blocklist)
+            .where(eq(blocklist.email, contact.email))
+            .limit(1)
+          if (blockedAtSend) {
+            await db
+              .update(email_queue)
+              .set({ status: 'cancelled' })
+              .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
+            console.log('[autopilot] Contact blocklisté — file annulée :', contact.email)
+            continue
+          }
+
           // Pick next inbox via round-robin rotation
           const inbox = await getNextInbox()
 

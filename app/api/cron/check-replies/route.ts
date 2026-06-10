@@ -324,6 +324,19 @@ export async function GET(request: NextRequest) {
           })
           blocked++
 
+          // CRITIQUE : annuler immédiatement toutes les relances en attente
+          // de ce contact. Un opt-out = on arrête tout, relances comprises.
+          if (contact) {
+            const cancelled = await db
+              .update(email_queue)
+              .set({ status: 'cancelled' })
+              .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
+              .returning({ id: email_queue.id })
+            if (cancelled.length > 0) {
+              console.log(`[check-replies] Opt-out ${reply.from_address} — ${cancelled.length} relance(s) annulée(s)`)
+            }
+          }
+
           await db.insert(dashboard_events).values({
             type: 'reply_received',
             data: {
@@ -350,6 +363,16 @@ export async function GET(request: NextRequest) {
           })
           await markReplyProcessed(reply.id)
           continue
+        }
+
+        // Le prospect engage une vraie conversation (intérêt, question, objection, RDV).
+        // On stoppe les relances froides automatiques : le reply-agent prend le relais.
+        // (on ne stoppe PAS pour 'oof' = absence : il reviendra, les relances continuent)
+        if (contact && classification.classification !== 'oof') {
+          await db
+            .update(email_queue)
+            .set({ status: 'cancelled' })
+            .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
         }
 
         // auto_reply or draft_for_validation — generate draft

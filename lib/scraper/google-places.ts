@@ -14,6 +14,7 @@ export interface PlaceLead {
   sector: string
   // Scraped from website if available:
   email: string | null
+  emailConfidence: number // 0-100 : 90 = mailto explicite, 70 = préfixe pro, 40 = deviné
   directorName: string | null
   description: string | null
 }
@@ -65,9 +66,28 @@ function extractCityAndPostalCode(address: string): { city: string; postalCode: 
   }
 }
 
-async function scrapeEmailFromWebsite(websiteUrl: string): Promise<string | null> {
+function isJunkEmail(email: string): boolean {
+  const lm = email.toLowerCase()
+  return (
+    lm.includes('.png') || lm.includes('.jpg') || lm.includes('.jpeg') ||
+    lm.includes('.svg') || lm.includes('.gif') || lm.includes('.webp') ||
+    lm.includes('.css') || lm.includes('.js') ||
+    lm.includes('@sentry') || lm.includes('@example') || lm.includes('@yourdomain') ||
+    lm.includes('@domain') || lm.includes('@email') || lm.includes('@sentry.io') ||
+    lm.includes('noreply') || lm.includes('no-reply') || lm.includes('wixpress') ||
+    lm.includes('.wix') || lm.includes('godaddy') || lm.includes('@2x') ||
+    lm.endsWith('.webp') || /@[\d.]+$/.test(lm)
+  )
+}
+
+// Retourne l'email + un score de confiance (0-100).
+// 90 = mailto: explicite (l'entreprise a publié son email comme lien cliquable)
+// 70 = préfixe pro reconnu (contact@, devis@...) sur le domaine du site
+// 40 = email deviné par regex générique (peu fiable)
+async function scrapeEmailFromWebsite(
+  websiteUrl: string
+): Promise<{ email: string; confidence: number } | null> {
   try {
-    // Normalize URL
     const url = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 5000)
@@ -82,36 +102,43 @@ async function scrapeEmailFromWebsite(websiteUrl: string): Promise<string | null
 
     const html = await resp.text()
 
-    // Look for mailto: links
+    // Domaine du site (pour vérifier que l'email est bien sur leur domaine)
+    let siteDomain = ''
+    try {
+      siteDomain = new URL(url).hostname.replace(/^www\./, '')
+    } catch { /* ignore */ }
+
+    // 1. mailto: explicite — le plus fiable
     const mailtoMatch = html.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/i)
-    if (mailtoMatch) return mailtoMatch[1].toLowerCase()
+    if (mailtoMatch && !isJunkEmail(mailtoMatch[1])) {
+      const email = mailtoMatch[1].toLowerCase()
+      // mailto sur le domaine du site = quasi certain (95), sinon 90
+      const onDomain = siteDomain && email.endsWith('@' + siteDomain)
+      return { email, confidence: onDomain ? 95 : 90 }
+    }
 
-    // Common patterns: contact@, info@, devis@, bonjour@, hello@
-    const emailPatterns = [
-      /(?:contact|info|devis|bonjour|hello|accueil|pro|admin|estimation|preventif|preventif|commercial|direction|contact|mail|adresse|courrier)@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi,
-      /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,
-    ]
-
-    for (const pattern of emailPatterns) {
-      const matches = html.match(pattern)
-      if (matches && matches.length > 0) {
-        // Filter out common non-email patterns
-        const filtered = matches.filter(m => {
-          const lm = m.toLowerCase()
-          return (
-            !lm.includes('.png') &&
-            !lm.includes('.jpg') &&
-            !lm.includes('.svg') &&
-            !lm.includes('.css') &&
-            !lm.includes('@sentry') &&
-            !lm.includes('@example') &&
-            !lm.includes('@yourdomain') &&
-            !lm.includes('noreply') &&
-            !lm.includes('no-reply')
-          )
-        })
-        if (filtered.length > 0) return filtered[0].toLowerCase()
+    // 2. Préfixe pro reconnu
+    const proPattern = /(?:contact|info|devis|bonjour|hello|accueil|pro|estimation|commercial|direction|mail|courrier|secretariat|entreprise)@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi
+    const proMatches = html.match(proPattern)
+    if (proMatches) {
+      const valid = proMatches.map(m => m.toLowerCase()).filter(m => !isJunkEmail(m))
+      if (valid.length > 0) {
+        const onDomain = siteDomain && valid.find(e => e.endsWith('@' + siteDomain))
+        const chosen = onDomain || valid[0]
+        // préfixe pro sur leur domaine = 75, sinon 60
+        return { email: chosen, confidence: onDomain ? 75 : 60 }
       }
+    }
+
+    // 3. Email générique deviné — peu fiable
+    const genericPattern = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
+    const genericMatches = html.match(genericPattern)
+    if (genericMatches) {
+      const valid = genericMatches.map(m => m.toLowerCase()).filter(m => !isJunkEmail(m))
+      // garder seulement ceux sur le domaine du site (un peu plus sûr)
+      const onDomain = siteDomain ? valid.find(e => e.endsWith('@' + siteDomain)) : null
+      if (onDomain) return { email: onDomain, confidence: 55 }
+      if (valid.length > 0) return { email: valid[0], confidence: 40 }
     }
   } catch {
     // Silently fail — website scraping is best-effort
@@ -119,34 +146,55 @@ async function scrapeEmailFromWebsite(websiteUrl: string): Promise<string | null
   return null
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export async function scrapeGooglePlaces(params: {
   sector: string
   city: string
   radius?: number
   maxResults?: number
+  maxPages?: number // pagination Google : jusqu'à 3 pages = 60 résultats
 }): Promise<PlaceLead[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
   if (!apiKey) {
     throw new Error('GOOGLE_PLACES_API_KEY is not configured')
   }
 
-  const { sector, city, radius = 20000, maxResults = 20 } = params
+  const { sector, city, radius = 20000, maxResults = 60, maxPages = 3 } = params
 
-  // Step 1: Text Search
+  // Step 1: Text Search avec pagination (capter un max de couvreurs par ville)
   const query = encodeURIComponent(`${sector} ${city}`)
-  const textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&radius=${radius}&key=${apiKey}`
+  const allResults: GoogleTextSearchResult[] = []
+  let nextPageToken: string | undefined
 
-  const textSearchResp = await fetch(textSearchUrl)
-  if (!textSearchResp.ok) {
-    throw new Error(`Google Places Text Search failed: ${textSearchResp.status}`)
+  for (let page = 0; page < maxPages; page++) {
+    let textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&radius=${radius}&key=${apiKey}`
+    if (nextPageToken) {
+      // Google exige un court délai avant que le token soit valide
+      await sleep(2100)
+      textSearchUrl += `&pagetoken=${nextPageToken}`
+    }
+
+    const textSearchResp = await fetch(textSearchUrl)
+    if (!textSearchResp.ok) {
+      throw new Error(`Google Places Text Search failed: ${textSearchResp.status}`)
+    }
+
+    const textSearchData = (await textSearchResp.json()) as GoogleTextSearchResponse & { next_page_token?: string }
+    if (textSearchData.status !== 'OK' && textSearchData.status !== 'ZERO_RESULTS') {
+      // INVALID_REQUEST sur token pas encore prêt — on s'arrête proprement
+      if (page > 0) break
+      throw new Error(`Google Places API error: ${textSearchData.status} — ${textSearchData.error_message ?? ''}`)
+    }
+
+    allResults.push(...textSearchData.results)
+    nextPageToken = textSearchData.next_page_token
+    if (!nextPageToken || allResults.length >= maxResults) break
   }
 
-  const textSearchData = (await textSearchResp.json()) as GoogleTextSearchResponse
-  if (textSearchData.status !== 'OK' && textSearchData.status !== 'ZERO_RESULTS') {
-    throw new Error(`Google Places API error: ${textSearchData.status} — ${textSearchData.error_message ?? ''}`)
-  }
-
-  const results = textSearchData.results.slice(0, maxResults)
+  const results = allResults.slice(0, maxResults)
 
   // Step 2: Place Details for each result
   const leads: PlaceLead[] = []
@@ -164,10 +212,15 @@ export async function scrapeGooglePlaces(params: {
       const details = detailsData.result
       const { city: extractedCity, postalCode } = extractCityAndPostalCode(details.formatted_address)
 
-      // Step 3: Try to scrape email from website
+      // Step 3: Try to scrape email from website (avec score de confiance)
       let email: string | null = null
+      let emailConfidence = 0
       if (details.website) {
-        email = await scrapeEmailFromWebsite(details.website)
+        const result = await scrapeEmailFromWebsite(details.website)
+        if (result) {
+          email = result.email
+          emailConfidence = result.confidence
+        }
       }
 
       leads.push({
@@ -182,6 +235,7 @@ export async function scrapeGooglePlaces(params: {
         reviewsCount: details.user_ratings_total ?? null,
         sector,
         email,
+        emailConfidence,
         directorName: null, // Would require more complex scraping
         description: null,  // Could be AI-generated later
       })
