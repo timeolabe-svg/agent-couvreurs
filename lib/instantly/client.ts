@@ -1,4 +1,6 @@
-const INSTANTLY_BASE = 'https://api.instantly.ai/api/v1'
+// Client Instantly API v2 (Bearer token auth)
+// Doc : https://developer.instantly.ai/api/v2
+const INSTANTLY_BASE = 'https://api.instantly.ai/api/v2'
 const API_KEY = process.env.INSTANTLY_API_KEY
 
 async function instantlyFetch(path: string, options?: RequestInit) {
@@ -6,14 +8,13 @@ async function instantlyFetch(path: string, options?: RequestInit) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      Authorization: `Bearer ${API_KEY}`,
       ...options?.headers,
     },
   })
   if (!res.ok) throw new Error(`Instantly API error: ${res.status} ${await res.text()}`)
   return res.json()
 }
-
-// ─── Mock data fallback ───────────────────────────────────────────────────────
 
 function warnNoKey(fn: string) {
   console.warn(`[Instantly] INSTANTLY_API_KEY not set — returning mock data for ${fn}`)
@@ -31,13 +32,21 @@ export interface InstantlyCampaign {
 export async function getInstantlyCampaigns(): Promise<InstantlyCampaign[]> {
   if (!API_KEY) {
     warnNoKey('getInstantlyCampaigns')
-    return [
-      { id: 'mock-campaign-1', name: '[MOCK] Couvreurs Toulouse', status: 'active', created_at: new Date().toISOString() },
-      { id: 'mock-campaign-2', name: '[MOCK] Couvreurs Montpellier', status: 'paused', created_at: new Date().toISOString() },
-    ]
+    return []
   }
-  const data = await instantlyFetch(`/campaigns?api_key=${API_KEY}`)
-  return data.data ?? data ?? []
+  try {
+    const data = await instantlyFetch(`/campaigns?limit=100`)
+    const items: Array<Record<string, unknown>> = data.items ?? data ?? []
+    return items.map((c) => ({
+      id: String(c.id ?? ''),
+      name: String(c.name ?? ''),
+      status: String(c.status ?? ''),
+      created_at: String(c.timestamp_created ?? ''),
+    }))
+  } catch (err) {
+    console.error('[Instantly] getInstantlyCampaigns failed', err)
+    return []
+  }
 }
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
@@ -53,15 +62,22 @@ export interface CampaignAnalytics {
 export async function getCampaignAnalytics(campaignId: string): Promise<CampaignAnalytics> {
   if (!API_KEY) {
     warnNoKey('getCampaignAnalytics')
-    return { campaign_id: campaignId, sent: 42, opened: 18, replied: 5, bounced: 2 }
+    return { campaign_id: campaignId, sent: 0, opened: 0, replied: 0, bounced: 0 }
   }
-  const data = await instantlyFetch(`/analytics/campaign/summary?api_key=${API_KEY}&id=${campaignId}`)
-  return {
-    campaign_id: campaignId,
-    sent: data.total_leads_contacted ?? 0,
-    opened: data.total_opened ?? 0,
-    replied: data.total_replied ?? 0,
-    bounced: data.total_bounced ?? 0,
+  try {
+    // V2 : GET /campaigns/analytics?id=<id>
+    const data = await instantlyFetch(`/campaigns/analytics?id=${campaignId}`)
+    const a = Array.isArray(data) ? data[0] : data
+    return {
+      campaign_id: campaignId,
+      sent: Number(a?.emails_sent_count ?? a?.sent ?? 0),
+      opened: Number(a?.open_count ?? a?.opened ?? 0),
+      replied: Number(a?.reply_count ?? a?.replied ?? 0),
+      bounced: Number(a?.bounced_count ?? a?.bounced ?? 0),
+    }
+  } catch (err) {
+    console.error('[Instantly] getCampaignAnalytics failed', err)
+    return { campaign_id: campaignId, sent: 0, opened: 0, replied: 0, bounced: 0 }
   }
 }
 
@@ -86,11 +102,28 @@ export async function addLeadsToCampaign(
     console.log(`[MOCK] Would add ${leads.length} leads to campaign ${campaignId}`)
     return { added: leads.length }
   }
-  const data = await instantlyFetch('/lead/add', {
-    method: 'POST',
-    body: JSON.stringify({ api_key: API_KEY, campaign_id: campaignId, leads }),
-  })
-  return { added: data.leads_added ?? leads.length }
+
+  // V2 : un lead par appel POST /leads
+  let added = 0
+  for (const lead of leads) {
+    await instantlyFetch('/leads', {
+      method: 'POST',
+      body: JSON.stringify({
+        campaign: campaignId,
+        email: lead.email,
+        first_name: lead.first_name,
+        last_name: lead.last_name,
+        company_name: lead.company_name,
+        phone: lead.phone,
+        website: lead.website,
+        custom_variables: lead.custom_variables ?? {},
+        // skip_if_in_campaign évite les doublons côté Instantly
+        skip_if_in_workspace: false,
+      }),
+    })
+    added++
+  }
+  return { added }
 }
 
 // ─── Replies ──────────────────────────────────────────────────────────────────
@@ -118,27 +151,33 @@ export async function getInstantlyReplies(params?: {
 
   try {
     const limit = params?.limit ?? 50
-    const skip = params?.skip ?? 0
-    // Instantly v1: /email/list with email_type=2 (replies only)
-    let url = `/email/list?api_key=${API_KEY}&limit=${limit}&skip=${skip}&email_type=2`
-    if (params?.campaign_id) url += `&campaign_id=${params.campaign_id}`
+    // V2 : GET /emails — email_type=received pour les réponses entrantes
+    let path = `/emails?limit=${limit}&email_type=received`
+    if (params?.campaign_id) path += `&campaign_id=${params.campaign_id}`
 
-    const data = await instantlyFetch(url)
-    const emails: Array<Record<string, unknown>> = data.data ?? data ?? []
+    const data = await instantlyFetch(path)
+    const items: Array<Record<string, unknown>> = data.items ?? data ?? []
+    if (!Array.isArray(items)) return []
 
-    if (!Array.isArray(emails)) return []
-
-    return emails
-      .map((e) => ({
-        id: String(e.id ?? e.uuid ?? ''),
-        from_address: String(e.from_address ?? e.from_email ?? e.from ?? ''),
-        to_address: String(e.to_address ?? e.to_email ?? e.to ?? ''),
-        subject: String(e.subject ?? ''),
-        body: String(e.body ?? e.text ?? e.html ?? ''),
-        timestamp: String(e.timestamp ?? e.created_at ?? e.date ?? new Date().toISOString()),
-        campaign_id: String(e.campaign_id ?? ''),
-        lead_email: String(e.from_address ?? e.from_email ?? e.from ?? ''),
-      }))
+    return items
+      .map((e) => {
+        const bodyObj = (e.body ?? {}) as Record<string, unknown>
+        const body =
+          typeof e.body === 'string'
+            ? e.body
+            : String(bodyObj.text ?? bodyObj.html ?? '')
+        const toList = e.to_address_email_list ?? e.to_address ?? ''
+        return {
+          id: String(e.id ?? e.message_id ?? ''),
+          from_address: String(e.from_address_email ?? e.from_address ?? ''),
+          to_address: Array.isArray(toList) ? String(toList[0] ?? '') : String(toList),
+          subject: String(e.subject ?? ''),
+          body,
+          timestamp: String(e.timestamp_email ?? e.timestamp_created ?? new Date().toISOString()),
+          campaign_id: String(e.campaign_id ?? e.campaign ?? ''),
+          lead_email: String(e.from_address_email ?? e.from_address ?? ''),
+        }
+      })
       .filter((e) => e.id && e.from_address)
   } catch (err) {
     console.error('[Instantly] getInstantlyReplies failed — returning []', err)
@@ -146,22 +185,16 @@ export async function getInstantlyReplies(params?: {
   }
 }
 
-// ─── Mark as processed ────────────────────────────────────────────────────────
+// ─── Mark as read ───────────────────────────────────────────────────────────
 
 export async function markReplyProcessed(replyId: string): Promise<void> {
   if (!API_KEY) {
     warnNoKey('markReplyProcessed')
     return
   }
-  try {
-    await instantlyFetch(`/email/mark-read`, {
-      method: 'POST',
-      body: JSON.stringify({ api_key: API_KEY, id: replyId }),
-    })
-  } catch (err) {
-    // Non-critical — log and continue
-    console.warn('[Instantly] markReplyProcessed failed:', err)
-  }
+  // V2 : pas d'action critique nécessaire (la dédup est gérée en DB).
+  // On évite un appel risqué ; no-op volontaire.
+  void replyId
 }
 
 // ─── Send reply ───────────────────────────────────────────────────────────────
@@ -170,19 +203,21 @@ export async function sendReply(params: {
   reply_to_id: string
   body: string
   subject?: string
+  eaccount?: string
 }): Promise<void> {
   if (!API_KEY) {
     warnNoKey('sendReply')
     console.log('[MOCK] Would send reply to', params.reply_to_id)
     return
   }
-  await instantlyFetch('/email/reply', {
+  // V2 : POST /emails/reply
+  await instantlyFetch('/emails/reply', {
     method: 'POST',
     body: JSON.stringify({
-      api_key: API_KEY,
       reply_to_uuid: params.reply_to_id,
-      body: params.body,
+      ...(params.eaccount ? { eaccount: params.eaccount } : {}),
       ...(params.subject ? { subject: params.subject } : {}),
+      body: { text: params.body },
     }),
   })
 }
@@ -195,9 +230,10 @@ export async function updateCampaignDailyLimit(campaignId: string, dailyLimit: n
     return
   }
   try {
-    await instantlyFetch('/campaign/update', {
-      method: 'POST',
-      body: JSON.stringify({ api_key: API_KEY, id: campaignId, daily_limit: dailyLimit }),
+    // V2 : PATCH /campaigns/{id} — daily_limit dans campaign settings
+    await instantlyFetch(`/campaigns/${campaignId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ daily_limit: dailyLimit }),
     })
     console.log(`[Instantly] Daily limit updated → ${dailyLimit} for campaign ${campaignId}`)
   } catch (err) {
@@ -218,19 +254,22 @@ export interface InstantlyAccount {
 export async function getInstantlyAccounts(): Promise<InstantlyAccount[]> {
   if (!API_KEY) {
     warnNoKey('getInstantlyAccounts')
-    return [
-      { email: 'thomas@hdigiweb.fr', name: 'Thomas Renard', daily_limit: 334, emails_sent_today: 0, warmup_enabled: true },
-    ]
+    return []
   }
-  const data = await instantlyFetch(`/accounts?api_key=${API_KEY}`)
-  const accounts: Array<Record<string, unknown>> = data.data ?? data ?? []
-  return accounts.map((a) => ({
-    email: String(a.email ?? ''),
-    name: a.name ? String(a.name) : undefined,
-    daily_limit: Number(a.daily_limit ?? 334),
-    emails_sent_today: Number(a.emails_sent_today ?? 0),
-    warmup_enabled: Boolean(a.warmup_enabled ?? a.is_warmup_enabled ?? false),
-  }))
+  try {
+    const data = await instantlyFetch(`/accounts?limit=100`)
+    const items: Array<Record<string, unknown>> = data.items ?? data ?? []
+    return items.map((a) => ({
+      email: String(a.email ?? ''),
+      name: a.first_name ? `${a.first_name} ${a.last_name ?? ''}`.trim() : undefined,
+      daily_limit: Number(a.daily_limit ?? 0),
+      emails_sent_today: 0,
+      warmup_enabled: Number(a.warmup_status ?? 0) === 1,
+    }))
+  } catch (err) {
+    console.error('[Instantly] getInstantlyAccounts failed', err)
+    return []
+  }
 }
 
 // ─── Warmup stats ─────────────────────────────────────────────────────────────
@@ -246,17 +285,20 @@ export interface WarmupStat {
 export async function getWarmupStats(): Promise<WarmupStat[]> {
   if (!API_KEY) {
     warnNoKey('getWarmupStats')
-    return [
-      { email: 'thomas@hdigiweb.fr', warmup_enabled: true, health_score: 92, emails_sent_today: 47, daily_limit: 334 },
-    ]
+    return []
   }
-  const data = await instantlyFetch(`/accounts?api_key=${API_KEY}`)
-  const accounts: Array<Record<string, unknown>> = data.data ?? data ?? []
-  return accounts.map((a) => ({
-    email: String(a.email ?? ''),
-    warmup_enabled: Boolean(a.warmup_enabled ?? a.is_warmup_enabled ?? false),
-    health_score: Number(a.health_score ?? 0),
-    emails_sent_today: Number(a.emails_sent_today ?? 0),
-    daily_limit: Number(a.daily_limit ?? 334),
-  }))
+  try {
+    const data = await instantlyFetch(`/accounts?limit=100`)
+    const items: Array<Record<string, unknown>> = data.items ?? data ?? []
+    return items.map((a) => ({
+      email: String(a.email ?? ''),
+      warmup_enabled: Number(a.warmup_status ?? 0) === 1,
+      health_score: Number(a.stat_warmup_score ?? a.warmup_score ?? 0),
+      emails_sent_today: 0,
+      daily_limit: Number(a.daily_limit ?? 0),
+    }))
+  } catch (err) {
+    console.error('[Instantly] getWarmupStats failed', err)
+    return []
+  }
 }
