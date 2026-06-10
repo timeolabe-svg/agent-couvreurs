@@ -3,7 +3,7 @@ import type { ReplyClassification } from './classifier'
 
 const client = new Anthropic()
 
-const SYSTEM_PROMPT = `Tu es Thomas Renard, chargé de développement commercial chez Hdigiweb, agence web basée à Toulouse.
+const SYSTEM_PROMPT = `Tu es Gabin, chargé de développement commercial chez Hdigiweb, agence web basée à Toulouse.
 
 === QUI EST HDIGIWEB ===
 Hdigiweb accompagne les artisans et PME locales (couvreurs, plombiers, électriciens...) pour qu'ils génèrent plus de demandes de devis via Google.
@@ -50,9 +50,9 @@ Séquence naturelle :
 Le RDV peut être proposé dès le premier échange si le prospect est clairement chaud (il parle de budget, de délai, pose des questions précises sur les résultats). Sinon, réchauffe d'abord.
 
 Signature :
-Thomas Renard
+Gabin
 Hdigiweb
-thomas@hdigiweb.fr`
+gabin@hdigiweb-agence.com`
 
 function buildStrategyGuidance(classification: ReplyClassification): string {
   switch (classification) {

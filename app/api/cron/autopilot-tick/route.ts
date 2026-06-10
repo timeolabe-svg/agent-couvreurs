@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const DAILY_CAPACITY = 334
+const DAILY_CAPACITY = 24 // 3 boîtes × 8 emails/jour (ramp-up semaine 1)
 const EMAILS_PER_CAMPAIGN_PER_TICK = 5
 const MIN_PIPELINE_LEADS = 80   // scrape quand il reste moins de X leads en attente
 const SCRAPE_BATCH_SIZE = 20    // leads par ville par tick
