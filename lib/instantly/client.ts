@@ -187,6 +187,24 @@ export async function sendReply(params: {
   })
 }
 
+// ─── Update campaign daily limit ─────────────────────────────────────────────
+
+export async function updateCampaignDailyLimit(campaignId: string, dailyLimit: number): Promise<void> {
+  if (!API_KEY) {
+    warnNoKey('updateCampaignDailyLimit')
+    return
+  }
+  try {
+    await instantlyFetch('/campaign/update', {
+      method: 'POST',
+      body: JSON.stringify({ api_key: API_KEY, id: campaignId, daily_limit: dailyLimit }),
+    })
+    console.log(`[Instantly] Daily limit updated → ${dailyLimit} for campaign ${campaignId}`)
+  } catch (err) {
+    console.warn('[Instantly] updateCampaignDailyLimit failed (non-blocking):', err)
+  }
+}
+
 // ─── Accounts ─────────────────────────────────────────────────────────────────
 
 export interface InstantlyAccount {

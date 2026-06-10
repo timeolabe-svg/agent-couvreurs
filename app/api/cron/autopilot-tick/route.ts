@@ -1,7 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const DAILY_CAPACITY = 24 // 3 boîtes × 8 emails/jour (ramp-up semaine 1)
 const EMAILS_PER_CAMPAIGN_PER_TICK = 5
+
+// Ramp schedule : emails par boîte par jour selon les semaines écoulées
+// L'agent monte tout seul — met aussi à jour Instantly automatiquement
+const RAMP_SCHEDULE = [
+  { weekStart: 0, weekEnd: 2,  perInbox: 8  },  // S1-S2
+  { weekStart: 2, weekEnd: 4,  perInbox: 16 },  // S3-S4
+  { weekStart: 4, weekEnd: 6,  perInbox: 24 },  // S5-S6
+  { weekStart: 6, weekEnd: 8,  perInbox: 30 },  // S7-S8
+  { weekStart: 8, weekEnd: 999, perInbox: 42 },  // S9+ — régime de croisière
+]
+
+function getInboxCount(): number {
+  const inboxes = process.env.INSTANTLY_INBOXES ?? ''
+  return inboxes.split(',').filter(Boolean).length || 3
+}
+
+function getDailyCapacity(weeksElapsed: number): number {
+  const step = RAMP_SCHEDULE.find(s => weeksElapsed >= s.weekStart && weeksElapsed < s.weekEnd)
+    ?? RAMP_SCHEDULE[RAMP_SCHEDULE.length - 1]
+  return step.perInbox * getInboxCount()
+}
 const MIN_PIPELINE_LEADS = 80   // scrape quand il reste moins de X leads en attente
 const SCRAPE_BATCH_SIZE = 20    // leads par ville par tick
 
@@ -44,6 +64,56 @@ export async function GET(request: NextRequest) {
   let leadsScraped = 0
   let scrapedCity = ''
   let agentDecisions: string[] = []
+  let dailyCapacity = 24 // valeur par défaut semaine 1
+
+  // ─── ÉTAPE 0 : Auto-ramp — calcule la capacité selon les semaines écoulées ─
+  try {
+    const { db } = await import('@/lib/db')
+    const { agent_config } = await import('@/lib/db/schema')
+    const { eq } = await import('drizzle-orm')
+
+    // Initialiser la date de départ si premier tick
+    const [startRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'ramp_start_date'))
+    let rampStart: Date
+
+    if (!startRow) {
+      rampStart = new Date()
+      await db.insert(agent_config).values({ key: 'ramp_start_date', value: rampStart.toISOString() })
+      console.log('[autopilot] Ramp démarré :', rampStart.toISOString())
+    } else {
+      rampStart = new Date(startRow.value)
+    }
+
+    const msElapsed = Date.now() - rampStart.getTime()
+    const weeksElapsed = Math.floor(msElapsed / (7 * 24 * 60 * 60 * 1000))
+    dailyCapacity = getDailyCapacity(weeksElapsed)
+
+    // Vérifier si le palier a changé depuis la dernière fois
+    const [lastCapRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'last_daily_capacity'))
+    const lastCapacity = parseInt(lastCapRow?.value ?? '0')
+
+    if (dailyCapacity !== lastCapacity) {
+      // Monter en charge — mettre à jour Instantly aussi
+      const instantlyCampaignId = process.env.INSTANTLY_CAMPAIGN_ID
+      if (instantlyCampaignId) {
+        const { updateCampaignDailyLimit } = await import('@/lib/instantly/client')
+        // Marge de +6 pour que Instantly ne coupe pas juste à la limite
+        await updateCampaignDailyLimit(instantlyCampaignId, dailyCapacity + 6)
+      }
+
+      await db.insert(agent_config)
+        .values({ key: 'last_daily_capacity', value: String(dailyCapacity) })
+        .onConflictDoUpdate({ target: agent_config.key, set: { value: String(dailyCapacity), updated_at: new Date() } })
+
+      const inboxCount = getInboxCount()
+      const perInbox = Math.floor(dailyCapacity / inboxCount)
+      const msg = `Palier S${weeksElapsed + 1} atteint : ${perInbox} emails/boîte/jour (${dailyCapacity} total, ${inboxCount} boîtes)`
+      agentDecisions.push(msg)
+      console.log('[autopilot] Ramp →', msg)
+    }
+  } catch (err) {
+    console.error('[autopilot] Erreur auto-ramp (non-bloquant) :', err)
+  }
 
   // ─── ÉTAPE 1 : Garantir qu'il existe une campagne active ──────────────────
   let activeCampaignId: string | null = null
@@ -284,7 +354,7 @@ export async function GET(request: NextRequest) {
       )
 
     const sentToday = Number(sentTodayResult?.count ?? 0)
-    const remainingCapacity = DAILY_CAPACITY - sentToday
+    const remainingCapacity = dailyCapacity - sentToday
 
     if (remainingCapacity <= 0) {
       return NextResponse.json({
