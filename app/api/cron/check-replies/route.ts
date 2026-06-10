@@ -5,6 +5,22 @@ function randomDelayMs(): number {
   return (4 + Math.floor(Math.random() * 9)) * 60 * 1000 // 4-12 min in ms
 }
 
+// Filtre warmup Instantly : les faux échanges sont en anglais.
+// Les vrais prospects (couvreurs FR) répondent en français.
+function isLikelyFrench(text: string): boolean {
+  const lower = text.toLowerCase()
+  // Présence de caractères accentués français → forcément français
+  if (/[àâéèêëîïôùûüçœæ]/.test(lower)) return true
+  // Mots français courants
+  const frenchWords = [
+    'bonjour', 'merci', 'vous', 'nous', 'pour', 'avec', 'salut',
+    'cordialement', 'madame', 'monsieur', 'bonne', 'votre', 'notre',
+    'bien', 'aussi', 'mais', 'comme', 'dans', 'alors', 'donc',
+    'oui', 'non', 'devis', 'travaux', 'toiture', 'couverture',
+  ]
+  return frenchWords.some(w => lower.includes(w))
+}
+
 const CLIENT_NOTIFY_EMAIL = process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr'
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hdigiweb.fr'
 const RESEND_API_KEY = process.env.RESEND_API_KEY
@@ -268,7 +284,13 @@ export async function GET(request: NextRequest) {
 
         if (existing.length > 0) continue
 
-        // 3. Classify with AI
+        // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais)
+        if (!isLikelyFrench(reply.body + ' ' + reply.subject)) {
+          console.log(`[check-replies] Warmup ignoré (anglais) : ${reply.from_address}`)
+          continue
+        }
+
+        // 4. Classify with AI
         const classification = await classifyReply({
           replyBody: reply.body,
           replySubject: reply.subject,
