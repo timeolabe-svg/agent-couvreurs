@@ -512,28 +512,41 @@ export async function GET(request: NextRequest) {
           }
           const emailType = sequenceTypeMap[step] ?? 'initial'
 
+          // Template de secours (utilisé si l'IA est indisponible — ex: crédits Anthropic épuisés)
+          const renderFallbackTemplate = (s: number): { subject: string; body: string } | null => {
+            const tpl = getSequenceStep(s) ?? getSequenceStep(0)
+            if (!tpl) return null
+            const vars = {
+              firstName: lead.firstName,
+              city: lead.city,
+              company: lead.company,
+              fromEmail: inbox.email,
+              fromName: inbox.senderName,
+            }
+            return {
+              subject: renderTemplate(tpl.subject, vars),
+              body: renderTemplate(tpl.body, vars),
+            }
+          }
+
           let generated: { subject: string; body: string }
           if (step === 0) {
-            generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
-          } else {
-            const template = getSequenceStep(step)
-            if (template) {
-              generated = {
-                subject: renderTemplate(template.subject, {
-                  firstName: lead.firstName,
-                  city: lead.city,
-                  company: lead.company,
-                  fromEmail: inbox.email,
-                  fromName: inbox.senderName,
-                }),
-                body: renderTemplate(template.body, {
-                  firstName: lead.firstName,
-                  city: lead.city,
-                  company: lead.company,
-                  fromEmail: inbox.email,
-                  fromName: inbox.senderName,
-                }),
+            // Email initial : IA personnalisée, avec repli sur template si l'IA échoue
+            try {
+              generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
+            } catch (aiErr) {
+              const fallback = renderFallbackTemplate(0)
+              if (!fallback) throw aiErr
+              console.warn('[autopilot-tick] IA indisponible — repli template email initial pour', contact.email, aiErr instanceof Error ? aiErr.message : '')
+              generated = fallback
+              if (!firstSendError) {
+                firstSendError = aiErr instanceof Error ? `AI fallback: ${aiErr.message}` : 'AI fallback'
               }
+            }
+          } else {
+            const fallback = renderFallbackTemplate(step)
+            if (fallback) {
+              generated = fallback
             } else {
               generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
             }
