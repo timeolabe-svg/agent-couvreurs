@@ -34,9 +34,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  out.v2_campaigns = await v2('/campaigns?limit=1')
-  out.v2_accounts = await v2('/accounts?limit=5')
-  out.v2_emails = await v2('/emails?limit=2')
+  // Lister tous les comptes connectés (emails uniquement) + toutes les campagnes
+  try {
+    const accRes = await fetch('https://api.instantly.ai/api/v2/accounts?limit=100', {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+    const accData = await accRes.json()
+    out.accounts_emails = (accData.items ?? []).map((a: Record<string, unknown>) => a.email)
+  } catch (e) {
+    out.accounts_error = e instanceof Error ? e.message : String(e)
+  }
+
+  try {
+    const campRes = await fetch('https://api.instantly.ai/api/v2/campaigns?limit=100', {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+    const campData = await campRes.json()
+    out.campaigns_list = (campData.items ?? []).map((c: Record<string, unknown>) => ({
+      id: c.id, name: c.name, status: c.status,
+    }))
+  } catch (e) {
+    out.campaigns_error = e instanceof Error ? e.message : String(e)
+  }
 
   return NextResponse.json(out)
 }
