@@ -75,10 +75,15 @@ async function saveRotationIndex(index: number): Promise<void> {
 }
 
 export async function getNextInbox(): Promise<InboxAccount> {
-  // Try Instantly API first, fall back to env, fall back to hardcoded default
-  let inboxes = await getInboxesFromInstantly()
-  if (inboxes.length === 0) {
+  // PRIORITÉ à la liste explicite INSTANTLY_INBOXES (les boîtes hdigiweb autorisées).
+  // Sans elle, on ne veut PAS récupérer tout le workspace Instantly (qui contient
+  // aussi des comptes LabegarIA). On ne tombe sur l'API que si l'env n'est pas défini.
+  let inboxes: InboxAccount[]
+  if (process.env.INSTANTLY_INBOXES) {
     inboxes = getInboxesFromEnv()
+  } else {
+    inboxes = await getInboxesFromInstantly()
+    if (inboxes.length === 0) inboxes = getInboxesFromEnv()
   }
 
   const currentIndex = await getRotationIndex()
