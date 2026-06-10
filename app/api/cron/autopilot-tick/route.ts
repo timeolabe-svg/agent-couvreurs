@@ -539,9 +539,6 @@ export async function GET(request: NextRequest) {
               if (!fallback) throw aiErr
               console.warn('[autopilot-tick] IA indisponible — repli template email initial pour', contact.email, aiErr instanceof Error ? aiErr.message : '')
               generated = fallback
-              if (!firstSendError) {
-                firstSendError = aiErr instanceof Error ? `AI fallback: ${aiErr.message}` : 'AI fallback'
-              }
             }
           } else {
             const fallback = renderFallbackTemplate(step)
