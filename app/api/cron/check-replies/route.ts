@@ -495,8 +495,14 @@ export async function GET(request: NextRequest) {
       }
     }
   } catch (err) {
-    console.error('[check-replies] Fatal error', err)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+    // Log but don't crash the cron — return 200 so cron-job.org keeps running
+    console.error('[check-replies] Fatal error (non-blocking)', err)
+    return NextResponse.json({
+      processed,
+      drafts,
+      blocked,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    })
   }
 
   return NextResponse.json({ processed, drafts, blocked })

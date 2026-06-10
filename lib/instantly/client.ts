@@ -113,41 +113,37 @@ export async function getInstantlyReplies(params?: {
 }): Promise<InstantlyReply[]> {
   if (!API_KEY) {
     warnNoKey('getInstantlyReplies')
-    return [
-      {
-        id: 'mock-reply-1',
-        from_address: 'couvreur.martin@example.fr',
-        to_address: 'thomas@hdigiweb.fr',
-        subject: 'Re: Visibilité Google',
-        body: 'Bonjour, je suis intéressé, pouvez-vous m\'envoyer plus d\'infos ?',
-        timestamp: new Date().toISOString(),
-        campaign_id: 'mock-campaign-1',
-        lead_email: 'couvreur.martin@example.fr',
-      },
-    ]
+    return []
   }
 
-  const limit = params?.limit ?? 50
-  const skip = params?.skip ?? 0
-  let url = `/emails/list?api_key=${API_KEY}&limit=${limit}&skip=${skip}`
-  if (params?.campaign_id) url += `&campaign_id=${params.campaign_id}`
+  try {
+    const limit = params?.limit ?? 50
+    const skip = params?.skip ?? 0
+    // Instantly v1: /email/list with email_type=2 (replies only)
+    let url = `/email/list?api_key=${API_KEY}&limit=${limit}&skip=${skip}&email_type=2`
+    if (params?.campaign_id) url += `&campaign_id=${params.campaign_id}`
 
-  const data = await instantlyFetch(url)
-  const emails: Array<Record<string, unknown>> = data.data ?? data ?? []
+    const data = await instantlyFetch(url)
+    const emails: Array<Record<string, unknown>> = data.data ?? data ?? []
 
-  // Filter to replies only (type === 'reply' or subject starts with Re:)
-  return emails
-    .filter((e) => e.type === 'reply' || String(e.subject ?? '').toLowerCase().startsWith('re:'))
-    .map((e) => ({
-      id: String(e.id ?? ''),
-      from_address: String(e.from_address ?? e.from ?? ''),
-      to_address: String(e.to_address ?? e.to ?? ''),
-      subject: String(e.subject ?? ''),
-      body: String(e.body ?? e.text ?? ''),
-      timestamp: String(e.timestamp ?? e.created_at ?? new Date().toISOString()),
-      campaign_id: String(e.campaign_id ?? ''),
-      lead_email: String(e.from_address ?? e.from ?? ''),
-    }))
+    if (!Array.isArray(emails)) return []
+
+    return emails
+      .map((e) => ({
+        id: String(e.id ?? e.uuid ?? ''),
+        from_address: String(e.from_address ?? e.from_email ?? e.from ?? ''),
+        to_address: String(e.to_address ?? e.to_email ?? e.to ?? ''),
+        subject: String(e.subject ?? ''),
+        body: String(e.body ?? e.text ?? e.html ?? ''),
+        timestamp: String(e.timestamp ?? e.created_at ?? e.date ?? new Date().toISOString()),
+        campaign_id: String(e.campaign_id ?? ''),
+        lead_email: String(e.from_address ?? e.from_email ?? e.from ?? ''),
+      }))
+      .filter((e) => e.id && e.from_address)
+  } catch (err) {
+    console.error('[Instantly] getInstantlyReplies failed — returning []', err)
+    return []
+  }
 }
 
 // ─── Mark as processed ────────────────────────────────────────────────────────
@@ -157,10 +153,15 @@ export async function markReplyProcessed(replyId: string): Promise<void> {
     warnNoKey('markReplyProcessed')
     return
   }
-  await instantlyFetch(`/emails/${replyId}/mark-read`, {
-    method: 'POST',
-    body: JSON.stringify({ api_key: API_KEY }),
-  })
+  try {
+    await instantlyFetch(`/email/mark-read`, {
+      method: 'POST',
+      body: JSON.stringify({ api_key: API_KEY, id: replyId }),
+    })
+  } catch (err) {
+    // Non-critical — log and continue
+    console.warn('[Instantly] markReplyProcessed failed:', err)
+  }
 }
 
 // ─── Send reply ───────────────────────────────────────────────────────────────
@@ -175,7 +176,7 @@ export async function sendReply(params: {
     console.log('[MOCK] Would send reply to', params.reply_to_id)
     return
   }
-  await instantlyFetch('/emails/reply', {
+  await instantlyFetch('/email/reply', {
     method: 'POST',
     body: JSON.stringify({
       api_key: API_KEY,
