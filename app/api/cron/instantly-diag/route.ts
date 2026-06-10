@@ -23,16 +23,20 @@ export async function GET(request: NextRequest) {
     out.v1_error = e instanceof Error ? e.message : String(e)
   }
 
-  // V2 : Bearer token
-  try {
-    const r2 = await fetch('https://api.instantly.ai/api/v2/campaigns?limit=1', {
-      headers: { Authorization: `Bearer ${key}` },
-    })
-    out.v2_status = r2.status
-    out.v2_body = (await r2.text()).slice(0, 200)
-  } catch (e) {
-    out.v2_error = e instanceof Error ? e.message : String(e)
+  const v2 = async (path: string) => {
+    try {
+      const r = await fetch(`https://api.instantly.ai/api/v2${path}`, {
+        headers: { Authorization: `Bearer ${key}` },
+      })
+      return { status: r.status, body: (await r.text()).slice(0, 400) }
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) }
+    }
   }
+
+  out.v2_campaigns = await v2('/campaigns?limit=1')
+  out.v2_accounts = await v2('/accounts?limit=5')
+  out.v2_emails = await v2('/emails?limit=2')
 
   return NextResponse.json(out)
 }
