@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { generateText, extractJson } from '@/lib/ai'
 import type { ReplyClassification } from './classifier'
-
-const client = new Anthropic()
 
 const SYSTEM_PROMPT = `Tu es Gabin, chargé de développement commercial chez Hdigiweb, agence web basée à Toulouse.
 
@@ -131,17 +129,13 @@ ${buildStrategyGuidance(params.classification)}
 Rédige la réponse. JSON uniquement :
 {"body": "..."}`
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 600,
+  const text = await generateText({
     system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }],
+    prompt: userPrompt,
+    maxTokens: 600,
+    temperature: 0.8,
   })
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('No JSON in generator response')
-
-  const parsed = JSON.parse(jsonMatch[0]) as { body: string }
+  const parsed = extractJson<{ body: string }>(text)
   return parsed.body
 }

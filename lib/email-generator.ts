@@ -1,7 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { generateText, extractJson } from '@/lib/ai'
 import { Lead } from '@/types'
-
-const client = new Anthropic()
 
 const SYSTEM_PROMPT = `Tu rédiges des cold emails pour Hdigiweb. Le standard : ton email doit être indistinguable d'un email écrit à la main par un consultant senior qui a passé 10 minutes sur le dossier du prospect. Si un dirigeant peut détecter en 5 secondes que c'est de l'IA, l'email est raté.
 
@@ -275,16 +273,13 @@ export async function generateEmail(
     .replace(/thomas@hdigiweb\.fr/g, fromEmail)
     .replace(/Thomas Renard/g, fromName)
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 800,
+  const text = await generateText({
     system: dynamicSystemPrompt + dynamicAddon,
-    messages: [{ role: 'user', content: buildLeadBlock(lead, type, fromEmail, fromName) }],
+    prompt: buildLeadBlock(lead, type, fromEmail, fromName),
+    maxTokens: 800,
+    temperature: 0.9, // rédaction = créatif
   })
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('No JSON in response')
-  return JSON.parse(jsonMatch[0])
+  return extractJson<{ subject: string; body: string }>(text)
 }
 

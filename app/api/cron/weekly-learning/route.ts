@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { generateText, extractJson } from '@/lib/ai'
 
 export const dynamic = 'force-dynamic'
 
@@ -149,19 +149,14 @@ Génère un rapport JSON structuré avec :
   }
 }`
 
-    const anthropic = new Anthropic()
-    const aiResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+    const rawText = await generateText({
       system: `Tu es l'analyste IA de Hdigiweb. Tu analyses les performances de prospection cold email pour améliorer les résultats semaine après semaine.`,
-      messages: [{ role: 'user', content: userPrompt }],
+      prompt: userPrompt,
+      maxTokens: 1024,
+      temperature: 0.5,
     })
 
-    const rawText = aiResponse.content[0].type === 'text' ? aiResponse.content[0].text : ''
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error('No JSON in AI response')
-
-    const report = JSON.parse(jsonMatch[0]) as {
+    const report = extractJson<{
       summary: string
       topInsights: string[]
       recommendations: {
@@ -176,7 +171,7 @@ Génère un rapport JSON structuré avec :
         best_sector: string
         worst_sector: string
       }
-    }
+    }>(rawText)
 
     // ── Insert learning_report ─────────────────────────────────────────────────
     const [inserted] = await db

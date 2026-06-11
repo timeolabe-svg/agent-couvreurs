@@ -1,6 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
-
-const client = new Anthropic()
+import { generateText, extractJson } from '@/lib/ai'
 
 export type ReplyClassification =
   | 'desinterest'
@@ -96,24 +94,20 @@ export async function classifyReply(params: {
     .replace('{replySubject}', params.replySubject)
     .replace('{replyBody}', params.replyBody)
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 400,
-    messages: [{ role: 'user', content: prompt }],
+  const text = await generateText({
+    prompt,
+    maxTokens: 400,
+    temperature: 0.2, // classification = déterministe
   })
 
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('No JSON in classification response')
-
-  const raw = JSON.parse(jsonMatch[0]) as {
+  const raw = extractJson<{
     classification: ReplyClassification
     action: ActionType
     confidence: number
     reasoning: string
     extractedDate?: string | null
     extractedName?: string | null
-  }
+  }>(text)
 
   return {
     classification: raw.classification,
