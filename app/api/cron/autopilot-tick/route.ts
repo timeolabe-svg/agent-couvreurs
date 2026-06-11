@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
   const { eq, and, gte, lte, sql } = await import('drizzle-orm')
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail } = await import('@/lib/email-generator')
-  const { getSequenceStep, renderTemplate, getNextStep } = await import('@/data/sequence')
+  const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
   let sent = 0
@@ -598,26 +598,10 @@ export async function GET(request: NextRequest) {
             },
           })
 
-          // Enqueue next sequence step
-          const currentStepDef = getSequenceStep(step)
-          const nextStep = getNextStep(step)
-          if (nextStep && nextStep.active) {
-            const currentDelay = currentStepDef?.delayDays ?? 0
-            const daysUntilNext = nextStep.delayDays - currentDelay
-            const nextScheduledAt = new Date()
-            nextScheduledAt.setDate(nextScheduledAt.getDate() + daysUntilNext)
-
-            await db.insert(email_queue).values({
-              contact_id: contact.id,
-              campaign_id: campaign.id,
-              sequence_step: nextStep.step,
-              from_email: inbox.email,
-              subject: renderTemplate(nextStep.subject, { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }),
-              body: renderTemplate(nextStep.body, { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }),
-              status: 'pending',
-              scheduled_at: nextScheduledAt,
-            }).onConflictDoNothing()
-          }
+          // NOTE : les relances (J+3, J+7, J+14, J+21) sont gérées nativement par
+          // Instantly (étapes 2-5 de la séquence). Instantly refuse d'ajouter 2x le
+          // même lead, donc on ne ré-empile PAS les relances ici — sinon double envoi.
+          // Notre code ne gère que l'email initial (step 0) personnalisé par l'IA.
 
           sent++
         } catch (err) {
