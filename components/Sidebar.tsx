@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, MessageSquare, Brain, Users, LogOut } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, MessageSquare, Brain, Users, LogOut, Inbox } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 
 const NAV_BEFORE_BELL = [
@@ -97,6 +97,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 px-2 py-3 flex flex-col gap-0.5">
         {NAV_BEFORE_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
+        {renderLink('/conversations', 'Messagerie', Inbox)}
         {renderLink('/reponses-a-valider', 'À valider', MessageSquare, pendingCount)}
         {NAV_AFTER_BELL.map(({ href, label, icon: Icon }) => renderLink(href, label, Icon))}
       </nav>
