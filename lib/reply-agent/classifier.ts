@@ -67,6 +67,46 @@ Réponds en JSON strict :
   "extractedName": "..." ou null
 }`
 
+// CRITIQUE : isole le VRAI texte du prospect en retirant l'historique cité
+// (notre email d'origine contient "répondez Stop" → sinon faux opt-out).
+export function stripQuotedReply(raw: string): string {
+  let text = raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#3[49];/g, "'")
+    .replace(/&rsquo;/gi, "'")
+    .replace(/&quot;/gi, '"')
+
+  // Coupe au premier marqueur de citation / historique de conversation
+  const markers = [
+    /\n\s*Le\s[\s\S]{0,90}?\sa\s+écrit\s*:/i,        // "Le 15 juin 2026, X a écrit :"
+    /\n\s*Le\s(lun|mar|mer|jeu|ven|sam|dim)[\s\S]{0,90}?,/i, // "Le lun. 15 juin 2026, ... a"
+    /\nOn\s[\s\S]{0,90}?\swrote:/i,
+    /-{2,}\s*(Original Message|Message d'origine)\s*-{2,}/i,
+    /\n\s*De\s*:[\s\S]{0,250}?Envoyé\s*:/i,           // Outlook FR
+    /\n\s*From:[\s\S]{0,250}?Sent:/i,                 // Outlook EN
+    /\n_{5,}/,                                         // séparateur Outlook
+    /\n>{1,}\s/,                                       // lignes citées ">"
+    /\nEnvoyé de mon /i,
+    /\nObtenez\s+Outlook/i,
+    /\nPour ne plus recevoir mes emails/i,            // notre propre ligne opt-out citée
+  ]
+  let cutAt = text.length
+  for (const m of markers) {
+    const match = text.match(m)
+    if (match && match.index !== undefined && match.index < cutAt) cutAt = match.index
+  }
+  text = text.slice(0, cutAt)
+
+  // Retire la signature après "-- "
+  text = text.replace(/\n--\s*\n[\s\S]*$/, '')
+
+  return text.replace(/\n{3,}/g, '\n\n').trim()
+}
+
 // Détecte les réponses AUTOMATIQUES (accusés de réception, absences, bots).
 // Ce ne sont PAS de vraies réponses humaines → on les ignore (no_action).
 function isAutoResponder(body: string, subject: string, fromEmail: string): boolean {
@@ -108,11 +148,13 @@ function isAutoResponder(body: string, subject: string, fromEmail: string): bool
 function isOptOut(body: string, subject: string): boolean {
   const text = (body + ' ' + subject).toLowerCase().trim()
   const optOutPatterns = [
-    /^stop$/m,
-    /^(d[ée]sinscri(re|ption)|unsubscribe|arr[eê]ter|retirer|supprimer|ne plus recevoir|ne plus contacter|plus de mail|plus d'email|pas int[eé]ress[eé])/m,
-    /r[eé]pondez.*stop/,
-    /merci de (me retirer|ne plus|stopper|cesser)/,
+    /^stop\b/m,                                       // "Stop" / "STOP" en début de ligne
+    /\bstop\b\s*[.!]?\s*$/m,                           // "... stop" en fin de message
+    /^(d[ée]sinscri(re|ption)|unsubscribe|me d[ée]sabonner|ne plus recevoir|ne plus me contacter|ne plus contacter|plus de mail|plus d'email)/m,
+    /merci de (me retirer|ne plus|stopper|cesser|me d[ée]sabonner)/,
     /souhait(e|ons) (ne plus|pas) [eê]tre contact/,
+    /(ne m'int[eé]resse pas|pas int[eé]ress[eé]e?\b)/,
+    /me retirer de (votre|vos|la) (liste|base|mailing)/,
   ]
   return optOutPatterns.some(p => p.test(text))
 }
@@ -125,8 +167,12 @@ export async function classifyReply(params: {
   contactCompany: string
   fromEmail?: string
 }): Promise<ClassificationResult> {
+  // CRITIQUE : on n'analyse QUE le vrai texte du prospect, jamais la citation
+  // de notre email (qui contient "répondez Stop" → sinon faux opt-out).
+  const cleanBody = stripQuotedReply(params.replyBody)
+
   // Réponse automatique (accusé de réception, absence, bot) → ignorer totalement
-  if (isAutoResponder(params.replyBody, params.replySubject, params.fromEmail ?? '')) {
+  if (isAutoResponder(cleanBody, params.replySubject, params.fromEmail ?? '')) {
     return {
       classification: 'oof',
       action: 'no_action',
@@ -135,8 +181,8 @@ export async function classifyReply(params: {
     }
   }
 
-  // Fast opt-out detection before calling Claude
-  if (isOptOut(params.replyBody, params.replySubject)) {
+  // Détection opt-out rapide — UNIQUEMENT sur le texte réel du prospect
+  if (isOptOut(cleanBody, params.replySubject)) {
     return {
       classification: 'desinterest',
       action: 'blocklist',
@@ -150,7 +196,7 @@ export async function classifyReply(params: {
     .replace('{contactName}', params.contactName)
     .replace('{contactCompany}', params.contactCompany)
     .replace('{replySubject}', params.replySubject)
-    .replace('{replyBody}', params.replyBody)
+    .replace('{replyBody}', cleanBody)
 
   const text = await generateText({
     prompt,
