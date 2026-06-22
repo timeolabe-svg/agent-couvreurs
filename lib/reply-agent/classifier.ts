@@ -39,13 +39,23 @@ Message : {replyBody}
 
 Classifie cette réponse parmi : desinterest / objection / question / interest / rdv_request / oof / spam / other
 
-Action recommandée :
-- desinterest → no_action + blocklist
-- oof → auto_reply (relance à leur retour)
-- spam → no_action
-- objection/question/interest/rdv_request → draft_for_validation
+TU ES AUTONOME. Tu réponds toi-même à la grande majorité des messages. Tu ne demandes une validation humaine que si tu as un VRAI doute ou si c'est trop technique/sensible.
 
-Si rdv_request : extrais la date/heure proposée si mentionnée.
+Choix de l'action :
+- desinterest (pas intéressé, "non merci", "déjà accompagné" ferme) → blocklist
+- spam → no_action
+- oof (absence/accusé réception automatique) → no_action
+- interest / question / objection / rdv_request → auto_reply (tu réponds seul)
+
+EXCEPTION → draft_for_validation (demande validation) UNIQUEMENT si :
+- le prospect demande un prix précis, un devis chiffré, ou négocie un tarif
+- question très technique nécessitant une expertise précise que tu n'as pas
+- réclamation, mécontentement, ton agressif ou juridique
+- situation ambiguë où tu n'es pas sûr de la bonne réponse (confidence < 70)
+
+Dans le doute léger : réponds toi-même (auto_reply). Ne sur-sollicite pas l'humain.
+
+Si rdv_request : extrais la date/heure proposée si mentionnée, et action = auto_reply.
 
 Réponds en JSON strict :
 {
@@ -56,6 +66,43 @@ Réponds en JSON strict :
   "extractedDate": "..." ou null,
   "extractedName": "..." ou null
 }`
+
+// Détecte les réponses AUTOMATIQUES (accusés de réception, absences, bots).
+// Ce ne sont PAS de vraies réponses humaines → on les ignore (no_action).
+function isAutoResponder(body: string, subject: string, fromEmail: string): boolean {
+  const text = (subject + ' ' + body).toLowerCase()
+  const from = fromEmail.toLowerCase()
+
+  // Adresses techniques (support, antispam, noreply...)
+  if (/(no-?reply|ne-?pas-?repondre|donotreply|mailer-daemon|postmaster|antispam|notification|support@|@webador|@wix|@sendgrid|@mailchimp)/.test(from)) {
+    return true
+  }
+
+  const autoPatterns = [
+    // Accusés de réception
+    /nous reviendrons vers vous/,
+    /reviendrai vers vous/,
+    /accus[ée] de r[ée]ception/,
+    /bonne r[ée]ception de (votre|ce)/,
+    /bien re[çc]u votre (message|mail|email|demande)/,
+    /confirmons la bonne r[ée]ception/,
+    /nous mettons tout en [œo]euvre pour/,
+    /traiter (votre|ce|le) (message|mail|demande) dans les meilleurs d[ée]lais/,
+    /votre (message|demande) a bien [ée]t[ée] re[çc]u/,
+    // Réponses automatiques / absences
+    /r[ée]ponse automatique/,
+    /message automatique/,
+    /automatic reply/,
+    /out of office/,
+    /auto-?reply/,
+    /je suis (actuellement )?absent/,
+    /actuellement en (cong[ée]s?|vacances|d[ée]placement)/,
+    /de retour le \d/,
+    /en (cong[ée]s?|vacances) jusqu/,
+    /ne pas r[ée]pondre [àa] (cet|ce) (e-?mail|message)/,
+  ]
+  return autoPatterns.some(p => p.test(text))
+}
 
 // Detect opt-out without calling Claude (saves credits + faster)
 function isOptOut(body: string, subject: string): boolean {
@@ -76,7 +123,18 @@ export async function classifyReply(params: {
   originalEmailBody: string
   contactName: string
   contactCompany: string
+  fromEmail?: string
 }): Promise<ClassificationResult> {
+  // Réponse automatique (accusé de réception, absence, bot) → ignorer totalement
+  if (isAutoResponder(params.replyBody, params.replySubject, params.fromEmail ?? '')) {
+    return {
+      classification: 'oof',
+      action: 'no_action',
+      confidence: 98,
+      reasoning: 'Réponse automatique détectée (accusé de réception / absence / bot) — ignorée, pas de brouillon.',
+    }
+  }
+
   // Fast opt-out detection before calling Claude
   if (isOptOut(params.replyBody, params.replySubject)) {
     return {

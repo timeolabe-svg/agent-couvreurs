@@ -200,7 +200,7 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { contacts, incoming_replies, reply_drafts, blocklist, dashboard_events, email_queue, rdv: rdvTable } = await import('@/lib/db/schema')
-  const { eq, and, gte, sql } = await import('drizzle-orm')
+  const { eq, and, sql } = await import('drizzle-orm')
   const { lte: lteOp } = await import('drizzle-orm')
   const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
   const { classifyReply } = await import('@/lib/reply-agent/classifier')
@@ -269,20 +269,17 @@ export async function GET(request: NextRequest) {
           originalEmailBody = lastSent?.body ?? ''
         }
 
-        // 2. Dedup: skip if already have a reply from this address in the last 24h
-        const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000)
-        const existing = await db
-          .select({ id: incoming_replies.id })
-          .from(incoming_replies)
-          .where(
-            and(
-              eq(incoming_replies.from_email, reply.from_address),
-              gte(incoming_replies.created_at, since24h),
-            )
-          )
-          .limit(1)
-
-        if (existing.length > 0) continue
+        // 2. Dédoublonnage PERMANENT : si cet email Instantly précis a déjà été
+        //    traité (même instantly_reply_id), on saute. Évite de re-générer un
+        //    brouillon à chaque passage du cron (cause du spam précédent).
+        if (reply.id) {
+          const already = await db
+            .select({ id: incoming_replies.id })
+            .from(incoming_replies)
+            .where(eq(incoming_replies.instantly_reply_id, reply.id))
+            .limit(1)
+          if (already.length > 0) continue
+        }
 
         // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais)
         if (!isLikelyFrench(reply.body + ' ' + reply.subject)) {
@@ -297,6 +294,7 @@ export async function GET(request: NextRequest) {
           originalEmailBody,
           contactName: contact?.name ?? reply.from_address,
           contactCompany: contact?.company ?? reply.from_address,
+          fromEmail: reply.from_address,
         })
 
         // 4. Insert into incoming_replies
@@ -385,132 +383,122 @@ export async function GET(request: NextRequest) {
           contactCity: contact?.city ?? '',
         })
 
+        // --- RDV auto-booking quand rdv_request (autonome, peu importe l'action) ---
+        let rdvHandled = false
+        if (classification.classification === 'rdv_request') {
+          const extractedDate = (classification as { extractedDate?: string }).extractedDate
+          try {
+            const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+            const availability = await getAvailability()
+
+            const parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
+            const scheduledDate = findNextAvailableSlot(parsedDate, availability)
+
+            const { createCalendarEvent } = await import('@/lib/google-calendar')
+            const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
+
+            const exchangeSummary = buildExchangeSummary({
+              originalEmailBody,
+              replyBody: reply.body,
+              draftBody,
+              contactName: contact?.name ?? reply.from_address,
+              contactCompany: contact?.company ?? reply.from_address,
+            })
+
+            let googleEventId: string | null = null
+            let googleMeetLink: string | null = null
+            let calendarEventUrl: string | null = null
+
+            try {
+              const event = await createCalendarEvent({
+                summary: `RDV - ${contact?.company ?? reply.from_address}`,
+                description: exchangeSummary,
+                startTime: scheduledDate.toISOString(),
+                endTime: endTime.toISOString(),
+                attendeeEmail: reply.from_address,
+                meetLink: true,
+              })
+              googleEventId = event.eventId
+              googleMeetLink = event.meetLink
+              calendarEventUrl = event.eventUrl
+            } catch (calErr) {
+              console.error('[check-replies] Google Calendar error:', calErr)
+            }
+
+            const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
+              ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
+              : extractedDate
+                ? `Date extraite : "${extractedDate}".`
+                : 'Aucune date précisée — prochain créneau disponible sélectionné.'
+
+            const [insertedRdv] = await db.insert(rdvTable).values({
+              contact_id: contact?.id ?? undefined,
+              incoming_reply_id: insertedReply.id,
+              scheduled_at: scheduledDate,
+              duration_min: availability.slotDurationMin || 30,
+              status: 'confirmed',
+              google_event_id: googleEventId,
+              google_meet_link: googleMeetLink,
+              notes: `RDV demandé par le prospect. ${slotNote}`,
+            }).returning()
+
+            if (process.env.STRIPE_SECRET_KEY && insertedRdv) {
+              try {
+                const { stripe } = await import('@/lib/stripe')
+                const { agent_config } = await import('@/lib/db/schema')
+                const [customerRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
+                const [pmRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
+                if (customerRow?.value && pmRow?.value) {
+                  await stripe.paymentIntents.create({
+                    amount: 5000,
+                    currency: 'eur',
+                    customer: customerRow.value,
+                    payment_method: pmRow.value,
+                    confirm: true,
+                    off_session: true,
+                    description: `RDV Hdigiweb auto — ${contact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
+                    metadata: { rdv_id: insertedRdv.id, contact_company: contact?.company ?? reply.from_address },
+                  })
+                  console.log('[check-replies] Stripe charge 50€ OK for', contact?.company)
+                }
+              } catch (stripeErr) {
+                console.error('[check-replies] Stripe charge failed:', stripeErr)
+              }
+            }
+
+            // Notification au client : RDV calé (action effectuée, pas une demande)
+            await sendRdvNotificationEmail({
+              contactName: contact?.name ?? reply.from_address,
+              contactCompany: contact?.company ?? reply.from_address,
+              scheduledAt: scheduledDate,
+              googleMeetLink,
+              calendarEventUrl,
+              exchangeSummary,
+            })
+            rdvHandled = true
+          } catch (rdvErr) {
+            console.error('[check-replies] RDV auto-booking failed:', rdvErr)
+          }
+        }
+
+        // --- Brouillon de réponse ---
         if (classification.action === 'auto_reply') {
-          // Schedule auto-reply with human-like delay (4-12 min)
+          // L'agent répond seul : on programme l'envoi avec délai humain (4-12 min)
           await db.insert(reply_drafts).values({
             incoming_reply_id: insertedReply.id,
             body: draftBody,
             status: 'scheduled',
             send_after: new Date(Date.now() + randomDelayMs()),
           })
-          // No notification needed — will be sent by scheduled loop on next cron run
         } else {
-          // draft_for_validation — create pending draft and notify human
+          // draft_for_validation : doute / technique → on demande validation humaine
           await db.insert(reply_drafts).values({
             incoming_reply_id: insertedReply.id,
             body: draftBody,
             status: 'pending',
           })
-
-          // --- RDV auto-booking when classification is rdv_request ---
-          if (classification.classification === 'rdv_request') {
-            const extractedDate = (classification as { extractedDate?: string }).extractedDate
-            try {
-              const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
-              const availability = await getAvailability()
-
-              const parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
-              const scheduledDate = findNextAvailableSlot(parsedDate, availability)
-
-              const { createCalendarEvent } = await import('@/lib/google-calendar')
-
-              const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
-
-              const exchangeSummary = buildExchangeSummary({
-                originalEmailBody,
-                replyBody: reply.body,
-                draftBody,
-                contactName: contact?.name ?? reply.from_address,
-                contactCompany: contact?.company ?? reply.from_address,
-              })
-
-              let googleEventId: string | null = null
-              let googleMeetLink: string | null = null
-              let calendarEventUrl: string | null = null
-
-              try {
-                const event = await createCalendarEvent({
-                  summary: `RDV - ${contact?.company ?? reply.from_address}`,
-                  description: exchangeSummary,
-                  startTime: scheduledDate.toISOString(),
-                  endTime: endTime.toISOString(),
-                  attendeeEmail: reply.from_address,
-                  meetLink: true,
-                })
-                googleEventId = event.eventId
-                googleMeetLink = event.meetLink
-                calendarEventUrl = event.eventUrl
-              } catch (calErr) {
-                console.error('[check-replies] Google Calendar error:', calErr)
-              }
-
-              const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
-                ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
-                : extractedDate
-                  ? `Date extraite : "${extractedDate}".`
-                  : 'Aucune date précisée — prochain créneau disponible sélectionné.'
-
-              // Save RDV to DB
-              const [insertedRdv] = await db.insert(rdvTable).values({
-                contact_id: contact?.id ?? undefined,
-                incoming_reply_id: insertedReply.id,
-                scheduled_at: scheduledDate,
-                duration_min: availability.slotDurationMin || 30,
-                status: 'confirmed',
-                google_event_id: googleEventId,
-                google_meet_link: googleMeetLink,
-                notes: `RDV demandé par le prospect. ${slotNote}`,
-              }).returning()
-
-              // Auto-charge 50€ if customer has a saved payment method
-              if (process.env.STRIPE_SECRET_KEY && insertedRdv) {
-                try {
-                  const { stripe } = await import('@/lib/stripe')
-                  const { agent_config } = await import('@/lib/db/schema')
-
-                  const [customerRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
-                  const [pmRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
-
-                  if (customerRow?.value && pmRow?.value) {
-                    await stripe.paymentIntents.create({
-                      amount: 5000,
-                      currency: 'eur',
-                      customer: customerRow.value,
-                      payment_method: pmRow.value,
-                      confirm: true,
-                      off_session: true,
-                      description: `RDV Hdigiweb auto — ${contact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
-                      metadata: { rdv_id: insertedRdv.id, contact_company: contact?.company ?? reply.from_address },
-                    })
-                    console.log('[check-replies] Stripe charge 50€ OK for', contact?.company)
-                  }
-                } catch (stripeErr) {
-                  console.error('[check-replies] Stripe charge failed:', stripeErr)
-                }
-              }
-
-              // Send enhanced RDV notification
-              await sendRdvNotificationEmail({
-                contactName: contact?.name ?? reply.from_address,
-                contactCompany: contact?.company ?? reply.from_address,
-                scheduledAt: scheduledDate,
-                googleMeetLink,
-                calendarEventUrl,
-                exchangeSummary,
-              })
-            } catch (rdvErr) {
-              console.error('[check-replies] RDV auto-booking failed:', rdvErr)
-              // Fall through to normal draft notification
-              await sendNotificationEmail({
-                contactName: contact?.name ?? reply.from_address,
-                contactCompany: contact?.company ?? reply.from_address,
-                classification: classification.classification,
-                replyBody: reply.body,
-                draftBody,
-              })
-            }
-          } else {
-            // Not an rdv_request — standard notification
+          // Notifier l'humain (sauf si un RDV a déjà été calé et notifié)
+          if (!rdvHandled) {
             await sendNotificationEmail({
               contactName: contact?.name ?? reply.from_address,
               contactCompany: contact?.company ?? reply.from_address,
