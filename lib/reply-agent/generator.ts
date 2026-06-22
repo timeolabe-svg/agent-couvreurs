@@ -80,10 +80,10 @@ Ton : direct, humain, pas commercial.`
 
     case 'rdv_request':
       return `STRATÉGIE RDV DEMANDÉ :
-Le prospect demande un RDV. Confirmer avec enthousiasme mais sans en faire trop.
-Proposer 2 créneaux précis cette semaine ou la suivante (les dates exactes sont autorisées).
-Rappeler brièvement l'objet du call (voir si le potentiel sur leur zone justifie qu'on travaille ensemble).
-Très court, très direct.`
+Le prospect veut échanger / être rappelé. Confirmer avec enthousiasme mais sans en faire trop.
+Si un CRÉNEAU À CONFIRMER est fourni ci-dessus, confirme CE créneau précis (jour + heure), ne redemande pas de dispo.
+Sinon, propose 2 créneaux précis cette semaine ou la suivante.
+Rappeler en une phrase l'objet du call. Très court, très direct.`
 
     case 'oof':
       return `STRATÉGIE ABSENCE :
@@ -103,6 +103,8 @@ export async function generateReplyResponse(params: {
   contactCompany: string
   contactCity: string
   conversationHistory?: Array<{ role: 'sent' | 'received'; body: string; date: string }>
+  proposedSlot?: string   // créneau déjà réservé à confirmer (ex: "mardi 24 juin à 17h00")
+  contactPhone?: string   // numéro donné par le prospect pour le rappel
 }): Promise<string> {
   const historyBlock =
     params.conversationHistory && params.conversationHistory.length > 0
@@ -110,6 +112,15 @@ export async function generateReplyResponse(params: {
           .map((m) => `[${m.date}] ${m.role === 'sent' ? 'Envoyé' : 'Reçu'} : ${m.body}`)
           .join('\n\n')
       : 'Aucun historique.'
+
+  // Si un créneau a été réservé, l'agent doit le CONFIRMER précisément (pas redemander)
+  const slotBlock = params.proposedSlot
+    ? `\n=== CRÉNEAU À CONFIRMER ===
+Un créneau a été réservé pour ce prospect : ${params.proposedSlot}.
+${params.contactPhone ? `Le prospect a donné ce numéro pour être rappelé : ${params.contactPhone}.` : ''}
+Confirme CE créneau précis dans ta réponse (ex: "Parfait, je vous appelle ${params.proposedSlot}${params.contactPhone ? ` au ${params.contactPhone}` : ''}.").
+Laisse une porte de sortie courte ("si ça ne vous convient pas, dites-moi un autre moment"). Ne redemande PAS une disponibilité ouverte puisque le créneau est posé.`
+    : ''
 
   const userPrompt = `Context :
 - Classification : ${params.classification}
@@ -123,6 +134,7 @@ ${params.originalEmailBody}
 
 Réponse reçue :
 ${params.replyBody}
+${slotBlock}
 
 ${buildStrategyGuidance(params.classification)}
 

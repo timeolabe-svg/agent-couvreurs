@@ -55,7 +55,8 @@ EXCEPTION → draft_for_validation (demande validation) UNIQUEMENT si :
 
 Dans le doute léger : réponds toi-même (auto_reply). Ne sur-sollicite pas l'humain.
 
-Si rdv_request : extrais la date/heure proposée si mentionnée, et action = auto_reply.
+IMPORTANT — rdv_request : classe en "rdv_request" dès que le prospect veut concrètement échanger : il dit "ça m'intéresse, contactez-moi", "rappelez-moi", "appelez-moi au ...", donne un numéro, propose un moment, ou demande un RDV/appel. Action = auto_reply.
+Si rdv_request : extrais dans "extractedDate" le moment souhaité tel qu'écrit ("en fin de journée", "demain matin", "mardi 14h", "cette semaine"...), sinon null.
 
 Réponds en JSON strict :
 {

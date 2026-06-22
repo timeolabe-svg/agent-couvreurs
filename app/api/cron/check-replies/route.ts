@@ -36,6 +36,25 @@ function parseExtractedDate(dateStr: string): Date | null {
   const now = new Date()
   const lower = dateStr.toLowerCase()
 
+  // Expressions relatives FR : "fin de journée", "ce soir", "aujourd'hui", "demain"
+  const setHourFromText = (d: Date) => {
+    const hm = lower.match(/(\d{1,2})\s*h\s*(\d{0,2})/)
+    if (hm) { d.setHours(parseInt(hm[1]), parseInt(hm[2] || '0'), 0, 0); return }
+    if (/fin de journ[ée]e|fin d'?apr[èe]s-?midi|ce soir|en soir[ée]e/.test(lower)) { d.setHours(17, 0, 0, 0); return }
+    if (/d[ée]but d'?apr[èe]s-?midi|d[ée]but apr[èe]s-?midi/.test(lower)) { d.setHours(14, 0, 0, 0); return }
+    if (/matin|matin[ée]e/.test(lower)) { d.setHours(9, 30, 0, 0); return }
+    if (/apr[èe]s-?midi/.test(lower)) { d.setHours(15, 0, 0, 0); return }
+    if (/midi/.test(lower)) { d.setHours(12, 0, 0, 0); return }
+    d.setHours(17, 0, 0, 0) // défaut : fin de journée
+  }
+
+  if (/aujourd'?hui|ce soir|fin de journ[ée]e|en soir[ée]e/.test(lower) && !/demain/.test(lower)) {
+    const d = new Date(now); setHourFromText(d); return d
+  }
+  if (/demain/.test(lower)) {
+    const d = new Date(now); d.setDate(d.getDate() + 1); setHourFromText(d); return d
+  }
+
   // "mardi 14h", "jeudi 10h30", "lundi matin", "vendredi après-midi"
   const dayMap: Record<string, number> = {
     lundi: 1,
@@ -373,7 +392,34 @@ export async function GET(request: NextRequest) {
             .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
         }
 
-        // auto_reply or draft_for_validation — generate draft
+        // Pour un RDV : on calcule le créneau AVANT de rédiger, pour que l'agent
+        // confirme une date/heure précise ET qu'on cale exactement le même créneau.
+        const isRdv = classification.classification === 'rdv_request'
+        const extractedDate = (classification as { extractedDate?: string }).extractedDate
+        const phoneMatch = reply.body.match(/0[1-9]([\s. ]?\d{2}){4}/)
+        const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
+
+        let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
+        let parsedDate: Date | null = null
+        let scheduledDate: Date | null = null
+        let proposedSlotStr: string | undefined
+
+        if (isRdv) {
+          try {
+            const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+            availabilityCfg = await getAvailability()
+            parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
+            scheduledDate = findNextAvailableSlot(parsedDate, availabilityCfg)
+            proposedSlotStr =
+              scheduledDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) +
+              ' à ' +
+              scheduledDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+          } catch (e) {
+            console.error('[check-replies] Calcul créneau échoué', e)
+          }
+        }
+
+        // auto_reply or draft_for_validation — generate draft (confirme le créneau si RDV)
         const draftBody = await generateReplyResponse({
           classification: classification.classification,
           originalEmailBody,
@@ -381,19 +427,15 @@ export async function GET(request: NextRequest) {
           contactName: contact?.name ?? reply.from_address,
           contactCompany: contact?.company ?? reply.from_address,
           contactCity: contact?.city ?? '',
+          proposedSlot: proposedSlotStr,
+          contactPhone: isRdv ? contactPhone : undefined,
         })
 
         // --- RDV auto-booking quand rdv_request (autonome, peu importe l'action) ---
         let rdvHandled = false
-        if (classification.classification === 'rdv_request') {
-          const extractedDate = (classification as { extractedDate?: string }).extractedDate
+        if (isRdv && scheduledDate && availabilityCfg) {
+          const availability = availabilityCfg
           try {
-            const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
-            const availability = await getAvailability()
-
-            const parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
-            const scheduledDate = findNextAvailableSlot(parsedDate, availability)
-
             const { createCalendarEvent } = await import('@/lib/google-calendar')
             const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
 
