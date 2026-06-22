@@ -246,7 +246,18 @@ export async function GET(request: NextRequest) {
     for (const { draft, reply } of readyDrafts) {
       try {
         if (reply.instantly_reply_id) {
-          await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body })
+          // Retrouver la boîte gabin@ qui a contacté ce prospect (eaccount requis)
+          let eaccount: string | undefined
+          if (reply.contact_id) {
+            const [orig] = await db
+              .select({ from_email: email_queue.from_email })
+              .from(email_queue)
+              .where(and(eq(email_queue.contact_id, reply.contact_id), eq(email_queue.status, 'sent')))
+              .orderBy(sql`${email_queue.sent_at} desc`)
+              .limit(1)
+            eaccount = orig?.from_email
+          }
+          await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body, eaccount })
         }
         await db.update(reply_drafts)
           .set({ status: 'sent', sent_at: new Date() })

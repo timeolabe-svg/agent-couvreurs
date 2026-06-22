@@ -210,14 +210,14 @@ export async function sendReply(params: {
     console.log('[MOCK] Would send reply to', params.reply_to_id)
     return
   }
-  // V2 : POST /emails/reply
+  // V2 : POST /emails/reply — format validé en prod (body html+text, eaccount requis)
   await instantlyFetch('/emails/reply', {
     method: 'POST',
     body: JSON.stringify({
       reply_to_uuid: params.reply_to_id,
       ...(params.eaccount ? { eaccount: params.eaccount } : {}),
       ...(params.subject ? { subject: params.subject } : {}),
-      body: { text: params.body },
+      body: { html: params.body.replace(/\n/g, '<br>'), text: params.body },
     }),
   })
 }
