@@ -41,10 +41,26 @@ function fmt(d: string): string {
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+type Tab = 'positive' | 'negative' | 'pending'
+
+// Range une conversation dans un des 3 onglets selon sa classification
+function bucketOf(cls: string | null): Tab {
+  if (cls === 'interest' || cls === 'rdv_request' || cls === 'question') return 'positive'
+  if (cls === 'desinterest') return 'negative'
+  return 'pending' // objection, oof, spam, other, non classé
+}
+
+const TABS: { key: Tab; label: string; color: string }[] = [
+  { key: 'positive', label: 'Positives', color: '#22c55e' },
+  { key: 'negative', label: 'Négatives', color: '#ef4444' },
+  { key: 'pending', label: 'En attente', color: '#f59e0b' },
+]
+
 export default function ConversationsPage() {
   const [convs, setConvs] = useState<Conversation[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [tab, setTab] = useState<Tab>('positive')
 
   const load = async () => {
     setLoading(true)
@@ -52,13 +68,25 @@ export default function ConversationsPage() {
       const res = await fetch('/api/conversations')
       const json = await res.json() as { conversations: Conversation[] }
       setConvs(json.conversations ?? [])
-      if (!selected && json.conversations?.length) setSelected(json.conversations[0].key)
     } catch { /* ignore */ }
     setLoading(false)
   }
   useEffect(() => { void load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
-  const current = convs.find(c => c.key === selected) ?? null
+  const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0 }
+  for (const c of convs) counts[bucketOf(c.classification)]++
+
+  const filtered = convs.filter(c => bucketOf(c.classification) === tab)
+
+  // Sélectionne automatiquement la 1ère conv de l'onglet actif
+  useEffect(() => {
+    if (filtered.length && !filtered.some(c => c.key === selected)) {
+      setSelected(filtered[0].key)
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tab, convs])
+
+  const current = filtered.find(c => c.key === selected) ?? null
 
   return (
     <div className="flex h-full" style={{ color: 'var(--color-text)' }}>
@@ -76,11 +104,41 @@ export default function ConversationsPage() {
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
+
+        {/* Sous-onglets : Positives / Négatives / En attente */}
+        <div className="flex" style={{ borderBottom: '1px solid var(--color-border)' }}>
+          {TABS.map(t => {
+            const active = tab === t.key
+            return (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                className="flex-1 px-2 py-2.5 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                style={{
+                  color: active ? t.color : 'var(--color-muted)',
+                  borderBottom: active ? `2px solid ${t.color}` : '2px solid transparent',
+                  background: active ? 'var(--color-surface-2)' : 'transparent',
+                }}
+              >
+                {t.label}
+                <span
+                  className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none"
+                  style={{ background: active ? t.color + '22' : 'var(--color-surface-2)', color: active ? t.color : 'var(--color-muted-2)' }}
+                >
+                  {counts[t.key]}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+
         <div className="flex-1 overflow-y-auto">
-          {convs.length === 0 && !loading && (
-            <p className="text-[13px] p-4" style={{ color: 'var(--color-muted)' }}>Aucune conversation pour le moment.</p>
+          {filtered.length === 0 && !loading && (
+            <p className="text-[13px] p-4" style={{ color: 'var(--color-muted)' }}>
+              {tab === 'positive' ? 'Aucune réponse positive pour le moment.' : tab === 'negative' ? 'Aucune réponse négative.' : 'Rien en attente.'}
+            </p>
           )}
-          {convs.map(c => {
+          {filtered.map(c => {
             const cls = c.classification ? CLASS_LABEL[c.classification] : null
             const last = c.messages[c.messages.length - 1]
             const active = c.key === selected
