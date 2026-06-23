@@ -263,18 +263,14 @@ export async function GET(request: NextRequest) {
         }
 
         const hasMillionVerifier = Boolean(process.env.MILLION_VERIFIER_API_KEY)
-        // Sans MillionVerifier : n'envoyer QUE les emails sûrs (confiance >= 70).
-        // 70+ = mailto explicite ou préfixe pro (contact@/devis@) sur leur propre domaine.
-        // Avec MillionVerifier : on accepte plus large, MV tranche ensuite.
-        const MIN_CONFIDENCE = hasMillionVerifier ? 40 : 70
 
-        // Filtrer : email présent ET confiance suffisante
+        // Candidats : email présent + confiance minimale (le tri FINAL est par lead, plus bas)
         const leadsWithEmail = rawLeads.filter(
-          (l) => l.email && l.email.includes('@') && l.emailConfidence >= MIN_CONFIDENCE
+          (l) => l.email && l.email.includes('@') && l.emailConfidence >= 40
         )
 
         const skippedLowConfidence = rawLeads.filter(
-          (l) => l.email && l.emailConfidence < MIN_CONFIDENCE
+          (l) => l.email && l.emailConfidence < 40
         ).length
 
         for (const lead of leadsWithEmail) {
@@ -310,35 +306,43 @@ export async function GET(request: NextRequest) {
 
             if (!inserted) continue // contact déjà en base → déjà contacté ou en cours, on ne recontacte pas
 
-            // Valider l'email avec MillionVerifier si clé disponible
-            let emailValid = true
+            // VALIDATION FAIL-CLOSED : on n'envoie QUE si on est sûr de l'adresse.
+            // Base : confiance >= 70 (mailto explicite / préfixe pro sur le domaine
+            // = email réellement publié par l'entreprise, bounce très rare).
+            // MillionVerifier affine : "ok" => sûr ; invalid/catch_all/disposable => jeté ;
+            // si MV indispo (erreur, crédits épuisés, timeout) => on garde la règle de confiance.
+            let emailOk = lead.emailConfidence >= 70
             if (hasMillionVerifier) {
               try {
                 const mvResp = await fetch(
                   `https://api.millionverifier.com/api/v3/?api=${process.env.MILLION_VERIFIER_API_KEY}&email=${encodeURIComponent(lead.email!)}`,
-                  { signal: AbortSignal.timeout(4000) }
+                  { signal: AbortSignal.timeout(5000) }
                 )
                 if (mvResp.ok) {
-                  const mvData = (await mvResp.json()) as { result?: string; quality?: string }
-                  if (mvData.result === 'invalid' || mvData.quality === 'bad' || mvData.result === 'catch_all') {
-                    emailValid = false
-                    console.log(`[autopilot] Email invalide ignoré (MV) : ${lead.email}`)
-                  } else {
-                    await db
-                      .update(contacts)
-                      .set({
-                        email_validated: true,
-                        email_confidence_score: mvData.result === 'ok' ? 99 : 80,
-                      })
+                  const mvData = (await mvResp.json()) as { result?: string }
+                  const r = mvData.result
+                  if (r === 'ok') {
+                    emailOk = true
+                    await db.update(contacts)
+                      .set({ email_validated: true, email_confidence_score: 99 })
                       .where(eq(contacts.id, inserted.id))
+                  } else if (r === 'invalid' || r === 'catch_all' || r === 'disposable') {
+                    emailOk = false // MV formel → on jette, même si haute confiance
+                    console.log(`[autopilot] Email rejeté par MV (${r}) : ${lead.email}`)
                   }
+                  // r === 'error' (crédits) / 'unknown' → on s'en tient à la confiance
                 }
               } catch {
-                // MillionVerifier optionnel — continuer si erreur
+                // MV indisponible → on s'en tient à la règle de confiance (>= 70)
               }
             }
 
-            if (!emailValid) continue
+            // Pas sûr → on garde le contact en base (pour ne pas le re-scraper) mais on
+            // ne l'envoie PAS. Évite les bounces "adresse introuvable".
+            if (!emailOk) {
+              console.log(`[autopilot] Email non envoyé (non vérifié, confiance ${lead.emailConfidence}) : ${lead.email}`)
+              continue
+            }
 
             // Ajouter à la queue email (sera envoyé lors du prochain tick)
             await db.insert(email_queue).values({
@@ -362,8 +366,8 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        if (skippedLowConfidence > 0 && !hasMillionVerifier) {
-          console.log(`[autopilot] ${skippedLowConfidence} emails ignorés (confiance < ${MIN_CONFIDENCE}, MillionVerifier non connecté)`)
+        if (skippedLowConfidence > 0) {
+          console.log(`[autopilot] ${skippedLowConfidence} emails écartés (confiance < 40)`)
         }
 
         // Avancer l'index de combo (terme × ville)
