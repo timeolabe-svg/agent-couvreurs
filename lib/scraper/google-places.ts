@@ -90,7 +90,7 @@ async function scrapeEmailFromWebsite(
   try {
     const url = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 5000)
+    const timeoutId = setTimeout(() => controller.abort(), 3000)
 
     const resp = await fetch(url, {
       signal: controller.signal,
@@ -155,14 +155,17 @@ export async function scrapeGooglePlaces(params: {
   city: string
   radius?: number
   maxResults?: number
-  maxPages?: number // pagination Google : jusqu'à 3 pages = 60 résultats
+  maxPages?: number     // pagination Google (1 page = ~20 résultats)
+  deadlineMs?: number   // budget temps max (évite les timeouts cron 30s)
 }): Promise<PlaceLead[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
   if (!apiKey) {
     throw new Error('GOOGLE_PLACES_API_KEY is not configured')
   }
 
-  const { sector, city, radius = 20000, maxResults = 60, maxPages = 3 } = params
+  const startedAt = Date.now()
+  // 1 page par défaut (pas de pagination = pas de sleep 2.1s) + budget temps 14s
+  const { sector, city, radius = 20000, maxResults = 18, maxPages = 1, deadlineMs = 14000 } = params
 
   // Step 1: Text Search avec pagination (capter un max de couvreurs par ville)
   const query = encodeURIComponent(`${sector} ${city}`)
@@ -200,6 +203,8 @@ export async function scrapeGooglePlaces(params: {
   const leads: PlaceLead[] = []
 
   for (const place of results) {
+    // Budget temps : on arrête proprement pour ne jamais dépasser le timeout cron
+    if (Date.now() - startedAt > deadlineMs) break
     try {
       const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_address,formatted_phone_number,website,rating,user_ratings_total&key=${apiKey}`
       const detailsResp = await fetch(detailsUrl)
