@@ -150,13 +150,9 @@ export async function GET(request: NextRequest) {
     const lastCapacity = parseInt(lastCapRow?.value ?? '0')
 
     if (dailyCapacity !== lastCapacity) {
-      // Monter en charge — mettre à jour Instantly aussi
-      const instantlyCampaignId = process.env.INSTANTLY_CAMPAIGN_ID
-      if (instantlyCampaignId) {
-        const { updateCampaignDailyLimit } = await import('@/lib/instantly/client')
-        // Marge de +6 pour que Instantly ne coupe pas juste à la limite
-        await updateCampaignDailyLimit(instantlyCampaignId, dailyCapacity + 6)
-      }
+      // NOTE : la limite journalière Instantly est gérée MANUELLEMENT par le client
+      // (réglée à 200, au-dessus du max 4×42=168). On ne la touche plus automatiquement
+      // pour ne pas écraser sa valeur. Notre DAILY_CAPACITY (ramp) contrôle le vrai volume.
 
       await db.insert(agent_config)
         .values({ key: 'last_daily_capacity', value: String(dailyCapacity) })
