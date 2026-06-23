@@ -113,6 +113,29 @@ export async function generateReplyResponse(params: {
           .join('\n\n')
       : 'Aucun historique.'
 
+  // AUTO-APPRENTISSAGE : réutiliser les réponses déjà validées par le client
+  // pour des messages de même type. L'agent imite les bonnes réponses humaines.
+  let learnedBlock = ''
+  if (process.env.DATABASE_URL) {
+    try {
+      const { db } = await import('@/lib/db')
+      const { learned_replies } = await import('@/lib/db/schema')
+      const { eq, desc } = await import('drizzle-orm')
+      const examples = await db
+        .select({ question: learned_replies.question, answer: learned_replies.answer })
+        .from(learned_replies)
+        .where(eq(learned_replies.classification, params.classification))
+        .orderBy(desc(learned_replies.created_at))
+        .limit(4)
+      if (examples.length > 0) {
+        learnedBlock = `\n=== RÉPONSES DÉJÀ VALIDÉES PAR LE CLIENT (à réutiliser/adapter) ===
+Voici comment le client a répondu à des messages similaires. Inspire-toi FORTEMENT de ces réponses (ton, arguments, infos), adapte juste au contexte du prospect actuel :
+
+${examples.map((e, i) => `Exemple ${i + 1} :\nMessage reçu : "${e.question.slice(0, 300)}"\nRéponse validée : "${e.answer}"`).join('\n\n')}`
+      }
+    } catch { /* non bloquant */ }
+  }
+
   // Si un créneau a été réservé, l'agent doit le CONFIRMER précisément (pas redemander)
   const slotBlock = params.proposedSlot
     ? `\n=== CRÉNEAU À CONFIRMER ===
@@ -135,6 +158,7 @@ ${params.originalEmailBody}
 Réponse reçue :
 ${params.replyBody}
 ${slotBlock}
+${learnedBlock}
 
 ${buildStrategyGuidance(params.classification)}
 

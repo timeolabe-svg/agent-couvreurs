@@ -141,6 +141,20 @@ export const learning_reports = pgTable('learning_reports', {
   created_at: timestamp('created_at').defaultNow(),
 })
 
+// learned_replies — réponses validées/écrites par le client → l'agent réutilise
+// Permet à l'agent de devenir autonome : il apprend des corrections humaines.
+export const learned_replies = pgTable('learned_replies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  question: text('question').notNull(),        // message du prospect (texte nettoyé)
+  answer: text('answer').notNull(),            // réponse finale validée/écrite par le client
+  classification: text('classification'),      // question/objection/interest/rdv_request...
+  edited: boolean('edited').default(false),    // le client a-t-il modifié la proposition IA ?
+  times_reused: integer('times_reused').default(0),
+  created_at: timestamp('created_at').defaultNow(),
+}, (table) => ({
+  classificationIdx: index('lr_classification_idx').on(table.classification),
+}))
+
 // agent_config — dynamic agent configuration (self-improving)
 export const agent_config = pgTable('agent_config', {
   id: uuid('id').primaryKey().defaultRandom(),
