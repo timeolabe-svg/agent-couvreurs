@@ -308,7 +308,10 @@ export async function GET(request: NextRequest) {
             // MillionVerifier affine : "ok" => sûr ; invalid/catch_all/disposable => jeté ;
             // si MV indispo (erreur, crédits épuisés, timeout) => on garde la règle de confiance.
             let emailOk = lead.emailConfidence >= 70
-            if (hasMillionVerifier) {
+            // On n'interroge MillionVerifier QUE pour les emails incertains (<70).
+            // Les emails >=70 (mailto publié) sont déjà sûrs → on évite un appel réseau
+            // inutile par lead (gros gain de temps, évite les timeouts cron).
+            if (hasMillionVerifier && lead.emailConfidence < 70) {
               try {
                 const mvResp = await fetch(
                   `https://api.millionverifier.com/api/v3/?api=${process.env.MILLION_VERIFIER_API_KEY}&email=${encodeURIComponent(lead.email!)}`,

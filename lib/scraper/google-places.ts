@@ -165,7 +165,7 @@ export async function scrapeGooglePlaces(params: {
 
   const startedAt = Date.now()
   // 1 page par défaut (pas de pagination = pas de sleep 2.1s) + budget temps 14s
-  const { sector, city, radius = 20000, maxResults = 18, maxPages = 1, deadlineMs = 14000 } = params
+  const { sector, city, radius = 20000, maxResults = 18, maxPages = 1, deadlineMs = 10000 } = params
 
   // Step 1: Text Search avec pagination (capter un max de couvreurs par ville)
   const query = encodeURIComponent(`${sector} ${city}`)
