@@ -22,10 +22,25 @@ function getDailyCapacity(weeksElapsed: number): number {
     ?? RAMP_SCHEDULE[RAMP_SCHEDULE.length - 1]
   return step.perInbox * getInboxCount()
 }
-const MIN_PIPELINE_LEADS = 80   // scrape quand il reste moins de X leads en attente
-const SCRAPE_BATCH_SIZE = 20    // leads par ville par tick
+const MIN_PIPELINE_LEADS = 80    // scrape quand il reste moins de X leads en attente
+const SCRAPE_BATCH_SIZE = 20     // leads par requête
 
-// Villes d'Occitanie ciblées — couvreurs
+// Termes de recherche : élargit la couverture bien au-delà de "couvreur"
+// (chaque terme ramène des entreprises différentes sur Google Maps)
+const SECTOR_QUERIES = [
+  'couvreur',
+  'charpentier couvreur',
+  'couvreur zingueur',
+  'entreprise de couverture',
+  'entreprise de toiture',
+  'réparation toiture',
+  'rénovation toiture',
+  'étanchéité toiture',
+  'démoussage toiture',
+  'charpentier',
+]
+
+// Villes d'Occitanie ciblées
 const OCCITANIE_CITIES = [
   'Toulouse', 'Montpellier', 'Nîmes', 'Perpignan', 'Carcassonne',
   'Béziers', 'Albi', 'Tarbes', 'Foix', 'Auch', 'Mende', 'Cahors',
@@ -36,6 +51,17 @@ const OCCITANIE_CITIES = [
   'Gaillac', 'Lavaur', 'Mazamet', 'Mèze', 'Agde', 'Frontignan',
   'Palavas-les-Flots', 'La Grande-Motte', 'Laudun-l\'Ardoise',
   'Bagnols-sur-Cèze', 'Alès', 'Uzès', 'Le Vigan', 'Ganges',
+  // Élargissement : sous-préfectures et villes moyennes
+  'Castelnaudary', 'Revel', 'Saint-Girons', 'Lannemezan', 'Lourdes',
+  'Bagnères-de-Bigorre', 'Villefranche-de-Rouergue', 'Decazeville',
+  'Figeac', 'Moissac', 'Castelsarrasin', 'Beaucaire', 'Saint-Gilles',
+  'Sommières', 'Clermont-l\'Hérault', 'Lodève', 'Pézenas', 'Bédarieux',
+  'Argelès-sur-Mer', 'Céret', 'Prades', 'Thuir', 'Saint-Estève',
+  'Cabestany', 'Canet-en-Roussillon', 'Leucate', 'Port-la-Nouvelle',
+  'Gruissan', 'Sigean', 'Trèbes', 'Bram', 'Espalion', 'Onet-le-Château',
+  'Saint-Affrique', 'Graulhet', 'Carmaux', 'Saint-Sulpice-la-Pointe',
+  'Fonsorbes', 'Plaisance-du-Touch', 'L\'Union', 'Saint-Orens-de-Gameville',
+  'Labège', 'Castanet-Tolosan', 'Villeneuve-Tolosane', 'Aucamville',
 ]
 
 export async function GET(request: NextRequest) {
@@ -179,23 +205,26 @@ export async function GET(request: NextRequest) {
       const pendingCount = Number(pendingCountResult?.count ?? 0)
 
       if (pendingCount < MIN_PIPELINE_LEADS) {
-        // Récupérer l'index de la prochaine ville à scraper
-        const [cityIndexRow] = await db
+        // Index global de combo (terme de recherche × ville) — couvre tout le marché
+        const TOTAL_COMBOS = SECTOR_QUERIES.length * OCCITANIE_CITIES.length
+        const [comboRow] = await db
           .select({ value: agent_config.value })
           .from(agent_config)
-          .where(eq(agent_config.key, 'scrape_city_index'))
+          .where(eq(agent_config.key, 'scrape_combo_index'))
 
-        const cityIndex = parseInt(cityIndexRow?.value ?? '0') % OCCITANIE_CITIES.length
+        const combo = parseInt(comboRow?.value ?? '0') % TOTAL_COMBOS
+        const term = SECTOR_QUERIES[combo % SECTOR_QUERIES.length]
+        const cityIndex = Math.floor(combo / SECTOR_QUERIES.length) % OCCITANIE_CITIES.length
         scrapedCity = OCCITANIE_CITIES[cityIndex]
 
-        console.log(`[autopilot] Pipeline faible (${pendingCount} leads). Scraping "${scrapedCity}"...`)
+        console.log(`[autopilot] Pipeline faible (${pendingCount}). Scraping "${term} ${scrapedCity}"...`)
 
         const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
         let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
 
         try {
           rawLeads = await scrapeGooglePlaces({
-            sector: 'couvreur',
+            sector: term,
             city: scrapedCity,
             maxResults: SCRAPE_BATCH_SIZE,
           })
@@ -307,14 +336,14 @@ export async function GET(request: NextRequest) {
           console.log(`[autopilot] ${skippedLowConfidence} emails ignorés (confiance < ${MIN_CONFIDENCE}, MillionVerifier non connecté)`)
         }
 
-        // Avancer l'index de ville
-        const nextIndex = cityIndex + 1
+        // Avancer l'index de combo (terme × ville)
+        const nextCombo = (combo + 1) % TOTAL_COMBOS
         await db
           .insert(agent_config)
-          .values({ key: 'scrape_city_index', value: String(nextIndex) })
+          .values({ key: 'scrape_combo_index', value: String(nextCombo) })
           .onConflictDoUpdate({
             target: agent_config.key,
-            set: { value: String(nextIndex), updated_at: new Date() },
+            set: { value: String(nextCombo), updated_at: new Date() },
           })
 
         // ── Détection fin de marché : si une rotation complète ne ramène rien ──
@@ -337,15 +366,15 @@ export async function GET(request: NextRequest) {
           })
         } else {
           consecutiveEmpty++
-          console.log(`[autopilot] Aucun nouveau lead pour ${scrapedCity} (${consecutiveEmpty}/${OCCITANIE_CITIES.length} villes vides d'affilée)`)
+          console.log(`[autopilot] Aucun nouveau lead pour "${term} ${scrapedCity}" (${consecutiveEmpty}/${TOTAL_COMBOS} combos vides d'affilée)`)
         }
 
         await db.insert(agent_config)
           .values({ key: 'consecutive_empty_scrapes', value: String(consecutiveEmpty) })
           .onConflictDoUpdate({ target: agent_config.key, set: { value: String(consecutiveEmpty), updated_at: new Date() } })
 
-        // Une rotation complète sans rien de neuf = marché Occitanie épuisé
-        if (consecutiveEmpty >= OCCITANIE_CITIES.length) {
+        // Tous les combos (terme × ville) secs = marché Occitanie réellement épuisé
+        if (consecutiveEmpty >= TOTAL_COMBOS) {
           const [notifiedRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'market_exhausted_notified'))
           if (notifiedRow?.value !== 'true') {
             console.log('[autopilot] MARCHÉ ÉPUISÉ — notification envoyée')
