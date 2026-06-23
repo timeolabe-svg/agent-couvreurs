@@ -40,28 +40,58 @@ const SECTOR_QUERIES = [
   'charpentier',
 ]
 
-// Villes d'Occitanie ciblées
+// Villes ciblées — FRANCE ENTIÈRE (toutes régions). L'email étant personnalisé
+// avec la ville du prospect, le ciblage reste local pour chaque destinataire.
 const OCCITANIE_CITIES = [
-  'Toulouse', 'Montpellier', 'Nîmes', 'Perpignan', 'Carcassonne',
-  'Béziers', 'Albi', 'Tarbes', 'Foix', 'Auch', 'Mende', 'Cahors',
-  'Rodez', 'Castres', 'Millau', 'Sète', 'Lunel', 'Narbonne',
-  'Lézignan-Corbières', 'Limoux', 'Pamiers', 'Saint-Gaudens',
-  'Montauban', 'Muret', 'Blagnac', 'Tournefeuille', 'Colomiers',
-  'Balma', 'Ramonville-Saint-Agne', 'Cugnaux', 'Portet-sur-Garonne',
-  'Gaillac', 'Lavaur', 'Mazamet', 'Mèze', 'Agde', 'Frontignan',
-  'Palavas-les-Flots', 'La Grande-Motte', 'Laudun-l\'Ardoise',
-  'Bagnols-sur-Cèze', 'Alès', 'Uzès', 'Le Vigan', 'Ganges',
-  // Élargissement : sous-préfectures et villes moyennes
-  'Castelnaudary', 'Revel', 'Saint-Girons', 'Lannemezan', 'Lourdes',
-  'Bagnères-de-Bigorre', 'Villefranche-de-Rouergue', 'Decazeville',
-  'Figeac', 'Moissac', 'Castelsarrasin', 'Beaucaire', 'Saint-Gilles',
-  'Sommières', 'Clermont-l\'Hérault', 'Lodève', 'Pézenas', 'Bédarieux',
-  'Argelès-sur-Mer', 'Céret', 'Prades', 'Thuir', 'Saint-Estève',
-  'Cabestany', 'Canet-en-Roussillon', 'Leucate', 'Port-la-Nouvelle',
-  'Gruissan', 'Sigean', 'Trèbes', 'Bram', 'Espalion', 'Onet-le-Château',
-  'Saint-Affrique', 'Graulhet', 'Carmaux', 'Saint-Sulpice-la-Pointe',
-  'Fonsorbes', 'Plaisance-du-Touch', 'L\'Union', 'Saint-Orens-de-Gameville',
-  'Labège', 'Castanet-Tolosan', 'Villeneuve-Tolosane', 'Aucamville',
+  // Île-de-France
+  'Paris', 'Boulogne-Billancourt', 'Saint-Denis', 'Argenteuil', 'Montreuil',
+  'Nanterre', 'Créteil', 'Versailles', 'Vitry-sur-Seine', 'Colombes',
+  'Aulnay-sous-Bois', 'Asnières-sur-Seine', 'Courbevoie', 'Rueil-Malmaison',
+  'Champigny-sur-Marne', 'Meaux', 'Cergy', 'Évry-Courcouronnes', 'Pontoise',
+  'Mantes-la-Jolie', 'Melun', 'Étampes', 'Rambouillet',
+  // Auvergne-Rhône-Alpes
+  'Lyon', 'Villeurbanne', 'Grenoble', 'Saint-Étienne', 'Clermont-Ferrand',
+  'Valence', 'Chambéry', 'Annecy', 'Annemasse', 'Bourg-en-Bresse', 'Roanne',
+  'Vienne', 'Montluçon', 'Aurillac', 'Le Puy-en-Velay', 'Privas', 'Romans-sur-Isère',
+  'Bourgoin-Jallieu', 'Thonon-les-Bains', 'Aix-les-Bains', 'Vichy', 'Moulins',
+  // PACA
+  'Marseille', 'Nice', 'Toulon', 'Aix-en-Provence', 'Avignon', 'Antibes',
+  'Cannes', 'La Seyne-sur-Mer', 'Hyères', 'Fréjus', 'Grasse', 'Martigues',
+  'Cagnes-sur-Mer', 'Gap', 'Digne-les-Bains', 'Draguignan', 'Manosque', 'Salon-de-Provence',
+  // Nouvelle-Aquitaine
+  'Bordeaux', 'Limoges', 'Poitiers', 'Pau', 'La Rochelle', 'Mérignac',
+  'Pessac', 'Angoulême', 'Niort', 'Bayonne', 'Périgueux', 'Agen', 'Mont-de-Marsan',
+  'Brive-la-Gaillarde', 'Bergerac', 'Saintes', 'Rochefort', 'Biarritz', 'Anglet',
+  'Villeneuve-sur-Lot', 'Tulle', 'Guéret',
+  // Occitanie
+  'Toulouse', 'Montpellier', 'Nîmes', 'Perpignan', 'Carcassonne', 'Béziers',
+  'Albi', 'Tarbes', 'Auch', 'Cahors', 'Rodez', 'Castres', 'Sète', 'Narbonne',
+  'Montauban', 'Muret', 'Blagnac', 'Colomiers', 'Alès', 'Lourdes', 'Foix', 'Mende',
+  // Grand Est
+  'Strasbourg', 'Reims', 'Metz', 'Nancy', 'Mulhouse', 'Colmar', 'Troyes',
+  'Charleville-Mézières', 'Châlons-en-Champagne', 'Épinal', 'Thionville', 'Haguenau',
+  'Schiltigheim', 'Saint-Dizier', 'Verdun', 'Chaumont', 'Bar-le-Duc',
+  // Hauts-de-France
+  'Lille', 'Amiens', 'Roubaix', 'Tourcoing', 'Dunkerque', 'Calais', 'Villeneuve-d\'Ascq',
+  'Saint-Quentin', 'Beauvais', 'Valenciennes', 'Boulogne-sur-Mer', 'Compiègne',
+  'Arras', 'Douai', 'Lens', 'Béthune', 'Soissons', 'Cambrai', 'Maubeuge', 'Laon',
+  // Normandie
+  'Rouen', 'Le Havre', 'Caen', 'Cherbourg-en-Cotentin', 'Évreux', 'Dieppe',
+  'Saint-Lô', 'Alençon', 'Lisieux', 'Vernon', 'Bayeux',
+  // Bretagne
+  'Rennes', 'Brest', 'Quimper', 'Lorient', 'Vannes', 'Saint-Malo', 'Saint-Brieuc',
+  'Lannion', 'Concarneau', 'Fougères', 'Lamballe', 'Morlaix',
+  // Pays de la Loire
+  'Nantes', 'Angers', 'Le Mans', 'Saint-Nazaire', 'Cholet', 'La Roche-sur-Yon',
+  'Laval', 'Saumur', 'La Baule-Escoublac', 'Les Sables-d\'Olonne', 'Château-Gontier',
+  // Centre-Val de Loire
+  'Tours', 'Orléans', 'Bourges', 'Blois', 'Châteauroux', 'Chartres', 'Dreux',
+  'Vierzon', 'Montargis', 'Vendôme', 'Romorantin-Lanthenay',
+  // Bourgogne-Franche-Comté
+  'Dijon', 'Besançon', 'Belfort', 'Chalon-sur-Saône', 'Nevers', 'Auxerre',
+  'Mâcon', 'Montbéliard', 'Sens', 'Le Creusot', 'Dole', 'Vesoul', 'Lons-le-Saunier',
+  // Corse
+  'Ajaccio', 'Bastia', 'Porto-Vecchio', 'Calvi',
 ]
 
 export async function GET(request: NextRequest) {
