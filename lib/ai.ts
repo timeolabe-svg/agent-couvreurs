@@ -67,7 +67,7 @@ export function cleanEmailText(s: string): string {
     .replace(/\b(comme|tels que|tel que)\s+ou\b/gi, '') // résidu "comme  ou"
     .replace(/\bou\s+(\.|,|\?)/gi, '$1')                // résidu "ou ."
     .replace(/\(\s*\)/g, '')                            // parenthèses vides
-    .replace(/ +([.,!?;:])/g, '$1')                     // espace avant ponctuation
+    .replace(/ +([.,])/g, '$1')                         // espace avant virgule/point (FR garde l'espace avant ? ! : ;)
     .replace(/,\s*,/g, ',')                             // double virgule
     .replace(/[ \t]{2,}/g, ' ')                         // espaces multiples
     .replace(/\n{3,}/g, '\n\n')                         // sauts de ligne multiples
