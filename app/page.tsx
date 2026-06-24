@@ -300,14 +300,18 @@ export default function DashboardPage() {
         {/* ── SECTION 2: 4 KPI Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
           {[
-            { icon: '✉️', iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR') },
-            { icon: '💬', iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived) },
-            { icon: '📅', iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount) },
-            { icon: '👤', iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned) },
+            { icon: '✉️', iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
+            { icon: '💬', iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
+            { icon: '📅', iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
+            { icon: '👤', iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
           ].map(card => (
-            <div
+            <a
               key={card.label}
+              href={card.href}
               style={{
+                display: 'block',
+                textDecoration: 'none',
+                cursor: 'pointer',
                 background: '#111118',
                 border: '1px solid #1e1e2e',
                 borderRadius: 8,
@@ -330,7 +334,7 @@ export default function DashboardPage() {
               <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.03em', color: '#e8e8f0' }}>
                 {card.value}
               </div>
-            </div>
+            </a>
           ))}
         </div>
 
