@@ -62,6 +62,7 @@ export async function PATCH(
           reply_to_id: incoming.instantly_reply_id ?? incoming.id,
           body: updatedBody,
           eaccount,
+          subject: incoming.subject ?? undefined,
         })
       }
 

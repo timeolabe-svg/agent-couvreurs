@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 
   if (request.nextUrl.searchParams.get('send') === '1' && reply.instantly_reply_id) {
     try {
-      await sendReply({ reply_to_id: reply.instantly_reply_id, body, eaccount })
+      await sendReply({ reply_to_id: reply.instantly_reply_id, body, eaccount, subject: reply.subject ?? undefined })
       await db.insert(reply_drafts).values({ incoming_reply_id: reply.id, body, status: 'sent', sent_at: new Date() })
       await db.update(incoming_replies).set({ classification: 'objection', action_taken: 'replied' }).where(eq(incoming_replies.id, reply.id))
       out.sent = true

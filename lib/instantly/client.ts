@@ -210,13 +210,16 @@ export async function sendReply(params: {
     console.log('[MOCK] Would send reply to', params.reply_to_id)
     return
   }
-  // V2 : POST /emails/reply — format validé en prod (body html+text, eaccount requis)
+  // V2 : POST /emails/reply — subject OBLIGATOIRE (sinon 400), body html+text, eaccount requis
+  let subject = (params.subject ?? '').trim()
+  if (!subject) subject = 'Re: votre message'
+  else if (!/^re\s*:/i.test(subject)) subject = `Re: ${subject}`
   await instantlyFetch('/emails/reply', {
     method: 'POST',
     body: JSON.stringify({
       reply_to_uuid: params.reply_to_id,
       ...(params.eaccount ? { eaccount: params.eaccount } : {}),
-      ...(params.subject ? { subject: params.subject } : {}),
+      subject,
       body: { html: params.body.replace(/\n/g, '<br>'), text: params.body },
     }),
   })

@@ -259,7 +259,7 @@ export async function GET(request: NextRequest) {
               .limit(1)
             eaccount = orig?.from_email
           }
-          await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body, eaccount })
+          await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body, eaccount, subject: reply.subject ?? undefined })
         }
         await db.update(reply_drafts)
           .set({ status: 'sent', sent_at: new Date() })
