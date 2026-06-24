@@ -19,10 +19,11 @@ export async function GET() {
   try {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
-    const { inArray, desc } = await import('drizzle-orm')
+    const { inArray, desc, ne, isNull, or } = await import('drizzle-orm')
     const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
 
-    // 1. Toutes les réponses reçues (avec contact si lié), récentes d'abord
+    // 1. Réponses reçues — on EXCLUT le spam et les réponses automatiques (bots,
+    //    accusés de réception) : on ne montre que les vraies conversations.
     const replies = await db
       .select({
         id: incoming_replies.id,
@@ -34,6 +35,7 @@ export async function GET() {
         created_at: incoming_replies.created_at,
       })
       .from(incoming_replies)
+      .where(or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')))
       .orderBy(desc(incoming_replies.created_at))
       .limit(500)
 

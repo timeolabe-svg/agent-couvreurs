@@ -122,7 +122,7 @@ export async function GET() {
     email_queue, incoming_replies, reply_drafts, rdv, contacts,
     dashboard_events, campaigns, agent_config, learning_reports,
   } = await import('@/lib/db/schema')
-  const { count, eq, gte, and, desc, sql, lte } = await import('drizzle-orm')
+  const { count, eq, gte, and, desc, sql, lte, ne, or, isNull } = await import('drizzle-orm')
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -176,8 +176,11 @@ export async function GET() {
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
     db.select({ rdvThisMonth: count() }).from(rdv).where(gte(rdv.created_at, monthStart)),
-    // repliesReceived this month
-    db.select({ repliesReceived: count() }).from(incoming_replies).where(gte(incoming_replies.created_at, monthStart)),
+    // repliesReceived this month (hors spam / réponses automatiques)
+    db.select({ repliesReceived: count() }).from(incoming_replies).where(and(
+      gte(incoming_replies.created_at, monthStart),
+      or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')),
+    )),
     // clientsSigned this month
     db.select({ clientsSigned: count() }).from(rdv).where(and(eq(rdv.status, 'signed'), gte(rdv.created_at, monthStart))),
     // pendingFollowups: pending emails scheduled within next 24h
