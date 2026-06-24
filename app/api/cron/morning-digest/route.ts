@@ -19,7 +19,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
       // e.g. agent@hdigiweb.fr (requires DNS verification in resend.com)
       // Falls back to onboarding@resend.dev for testing
       from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-      to,
+      to: to.split(',').map(s => s.trim()).filter(Boolean),
       subject,
       html,
     }),

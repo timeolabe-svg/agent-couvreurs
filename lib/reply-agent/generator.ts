@@ -1,4 +1,4 @@
-import { generateText, extractJson } from '@/lib/ai'
+import { generateText, extractJson, cleanEmailText } from '@/lib/ai'
 import type { ReplyClassification } from './classifier'
 
 const SYSTEM_PROMPT = `Tu es Gabin, chargé de développement commercial chez Hdigiweb, agence web basée à Toulouse.
@@ -55,13 +55,20 @@ gabin@hdigiweb-agence.com`
 function buildStrategyGuidance(classification: ReplyClassification): string {
   switch (classification) {
     case 'objection':
-      return `STRATÉGIE OBJECTION :
-Ouvrir par "Logique." (jamais "je comprends" ou "compris").
-Identifier l'angle précis de l'objection (prestataire actuel, prix, timing, mauvaise expérience passée).
-Pivoter sur ce qu'on couvre que le prestataire actuel ne fait probablement pas (GMB + SEO local + suivi devis).
-Position haute : "si c'est déjà couvert proprement, je ne vous embête pas davantage."
-Terminer par une question qui vérifie si l'angle est couvert ou non.
-Exemple ton : "Logique. La plupart des agences font du site mais ne travaillent pas le référencement local spécifique couverture. Est-ce que votre prestataire actuel a un travail sur les recherches urgentes type 'réparation toiture [ville]' ?"`
+      return `STRATÉGIE OBJECTION — tu es un VRAI commercial, ton but est de CONVAINCRE (un "non" au 1er mail est normal, c'est là que le travail commence). Technique en 3 temps :
+
+1. EMPATHIE sincère : "Je comprends parfaitement" / "C'est une remarque légitime". Jamais de mépris, jamais forcer.
+
+2. CREUSER la vraie cause de l'objection avant de répondre. Si PRIX : comprendre pourquoi il trouve ça cher (mauvaise expérience passée ? pas vu le retour ? compare à quoi ?). Pose UNE question pour faire parler.
+
+3. REFRAMER + apporter la solution adaptée à SA cause :
+   - Si prix : ce n'est pas une dépense mais un INVESTISSEMENT. Aujourd'hui il paie une somme, mais ça lui ramène des devis/clients → ça se rembourse vite. Mets en avant le 1er MOIS OFFERT (zéro risque, il teste, il juge sur les résultats réels avant de payer quoi que ce soit).
+   - Si déjà accompagné : ce qu'on fait que son prestataire ne fait probablement pas (GMB + SEO local couverture + suivi des devis).
+   - Si mauvaise expérience : on est sans engagement, il arrête quand il veut.
+
+RÈGLES : jamais de promesse bidon ni de chiffre inventé. Susciter l'intérêt, pas forcer. Finir par une question douce ou la proposition du mois offert. Reste court (5-6 lignes max), humain, concret.
+
+Exemple ton (prix) : "Je comprends, c'est un vrai sujet. Juste pour situer : quand vous dites trop cher, c'est par rapport à un budget précis ou parce que vous n'avez pas encore vu ce que ça peut rapporter ? Je pose la question parce qu'on offre le premier mois, justement pour que vous jugiez sur les devis réels que ça génère avant de payer quoi que ce soit. Si ça ne ramène rien, vous ne perdez rien."`
 
     case 'question':
       return `STRATÉGIE QUESTION :
@@ -173,5 +180,5 @@ Rédige la réponse. JSON uniquement :
   })
 
   const parsed = extractJson<{ body: string }>(text)
-  return parsed.body
+  return cleanEmailText(parsed.body)
 }

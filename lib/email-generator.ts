@@ -1,4 +1,4 @@
-import { generateText, extractJson } from '@/lib/ai'
+import { generateText, extractJson, cleanEmailText } from '@/lib/ai'
 import { Lead } from '@/types'
 
 const SYSTEM_PROMPT = `Tu rédiges des cold emails pour Hdigiweb. Le standard : ton email doit être indistinguable d'un email écrit à la main par un consultant senior qui a passé 10 minutes sur le dossier du prospect. Si un dirigeant peut détecter en 5 secondes que c'est de l'IA, l'email est raté.
@@ -51,9 +51,10 @@ Un senior du cold emailing ouvre TOUJOURS par l'une de ces options :
    "On entre dans la période la plus stratégique de l'année pour les auto-écoles : avril à juillet, c'est environ 30% du chiffre annuel."
    "Depuis le renforcement de MaPrimeRénov en 2024, les recherches de menuisiers pour de la rénovation énergétique ont explosé sur Toulouse."
 
-3. UNE OBSERVATION COMPARATIVE qui prouve la recherche
-   "J'ai pris cinq minutes pour comparer vos avis Google avec ceux d'[Concurrent]. Les vôtres sont nettement plus qualitatifs..."
+3. UNE OBSERVATION CONCRÈTE qui prouve la recherche (SANS nommer de concurrent)
    "J'ai testé votre site sur mobile : il met une dizaine de secondes à se charger entièrement..."
+   "En cherchant 'couvreur [ville]' sur Google, ce sont surtout d'autres entreprises qui ressortent en haut, pas vous."
+   INTERDIT de nommer un concurrent ou d'écrire un crochet à remplir. Tu ne connais pas les noms des concurrents : parle de "d'autres entreprises", "des concurrents locaux", JAMAIS de nom ni de [placeholder].
 
 4. UN ANTI-PITCH (pour les prospects bien équipés)
    "Vous faites partie des très rares pharmacies à avoir vraiment investi le digital. Pas de pitch sur ce que vous avez déjà."
@@ -201,7 +202,8 @@ INTERDICTIONS ABSOLUES :
 - Listes à puces ou numérotées
 - Mots-clés SEO entre guillemets ("plombier urgence Lyon")
 - Chiffres bruts (89 avis, 4.4/5, 2 200 recherches)
-- Liste de concurrents nommés
+- INTERDIT ABSOLU : nommer un concurrent (tu ne les connais pas) → dire "d'autres entreprises" / "des concurrents locaux"
+- INTERDIT ABSOLU : tout crochet ou texte à remplir [comme ceci], [Nom concurrent], [ville]. Un email avec un crochet non rempli est une faute grave. Écris uniquement du texte final, jamais de variable à compléter.
 - Durée précise pour un RDV
 - Jour précis pour un RDV
 - "Je me permets", "Suite à", "Dans le cadre de"
@@ -280,6 +282,10 @@ export async function generateEmail(
     temperature: 0.9, // rédaction = créatif
   })
 
-  return extractJson<{ subject: string; body: string }>(text)
+  const parsed = extractJson<{ subject: string; body: string }>(text)
+  return {
+    subject: cleanEmailText(parsed.subject),
+    body: cleanEmailText(parsed.body),
+  }
 }
 

@@ -21,7 +21,9 @@ function isLikelyFrench(text: string): boolean {
   return frenchWords.some(w => lower.includes(w))
 }
 
-const CLIENT_NOTIFY_EMAIL = process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr'
+// Peut contenir plusieurs adresses séparées par des virgules → tableau pour Resend
+const CLIENT_NOTIFY_EMAIL = (process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr')
+  .split(',').map(s => s.trim()).filter(Boolean)
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hdigiweb.fr'
 const RESEND_API_KEY = process.env.RESEND_API_KEY
 

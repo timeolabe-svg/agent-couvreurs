@@ -431,7 +431,7 @@ export async function GET(request: NextRequest) {
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
                   body: JSON.stringify({
                     from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-                    to: process.env.CLIENT_NOTIFY_EMAIL ?? 'smma.ranked@gmail.com',
+                    to: (process.env.CLIENT_NOTIFY_EMAIL ?? 'smma.ranked@gmail.com').split(',').map(s => s.trim()).filter(Boolean),
                     subject: '🏁 Marché couvreurs Occitanie épuisé — quel marché ensuite ?',
                     html: `
                       <h2>Marché couvreurs Occitanie épuisé</h2>

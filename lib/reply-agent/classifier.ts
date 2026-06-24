@@ -41,8 +41,13 @@ Classifie cette réponse parmi : desinterest / objection / question / interest /
 
 TU ES AUTONOME. Tu réponds toi-même à la grande majorité des messages. Tu ne demandes une validation humaine que si tu as un VRAI doute ou si c'est trop technique/sensible.
 
+DISTINCTION CRUCIALE objection vs desinterest :
+- "objection" = il freine mais la porte est ENCORE ouverte : "trop cher", "pas le budget", "j'ai déjà quelqu'un", "pas le temps", "envoyez par mail". → c'est à TRAVAILLER, l'agent doit convaincre. C'est normal au 1er échange. NE PAS blocklister.
+- "desinterest" = refus ferme et définitif UNIQUEMENT : "stop", "ne me recontactez plus", "pas intéressé du tout", "retirez-moi". → blocklist.
+Dans le doute entre les deux → choisis "objection" (on garde le lead et on tente de convaincre).
+
 Choix de l'action :
-- desinterest (pas intéressé, "non merci", "déjà accompagné" ferme) → blocklist
+- desinterest (refus ferme/définitif seulement) → blocklist
 - spam → no_action
 - oof (absence/accusé réception automatique) → no_action
 - interest / question / objection / rdv_request → auto_reply (tu réponds seul)
