@@ -121,7 +121,7 @@ export async function GET(request: NextRequest) {
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
   const { eq, and, gte, lte, sql } = await import('drizzle-orm')
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
-  const { generateEmail } = await import('@/lib/email-generator')
+  const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
@@ -559,7 +559,8 @@ export async function GET(request: NextRequest) {
         candidates.push(row)
       }
 
-      // 2. Générer tous les emails EN PARALLÈLE (Gemini ~3s pour tout le lot au lieu de 3s × N)
+      // 2. Générer la SÉQUENCE COMPLÈTE (4 emails adaptés au métier) par lead, en parallèle.
+      //    1 appel IA par lead → tous les emails (initial + relances) sont sur-mesure et par secteur.
       const prepared = await Promise.all(candidates.map(async ({ queue, contact }) => {
         try {
           const inbox = await getNextInbox()
@@ -575,32 +576,39 @@ export async function GET(request: NextRequest) {
             createdAt: contact.created_at?.toISOString() ?? new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),
           }
-          const step = queue.sequence_step ?? 0
-          const emailType = sequenceTypeMap[step] ?? 'initial'
-          const vars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
-          const fallback = (): { subject: string; body: string } | null => {
-            const tpl = getSequenceStep(step) ?? getSequenceStep(0)
-            return tpl ? { subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) } : null
-          }
-          let generated: { subject: string; body: string } | null = null
+          let emails: Array<{ subject: string; body: string }> = []
           try {
-            generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
+            emails = await generateSequence(lead, inbox.email, inbox.senderName)
           } catch {
-            generated = fallback() // IA indispo → template de secours
+            // Repli : email initial seul (sector-aware), sinon template
+            try {
+              emails = [await generateEmail(lead, 'initial', inbox.email, inbox.senderName)]
+            } catch {
+              const tpl = getSequenceStep(0)
+              const vars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
+              emails = tpl ? [{ subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) }] : []
+            }
           }
-          return { queue, contact, inbox, generated }
+          return emails.length ? { queue, contact, inbox, emails } : null
         } catch (e) {
           console.error('[autopilot-tick] prep error', contact.email, e)
           return null
         }
       }))
 
-      // 3. Pousser vers Instantly + MAJ DB (séquentiel, rapide)
+      // 3. Pousser vers Instantly + MAJ DB. On pousse les 4 emails comme variables
+      //    ({{subject}}/{{body}} pour l'initial, {{subject2}}/{{body2}}... pour les relances).
       for (const item of prepared) {
-        if (!item || !item.generated) continue
+        if (!item || item.emails.length === 0) continue
         if (sent >= remainingCapacity) break
-        const { queue, contact, inbox, generated } = item
+        const { queue, contact, inbox, emails } = item
         try {
+          const cv: Record<string, string> = { city: contact.city ?? '', sector: contact.sector ?? '' }
+          emails.forEach((e, i) => {
+            const suffix = i === 0 ? '' : String(i + 1)
+            cv[`subject${suffix}`] = e.subject
+            cv[`body${suffix}`] = e.body
+          })
           await addLeadsToCampaign(instantlyId, [
             {
               email: contact.email,
@@ -609,21 +617,18 @@ export async function GET(request: NextRequest) {
               company_name: contact.company,
               phone: contact.phone ?? undefined,
               website: contact.website ?? undefined,
-              custom_variables: {
-                city: contact.city ?? '', sector: contact.sector ?? '',
-                subject: generated.subject, body: generated.body,
-              },
+              custom_variables: cv,
             },
           ])
           await db.update(email_queue)
-            .set({ status: 'sent', sent_at: new Date(), subject: generated.subject, body: generated.body, from_email: inbox.email })
+            .set({ status: 'sent', sent_at: new Date(), subject: emails[0].subject, body: emails[0].body, from_email: inbox.email })
             .where(eq(email_queue.id, queue.id))
           await db.insert(dashboard_events).values({
             type: 'email_sent',
             data: {
               contactId: contact.id, contactEmail: contact.email, company: contact.company,
               city: contact.city, campaignId: campaign.id, campaignName: campaign.name,
-              sequenceStep: queue.sequence_step, subject: generated.subject,
+              sequenceStep: queue.sequence_step, subject: emails[0].subject,
             },
           })
           sent++

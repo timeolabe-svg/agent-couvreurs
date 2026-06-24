@@ -301,3 +301,73 @@ export async function generateEmail(
   }
 }
 
+// Génère TOUTE la séquence (email initial + 3 relances) en UN seul appel IA,
+// adaptée au métier du prospect, dans le style Hdigiweb. Plein autonomie multi-secteur.
+export async function generateSequence(
+  lead: Lead,
+  fromEmail: string,
+  fromName: string,
+): Promise<Array<{ subject: string; body: string }>> {
+  let dynamicAddon = ''
+  if (process.env.DATABASE_URL) {
+    try {
+      const { db } = await import('@/lib/db')
+      const { agent_config } = await import('@/lib/db/schema')
+      const { eq } = await import('drizzle-orm')
+      const [addon] = await db.select().from(agent_config).where(eq(agent_config.key, 'system_prompt_addon'))
+      if (addon?.value) dynamicAddon = '\n\nRECOMMANDATIONS AUTO-LEARNING:\n' + addon.value
+    } catch { /* ignore */ }
+  }
+
+  const sector = (lead.specialty?.[0] || 'artisan du bâtiment').toLowerCase()
+  const sectorHints: Record<string, string> = {
+    couvreur: 'toiture, couverture, zinguerie. Recherches Google: "couvreur {ville}", "réparation toiture", "démoussage".',
+    terrassier: 'terrassement, préparation de terrain, VRD, assainissement. Recherches: "terrassement {ville}", "entreprise de terrassement". JAMAIS de toiture.',
+    pisciniste: 'construction et rénovation de piscines. Recherches: "construction piscine {ville}", "pisciniste {ville}". JAMAIS de toiture.',
+  }
+  const hint = sectorHints[sector] ?? `métier "${sector}" : adapte tout le vocabulaire à ce métier, n'emploie pas le jargon d'un autre métier.`
+
+  const dynamicSystemPrompt = SYSTEM_PROMPT
+    .replace(/thomas@hdigiweb\.fr/g, fromEmail)
+    .replace(/Thomas Renard/g, fromName)
+
+  const userPrompt = `Génère une SÉQUENCE de 4 emails de prospection pour ce prospect, dans le style et les règles ci-dessus, 100% adaptés à son métier.
+
+PROSPECT :
+- Entreprise : ${lead.company}
+- Métier : ${sector} → vocabulaire : ${hint}
+- Ville : ${lead.city}
+- Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
+
+Les 4 emails (même fil, sujets cohérents) :
+1. INITIAL (J+0) : observation spécifique + hook + CTA permission.
+2. RELANCE 1 (J+3) : courte, apporte un angle en plus, pas une répétition.
+3. RELANCE 2 (J+7) : un cas concret d'un artisan du même type (sans nom, sans chiffre inventé), ton chaleureux.
+4. RELANCE 3 / BREAK-UP (J+14) : très court, dernière relance, propose un audit gratuit.
+
+CRITIQUE : tout le vocabulaire DOIT correspondre au métier "${sector}". Aucune mention de toiture si ce n'est pas un couvreur. Aucun crochet [à remplir], aucun concurrent nommé, aucun tiret cadratin.
+
+Signature à la fin de CHAQUE email :
+${fromName}
+Hdigiweb
+${fromEmail}
+
+Réponds en JSON uniquement :
+{"emails":[{"subject":"...","body":"..."},{"subject":"...","body":"..."},{"subject":"...","body":"..."},{"subject":"...","body":"..."}]}`
+
+  const text = await generateText({
+    system: dynamicSystemPrompt + dynamicAddon,
+    prompt: userPrompt,
+    maxTokens: 2200,
+    temperature: 0.9,
+  })
+
+  const parsed = extractJson<{ emails: Array<{ subject: string; body: string }> }>(text)
+  const emails = (parsed.emails ?? []).slice(0, 4).map(e => ({
+    subject: cleanEmailText(e.subject ?? ''),
+    body: cleanEmailText(e.body ?? ''),
+  }))
+  if (emails.length === 0) throw new Error('generateSequence: aucune email générée')
+  return emails
+}
+
