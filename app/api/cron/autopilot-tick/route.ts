@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const EMAILS_PER_CAMPAIGN_PER_TICK = 5
+const EMAILS_PER_CAMPAIGN_PER_TICK = 8 // génération parallèle → reste rapide, atteint 168/jour
 
 // Ramp schedule : emails par boîte par jour selon les semaines écoulées
 // L'agent monte tout seul — met aussi à jour Instantly automatiquement
@@ -521,156 +521,103 @@ export async function GET(request: NextRequest) {
 
       campaignsProcessed++
 
-      for (const { queue, contact } of pendingLeads) {
-        if (sent >= remainingCapacity) break
+      const instantlyId = campaign.instantly_campaign_id ?? process.env.INSTANTLY_CAMPAIGN_ID
+      if (!instantlyId) {
+        console.warn('[autopilot-tick] Pas d\'INSTANTLY_CAMPAIGN_ID')
+        continue
+      }
 
+      const sequenceTypeMap: Record<number, 'initial' | 'followup_1' | 'followup_2' | 'followup_3'> = {
+        0: 'initial', 1: 'followup_1', 2: 'followup_2', 3: 'followup_3', 4: 'followup_3',
+      }
+
+      // 1. Pré-filtre : retirer les blocklistés (et annuler leur file restante)
+      const candidates: typeof pendingLeads = []
+      for (const row of pendingLeads) {
+        const [blocked] = await db
+          .select({ id: blocklist.id })
+          .from(blocklist)
+          .where(eq(blocklist.email, row.contact.email))
+          .limit(1)
+        if (blocked) {
+          await db.update(email_queue).set({ status: 'cancelled' })
+            .where(and(eq(email_queue.contact_id, row.contact.id), eq(email_queue.status, 'pending')))
+          continue
+        }
+        candidates.push(row)
+      }
+
+      // 2. Générer tous les emails EN PARALLÈLE (Gemini ~3s pour tout le lot au lieu de 3s × N)
+      const prepared = await Promise.all(candidates.map(async ({ queue, contact }) => {
         try {
-          // Sécurité opt-out : ne jamais envoyer à une adresse blocklistée.
-          // Annule la file restante de ce contact (relances comprises).
-          const [blockedAtSend] = await db
-            .select({ id: blocklist.id })
-            .from(blocklist)
-            .where(eq(blocklist.email, contact.email))
-            .limit(1)
-          if (blockedAtSend) {
-            await db
-              .update(email_queue)
-              .set({ status: 'cancelled' })
-              .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
-            console.log('[autopilot] Contact blocklisté — file annulée :', contact.email)
-            continue
-          }
-
-          // Pick next inbox via round-robin rotation
           const inbox = await getNextInbox()
-
           const lead = {
-            id: contact.id,
-            company: contact.company,
-            contact: contact.name ?? '',
-            firstName: contact.name?.split(' ')[0] ?? '',
-            email: contact.email,
-            phone: contact.phone ?? undefined,
-            city: contact.city ?? '',
-            website: contact.website ?? undefined,
-            googleRating: contact.google_rating ?? undefined,
+            id: contact.id, company: contact.company, contact: contact.name ?? '',
+            firstName: contact.name?.split(' ')[0] ?? '', email: contact.email,
+            phone: contact.phone ?? undefined, city: contact.city ?? '',
+            website: contact.website ?? undefined, googleRating: contact.google_rating ?? undefined,
             googleReviews: contact.google_reviews_count ?? undefined,
             specialty: contact.sector ? [contact.sector] : [] as string[],
-            hasGoogleAds: false,
-            hasWebsite: Boolean(contact.website),
-            stage: 'contacted' as const,
-            thread: [] as never[],
+            hasGoogleAds: false, hasWebsite: Boolean(contact.website),
+            stage: 'contacted' as const, thread: [] as never[],
             createdAt: contact.created_at?.toISOString() ?? new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),
           }
-
           const step = queue.sequence_step ?? 0
-          const sequenceTypeMap: Record<number, 'initial' | 'followup_1' | 'followup_2' | 'followup_3'> = {
-            0: 'initial',
-            1: 'followup_1',
-            2: 'followup_2',
-            3: 'followup_3',
-            4: 'followup_3',
-          }
           const emailType = sequenceTypeMap[step] ?? 'initial'
-
-          // Template de secours (utilisé si l'IA est indisponible — ex: crédits Anthropic épuisés)
-          const renderFallbackTemplate = (s: number): { subject: string; body: string } | null => {
-            const tpl = getSequenceStep(s) ?? getSequenceStep(0)
-            if (!tpl) return null
-            const vars = {
-              firstName: lead.firstName,
-              city: lead.city,
-              company: lead.company,
-              fromEmail: inbox.email,
-              fromName: inbox.senderName,
-            }
-            return {
-              subject: renderTemplate(tpl.subject, vars),
-              body: renderTemplate(tpl.body, vars),
-            }
+          const vars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
+          const fallback = (): { subject: string; body: string } | null => {
+            const tpl = getSequenceStep(step) ?? getSequenceStep(0)
+            return tpl ? { subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) } : null
           }
-
-          let generated: { subject: string; body: string }
-          if (step === 0) {
-            // Email initial : IA personnalisée, avec repli sur template si l'IA échoue
-            try {
-              generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
-            } catch (aiErr) {
-              const fallback = renderFallbackTemplate(0)
-              if (!fallback) throw aiErr
-              console.warn('[autopilot-tick] IA indisponible — repli template email initial pour', contact.email, aiErr instanceof Error ? aiErr.message : '')
-              generated = fallback
-            }
-          } else {
-            const fallback = renderFallbackTemplate(step)
-            if (fallback) {
-              generated = fallback
-            } else {
-              generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
-            }
+          let generated: { subject: string; body: string } | null = null
+          try {
+            generated = await generateEmail(lead, emailType, inbox.email, inbox.senderName)
+          } catch {
+            generated = fallback() // IA indispo → template de secours
           }
+          return { queue, contact, inbox, generated }
+        } catch (e) {
+          console.error('[autopilot-tick] prep error', contact.email, e)
+          return null
+        }
+      }))
 
-          // Utiliser l'ID de campagne Instantly réel (pas notre UUID interne)
-          const instantlyId = campaign.instantly_campaign_id ?? process.env.INSTANTLY_CAMPAIGN_ID
-          if (!instantlyId) {
-            console.warn('[autopilot-tick] Pas d\'INSTANTLY_CAMPAIGN_ID — email ignoré pour', contact.email)
-            continue
-          }
-
+      // 3. Pousser vers Instantly + MAJ DB (séquentiel, rapide)
+      for (const item of prepared) {
+        if (!item || !item.generated) continue
+        if (sent >= remainingCapacity) break
+        const { queue, contact, inbox, generated } = item
+        try {
           await addLeadsToCampaign(instantlyId, [
             {
               email: contact.email,
-              first_name: lead.firstName || undefined,
+              first_name: contact.name?.split(' ')[0] || undefined,
               last_name: contact.name?.split(' ').slice(1).join(' ') || undefined,
               company_name: contact.company,
               phone: contact.phone ?? undefined,
               website: contact.website ?? undefined,
               custom_variables: {
-                city: contact.city ?? '',
-                sector: contact.sector ?? '',
-                subject: generated.subject,
-                body: generated.body,
+                city: contact.city ?? '', sector: contact.sector ?? '',
+                subject: generated.subject, body: generated.body,
               },
             },
           ])
-
-          await db
-            .update(email_queue)
-            .set({
-              status: 'sent',
-              sent_at: new Date(),
-              subject: generated.subject,
-              body: generated.body,
-              from_email: inbox.email,
-            })
+          await db.update(email_queue)
+            .set({ status: 'sent', sent_at: new Date(), subject: generated.subject, body: generated.body, from_email: inbox.email })
             .where(eq(email_queue.id, queue.id))
-
           await db.insert(dashboard_events).values({
             type: 'email_sent',
             data: {
-              contactId: contact.id,
-              contactEmail: contact.email,
-              company: contact.company,
-              city: contact.city,
-              campaignId: campaign.id,
-              campaignName: campaign.name,
-              sequenceStep: queue.sequence_step,
-              subject: generated.subject,
+              contactId: contact.id, contactEmail: contact.email, company: contact.company,
+              city: contact.city, campaignId: campaign.id, campaignName: campaign.name,
+              sequenceStep: queue.sequence_step, subject: generated.subject,
             },
           })
-
-          // NOTE : les relances (J+3, J+7, J+14, J+21) sont gérées nativement par
-          // Instantly (étapes 2-5 de la séquence). Instantly refuse d'ajouter 2x le
-          // même lead, donc on ne ré-empile PAS les relances ici — sinon double envoi.
-          // Notre code ne gère que l'email initial (step 0) personnalisé par l'IA.
-
           sent++
         } catch (err) {
-          console.error('[autopilot-tick] Error processing lead', queue.id, err)
-          if (!firstSendError) {
-            firstSendError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-          }
+          console.error('[autopilot-tick] Error sending lead', queue.id, err)
+          if (!firstSendError) firstSendError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
         }
       }
     }
