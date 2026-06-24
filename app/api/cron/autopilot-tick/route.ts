@@ -25,19 +25,29 @@ function getDailyCapacity(weeksElapsed: number): number {
 const MIN_PIPELINE_LEADS = 80    // scrape quand il reste moins de X leads en attente
 const SCRAPE_BATCH_SIZE = 20     // leads par requête
 
-// Termes de recherche : élargit la couverture bien au-delà de "couvreur"
-// (chaque terme ramène des entreprises différentes sur Google Maps)
-const SECTOR_QUERIES = [
-  'couvreur',
-  'charpentier couvreur',
-  'couvreur zingueur',
-  'entreprise de couverture',
-  'entreprise de toiture',
-  'réparation toiture',
-  'rénovation toiture',
-  'étanchéité toiture',
-  'démoussage toiture',
-  'charpentier',
+// Secteurs ciblés (BtP) + termes de recherche par secteur. Priorité Gabin :
+// couvreurs, terrassiers, piscinistes. Facile d'ajouter d'autres métiers BtP.
+// Chaque requête est taguée avec son secteur → stocké sur le contact + email adapté.
+const SECTOR_QUERIES: { term: string; sector: string }[] = [
+  // Couvreurs
+  { term: 'couvreur', sector: 'couvreur' },
+  { term: 'charpentier couvreur', sector: 'couvreur' },
+  { term: 'couvreur zingueur', sector: 'couvreur' },
+  { term: 'entreprise de couverture', sector: 'couvreur' },
+  { term: 'réparation toiture', sector: 'couvreur' },
+  { term: 'rénovation toiture', sector: 'couvreur' },
+  { term: 'étanchéité toiture', sector: 'couvreur' },
+  // Terrassiers
+  { term: 'terrassier', sector: 'terrassier' },
+  { term: 'entreprise de terrassement', sector: 'terrassier' },
+  { term: 'terrassement', sector: 'terrassier' },
+  { term: 'travaux terrassement VRD', sector: 'terrassier' },
+  { term: 'assainissement terrassement', sector: 'terrassier' },
+  // Piscinistes
+  { term: 'pisciniste', sector: 'pisciniste' },
+  { term: 'construction piscine', sector: 'pisciniste' },
+  { term: 'rénovation piscine', sector: 'pisciniste' },
+  { term: 'installation piscine', sector: 'pisciniste' },
 ]
 
 // Villes ciblées — FRANCE ENTIÈRE (toutes régions). L'email étant personnalisé
@@ -239,11 +249,13 @@ export async function GET(request: NextRequest) {
           .where(eq(agent_config.key, 'scrape_combo_index'))
 
         const combo = parseInt(comboRow?.value ?? '0') % TOTAL_COMBOS
-        const term = SECTOR_QUERIES[combo % SECTOR_QUERIES.length]
+        const queryDef = SECTOR_QUERIES[combo % SECTOR_QUERIES.length]
+        const term = queryDef.term
+        const sectorLabel = queryDef.sector
         const cityIndex = Math.floor(combo / SECTOR_QUERIES.length) % OCCITANIE_CITIES.length
         scrapedCity = OCCITANIE_CITIES[cityIndex]
 
-        console.log(`[autopilot] Pipeline faible (${pendingCount}). Scraping "${term} ${scrapedCity}"...`)
+        console.log(`[autopilot] Pipeline faible (${pendingCount}). Scraping "${term} ${scrapedCity}" (secteur: ${sectorLabel})...`)
 
         const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
         let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
@@ -289,7 +301,7 @@ export async function GET(request: NextRequest) {
                 postal_code: lead.postalCode || null,
                 phone: lead.phone,
                 website: lead.website,
-                sector: 'couvreur',
+                sector: sectorLabel,
                 google_place_id: lead.googlePlaceId,
                 google_rating: lead.rating,
                 google_reviews_count: lead.reviewsCount,

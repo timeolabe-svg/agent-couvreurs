@@ -229,15 +229,27 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
     ? 'Site existant mais aucune présence publicitaire (Google Ads).'
     : 'Site et ads existants mais sous-performants.'
 
+  const sector = (lead.specialty?.[0] || 'artisan du bâtiment').toLowerCase()
+  // Vocabulaire/recherches Google adaptés au métier (BtP)
+  const sectorHints: Record<string, string> = {
+    couvreur: 'recherches type "couvreur {ville}", "réparation toiture", "démoussage", "rénovation toiture". Parle de toiture/couverture.',
+    terrassier: 'recherches type "terrassement {ville}", "entreprise de terrassement", "VRD", "assainissement". Parle de terrassement/préparation de terrain, JAMAIS de toiture.',
+    pisciniste: 'recherches type "construction piscine {ville}", "pisciniste {ville}", "rénovation piscine". Parle de piscine/bassin, JAMAIS de toiture.',
+  }
+  const hint = sectorHints[sector] ?? `Adapte le vocabulaire et les exemples de recherches Google au métier "${sector}". N'utilise PAS de vocabulaire d'un autre métier.`
+
   return `LEAD :
 - Prénom : ${lead.firstName || '(non disponible — utiliser "Bonjour,")'}
 - Entreprise : ${lead.company}
-- Secteur : ${lead.specialty?.join(', ') || 'non précisé'}
+- Métier du prospect : ${sector}
 - Ville : ${lead.city}
 - Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
 - Google Ads : ${lead.hasGoogleAds ? 'oui' : 'NON'}
 - Bonne réputation Google : ${lead.googleRating && lead.googleRating >= 4.0 ? 'oui' : 'non'}
 - Situation : ${situation}
+
+ADAPTATION MÉTIER (CRITIQUE) : ce prospect est un ${sector}. ${hint}
+Toute mention d'un autre métier (ex: toiture pour un pisciniste) est une faute grave.
 
 TYPE : ${typeMap[type] || typeMap.initial}
 

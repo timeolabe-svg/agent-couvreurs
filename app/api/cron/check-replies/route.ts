@@ -440,6 +440,7 @@ export async function GET(request: NextRequest) {
           contactName: contact?.name ?? reply.from_address,
           contactCompany: contact?.company ?? reply.from_address,
           contactCity: contact?.city ?? '',
+          contactSector: contact?.sector ?? undefined,
           proposedSlot: proposedSlotStr,
           contactPhone: isRdv ? contactPhone : undefined,
         })
