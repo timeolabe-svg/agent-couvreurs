@@ -26,7 +26,7 @@ export interface ClassificationResult {
 }
 
 const CLASSIFICATION_PROMPT = `Tu es l'agent IA de Hdigiweb, une agence web toulousaine.
-Tu analyses les réponses à nos emails de prospection envoyés à des couvreurs en Occitanie.
+Tu analyses les réponses à nos emails de prospection envoyés à des artisans BTP en France.
 
 Notre service : Améliorer la visibilité Google des couvreurs pour leur générer plus de devis.
 

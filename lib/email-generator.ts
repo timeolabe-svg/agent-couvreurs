@@ -235,6 +235,11 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
     couvreur: 'recherches type "couvreur {ville}", "réparation toiture", "démoussage", "rénovation toiture". Parle de toiture/couverture.',
     terrassier: 'recherches type "terrassement {ville}", "entreprise de terrassement", "VRD", "assainissement". Parle de terrassement/préparation de terrain, JAMAIS de toiture.',
     pisciniste: 'recherches type "construction piscine {ville}", "pisciniste {ville}", "rénovation piscine". Parle de piscine/bassin, JAMAIS de toiture.',
+    'maçon': 'maçonnerie, construction, gros œuvre, murs, fondations. Recherches: "maçon {ville}", "entreprise maçonnerie". JAMAIS toiture.',
+    'électricien': 'installation électrique, dépannage électrique, tableau électrique. Recherches: "électricien {ville}". JAMAIS toiture.',
+    'plombier': 'plomberie, chauffage, chaudière, sanitaires. Recherches: "plombier {ville}". JAMAIS toiture.',
+    'peintre': 'peinture intérieure et extérieure, ravalement. Recherches: "peintre {ville}". JAMAIS toiture.',
+    'menuisier': 'menuiserie, fenêtres, portes, parquet. Recherches: "menuisier {ville}". JAMAIS toiture.',
   }
   const hint = sectorHints[sector] ?? `Adapte le vocabulaire et les exemples de recherches Google au métier "${sector}". N'utilise PAS de vocabulaire d'un autre métier.`
 
@@ -324,6 +329,11 @@ export async function generateSequence(
     couvreur: 'toiture, couverture, zinguerie. Recherches Google: "couvreur {ville}", "réparation toiture", "démoussage".',
     terrassier: 'terrassement, préparation de terrain, VRD, assainissement. Recherches: "terrassement {ville}", "entreprise de terrassement". JAMAIS de toiture.',
     pisciniste: 'construction et rénovation de piscines. Recherches: "construction piscine {ville}", "pisciniste {ville}". JAMAIS de toiture.',
+    'maçon': 'maçonnerie, construction, gros œuvre, murs, fondations. Recherches: "maçon {ville}", "entreprise maçonnerie". JAMAIS toiture.',
+    'électricien': 'installation électrique, dépannage électrique, tableau électrique. Recherches: "électricien {ville}". JAMAIS toiture.',
+    'plombier': 'plomberie, chauffage, chaudière, sanitaires. Recherches: "plombier {ville}". JAMAIS toiture.',
+    'peintre': 'peinture intérieure et extérieure, ravalement. Recherches: "peintre {ville}". JAMAIS toiture.',
+    'menuisier': 'menuiserie, fenêtres, portes, parquet. Recherches: "menuisier {ville}". JAMAIS toiture.',
   }
   const hint = sectorHints[sector] ?? `métier "${sector}" : adapte tout le vocabulaire à ce métier, n'emploie pas le jargon d'un autre métier.`
 

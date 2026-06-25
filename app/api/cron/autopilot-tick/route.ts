@@ -29,7 +29,7 @@ const SCRAPE_BATCH_SIZE = 20     // leads par requête
 // couvreurs, terrassiers, piscinistes. Facile d'ajouter d'autres métiers BtP.
 // Chaque requête est taguée avec son secteur → stocké sur le contact + email adapté.
 const SECTOR_QUERIES: { term: string; sector: string }[] = [
-  // Couvreurs
+  // Couvreurs (prioritaires)
   { term: 'couvreur', sector: 'couvreur' },
   { term: 'charpentier couvreur', sector: 'couvreur' },
   { term: 'couvreur zingueur', sector: 'couvreur' },
@@ -37,17 +37,33 @@ const SECTOR_QUERIES: { term: string; sector: string }[] = [
   { term: 'réparation toiture', sector: 'couvreur' },
   { term: 'rénovation toiture', sector: 'couvreur' },
   { term: 'étanchéité toiture', sector: 'couvreur' },
-  // Terrassiers
+  // Terrassiers (prioritaires)
   { term: 'terrassier', sector: 'terrassier' },
   { term: 'entreprise de terrassement', sector: 'terrassier' },
   { term: 'terrassement', sector: 'terrassier' },
   { term: 'travaux terrassement VRD', sector: 'terrassier' },
   { term: 'assainissement terrassement', sector: 'terrassier' },
-  // Piscinistes
+  // Piscinistes (prioritaires)
   { term: 'pisciniste', sector: 'pisciniste' },
   { term: 'construction piscine', sector: 'pisciniste' },
   { term: 'rénovation piscine', sector: 'pisciniste' },
   { term: 'installation piscine', sector: 'pisciniste' },
+  // Maçons
+  { term: 'maçon', sector: 'maçon' },
+  { term: 'maçonnerie', sector: 'maçon' },
+  { term: 'entreprise maçonnerie', sector: 'maçon' },
+  // Électriciens
+  { term: 'électricien', sector: 'électricien' },
+  { term: 'installateur électrique', sector: 'électricien' },
+  // Plombiers
+  { term: 'plombier', sector: 'plombier' },
+  { term: 'plomberie chauffage', sector: 'plombier' },
+  // Peintres
+  { term: 'peintre en bâtiment', sector: 'peintre' },
+  { term: 'peinture bâtiment', sector: 'peintre' },
+  // Menuisiers
+  { term: 'menuisier', sector: 'menuisier' },
+  { term: 'menuiserie', sector: 'menuisier' },
 ]
 
 // Villes ciblées — FRANCE ENTIÈRE (toutes régions). L'email étant personnalisé
@@ -241,18 +257,46 @@ export async function GET(request: NextRequest) {
       const pendingCount = Number(pendingCountResult?.count ?? 0)
 
       if (pendingCount < MIN_PIPELINE_LEADS) {
+        // Lire sector_priority_override pour pondérer le choix des combos
+        const [priorityRow] = await db
+          .select({ value: agent_config.value })
+          .from(agent_config)
+          .where(eq(agent_config.key, 'sector_priority_override'))
+
+        let sectorPriorities: Record<string, number> = {}
+        if (priorityRow?.value) {
+          try { sectorPriorities = JSON.parse(priorityRow.value) } catch { /* ignore */ }
+        }
+
+        // Construire une liste pondérée des SECTOR_QUERIES selon les priorités
+        // score 8-10 = 3x, score 4-7 = 1x (normal), score 0-3 = 1/3 (on garde 1 entrée sur 3)
+        const weightedQueries: { term: string; sector: string }[] = []
+        for (const q of SECTOR_QUERIES) {
+          const score = sectorPriorities[q.sector] ?? 5 // défaut = normal
+          if (score >= 8) {
+            weightedQueries.push(q, q, q) // 3x
+          } else if (score >= 4) {
+            weightedQueries.push(q) // 1x
+          } else {
+            // score 0-3 : 1 fois sur 3 (on n'ajoute que la première occurrence du secteur)
+            const alreadyAdded = weightedQueries.some(w => w.sector === q.sector)
+            if (!alreadyAdded) weightedQueries.push(q)
+          }
+        }
+        const effectiveQueries = weightedQueries.length > 0 ? weightedQueries : SECTOR_QUERIES
+
         // Index global de combo (terme de recherche × ville) — couvre tout le marché
-        const TOTAL_COMBOS = SECTOR_QUERIES.length * OCCITANIE_CITIES.length
+        const TOTAL_COMBOS = effectiveQueries.length * OCCITANIE_CITIES.length
         const [comboRow] = await db
           .select({ value: agent_config.value })
           .from(agent_config)
           .where(eq(agent_config.key, 'scrape_combo_index'))
 
         const combo = parseInt(comboRow?.value ?? '0') % TOTAL_COMBOS
-        const queryDef = SECTOR_QUERIES[combo % SECTOR_QUERIES.length]
+        const queryDef = effectiveQueries[combo % effectiveQueries.length]
         const term = queryDef.term
         const sectorLabel = queryDef.sector
-        const cityIndex = Math.floor(combo / SECTOR_QUERIES.length) % OCCITANIE_CITIES.length
+        const cityIndex = Math.floor(combo / effectiveQueries.length) % OCCITANIE_CITIES.length
         scrapedCity = OCCITANIE_CITIES[cityIndex]
 
         console.log(`[autopilot] Pipeline faible (${pendingCount}). Scraping "${term} ${scrapedCity}" (secteur: ${sectorLabel})...`)
@@ -272,10 +316,15 @@ export async function GET(request: NextRequest) {
 
         const hasMillionVerifier = Boolean(process.env.MILLION_VERIFIER_API_KEY)
 
-        // Candidats : email présent + confiance minimale (le tri FINAL est par lead, plus bas)
-        const leadsWithEmail = rawLeads.filter(
-          (l) => l.email && l.email.includes('@') && l.emailConfidence >= 40
-        )
+        // Candidats : email présent + confiance minimale
+        // Triés par score d'opportunité : sans site web + peu d'avis Google = meilleure cible pour Hdigiweb
+        const leadsWithEmail = rawLeads
+          .filter((l) => l.email && l.email.includes('@') && l.emailConfidence >= 40)
+          .sort((a, b) => {
+            const scoreA = (a.website ? 0 : 30) + Math.max(0, 20 - (a.reviewsCount ?? 20))
+            const scoreB = (b.website ? 0 : 30) + Math.max(0, 20 - (b.reviewsCount ?? 20))
+            return scoreB - scoreA // plus haut score en premier
+          })
 
         const skippedLowConfidence = rawLeads.filter(
           (l) => l.email && l.emailConfidence < 40
