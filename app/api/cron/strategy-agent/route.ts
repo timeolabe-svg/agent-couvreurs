@@ -240,48 +240,6 @@ Analyse et décide en JSON STRICT (pas de texte avant ou après) :
     },
   })
 
-  // ─── ÉTAPE 5 : Email de rapport via Resend ────────────────────────────────
-
-  if (process.env.RESEND_API_KEY && process.env.CLIENT_NOTIFY_EMAIL) {
-    try {
-      const metricsHtml = Object.entries(sectorMap)
-        .map(([s, m]) => `<tr><td>${s}</td><td>${m.sent}</td><td>${m.replies} (${m.replyRate}%)</td><td>${m.rdv}</td></tr>`)
-        .join('')
-
-      const decisionsHtml = (geminiDecision.decisions_summary ?? [])
-        .map(d => `<li>${d}</li>`)
-        .join('')
-
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        },
-        body: JSON.stringify({
-          from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-          to: process.env.CLIENT_NOTIFY_EMAIL.split(',').map(s => s.trim()).filter(Boolean),
-          subject: `🤖 Rapport stratège IA — ${new Date().toLocaleDateString('fr-FR')}`,
-          html: `
-            <h2>Rapport quotidien de l'agent stratège</h2>
-            <h3>Métriques 30 derniers jours</h3>
-            <table border="1" cellpadding="6" style="border-collapse:collapse">
-              <thead><tr><th>Secteur</th><th>Envoyés</th><th>Réponses</th><th>RDV</th></tr></thead>
-              <tbody>${metricsHtml || '<tr><td colspan="4">Pas de données</td></tr>'}</tbody>
-            </table>
-            <p>Global : ${totalSent} emails, ${globalReplyRate}% taux de réponse, ${totalRdv} RDV</p>
-            <h3>Décisions prises</h3>
-            <ul>${decisionsHtml || '<li>Aucune décision majeure</li>'}</ul>
-            <h3>Actions appliquées</h3>
-            <ul>${applied.map(a => `<li>${a}</li>`).join('')}</ul>
-          `,
-        }),
-      })
-    } catch (err) {
-      console.error('[strategy-agent] Email report failed:', err)
-    }
-  }
-
   return NextResponse.json({
     metrics: sectorMap,
     decisions: geminiDecision.decisions_summary,
