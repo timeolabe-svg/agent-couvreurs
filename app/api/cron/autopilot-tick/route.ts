@@ -275,7 +275,6 @@ export async function GET(request: NextRequest) {
         // Candidats : email présent + confiance minimale (le tri FINAL est par lead, plus bas)
         const leadsWithEmail = rawLeads.filter(
           (l) => l.email && l.email.includes('@') && l.emailConfidence >= 40
-            && !l.email.toLowerCase().includes('timeo')
         )
 
         const skippedLowConfidence = rawLeads.filter(
