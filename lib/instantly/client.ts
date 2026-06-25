@@ -225,6 +225,24 @@ export async function sendReply(params: {
   })
 }
 
+// ─── Update lead custom variables ────────────────────────────────────────────
+
+export async function updateLeadVariables(
+  campaignId: string,
+  email: string,
+  customVariables: Record<string, string>
+): Promise<void> {
+  if (!API_KEY) return
+  try {
+    await instantlyFetch('/leads', {
+      method: 'PATCH',
+      body: JSON.stringify({ campaign: campaignId, email, custom_variables: customVariables }),
+    })
+  } catch (err) {
+    console.error('[Instantly] updateLeadVariables failed for', email, err)
+  }
+}
+
 // ─── Update campaign daily limit ─────────────────────────────────────────────
 
 export async function updateCampaignDailyLimit(campaignId: string, dailyLimit: number): Promise<void> {

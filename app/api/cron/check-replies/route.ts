@@ -275,6 +275,122 @@ export async function GET(request: NextRequest) {
     console.error('[check-replies] Error processing scheduled drafts', err)
   }
 
+  // ── Relances automatiques : prospects chauds sans réponse depuis 3+ jours ──
+  // Si on leur a répondu et qu'ils ne répondent plus → on relance (max 2 fois)
+  try {
+    const { inArray, gte, isNotNull } = await import('drizzle-orm')
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+    const WARM = ['interest', 'rdv_request', 'objection', 'question']
+
+    const staleDrafts = await db
+      .select({
+        draftId: reply_drafts.id,
+        sentAt: reply_drafts.sent_at,
+        replyId: incoming_replies.id,
+        instantlyReplyId: incoming_replies.instantly_reply_id,
+        contactId: incoming_replies.contact_id,
+        classification: incoming_replies.classification,
+        replyBody: incoming_replies.body,
+        replySubject: incoming_replies.subject,
+      })
+      .from(reply_drafts)
+      .innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
+      .where(
+        and(
+          eq(reply_drafts.status, 'sent'),
+          lteOp(reply_drafts.sent_at!, threeDaysAgo),
+          inArray(incoming_replies.classification, WARM),
+          isNotNull(incoming_replies.contact_id),
+          isNotNull(incoming_replies.instantly_reply_id),
+        )
+      )
+      .limit(5)
+
+    for (const stale of staleDrafts) {
+      try {
+        if (!stale.contactId) continue
+
+        // Le prospect a-t-il répondu depuis qu'on lui a répondu ?
+        const [laterReply] = await db
+          .select({ id: incoming_replies.id })
+          .from(incoming_replies)
+          .where(and(
+            eq(incoming_replies.contact_id, stale.contactId),
+            gte(incoming_replies.created_at, stale.sentAt!),
+          ))
+          .limit(1)
+        if (laterReply) continue
+
+        // Max 2 drafts envoyés par conversation (évite le spam)
+        const sentCount = await db
+          .select({ id: reply_drafts.id })
+          .from(reply_drafts)
+          .where(and(eq(reply_drafts.incoming_reply_id, stale.replyId), eq(reply_drafts.status, 'sent')))
+        if (sentCount.length >= 2) continue
+
+        // On a déjà envoyé un follow-up dans les 3 derniers jours ? → skip
+        const [recentFollowUp] = await db
+          .select({ id: reply_drafts.id })
+          .from(reply_drafts)
+          .where(and(
+            eq(reply_drafts.incoming_reply_id, stale.replyId),
+            eq(reply_drafts.status, 'sent'),
+            gte(reply_drafts.sent_at!, threeDaysAgo),
+          ))
+          .limit(1)
+        if (recentFollowUp) continue
+
+        // Récupérer le contact
+        const [contact] = await db.select().from(contacts).where(eq(contacts.id, stale.contactId)).limit(1)
+        if (!contact) continue
+
+        // Bloqué ?
+        const [isBlocked] = await db.select({ id: blocklist.id }).from(blocklist).where(eq(blocklist.email, contact.email)).limit(1)
+        if (isBlocked) continue
+
+        // Générer la relance
+        const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+        const followUpBody = await generateReplyResponse({
+          classification: stale.classification as import('@/lib/reply-agent/classifier').ReplyClassification,
+          originalEmailBody: '',
+          replyBody: stale.replyBody,
+          contactName: contact.name ?? contact.company,
+          contactCompany: contact.company,
+          contactCity: contact.city ?? '',
+          contactSector: contact.sector ?? undefined,
+        })
+
+        // Retrouver la boîte expéditrice
+        const [orig] = await db
+          .select({ from_email: email_queue.from_email })
+          .from(email_queue)
+          .where(and(eq(email_queue.contact_id, stale.contactId), eq(email_queue.status, 'sent')))
+          .orderBy(sql`${email_queue.sent_at} desc`)
+          .limit(1)
+
+        await sendReply({
+          reply_to_id: stale.instantlyReplyId!,
+          body: followUpBody,
+          eaccount: orig?.from_email,
+          subject: stale.replySubject ?? undefined,
+        })
+
+        await db.insert(reply_drafts).values({
+          incoming_reply_id: stale.replyId,
+          body: followUpBody,
+          status: 'sent',
+          sent_at: new Date(),
+        })
+
+        console.log(`[check-replies] Follow-up auto → ${contact.company} (${stale.classification})`)
+      } catch (e) {
+        console.error('[check-replies] Follow-up error for', stale.contactId, e)
+      }
+    }
+  } catch (followUpErr) {
+    console.error('[check-replies] Follow-up section error (non-bloquant):', followUpErr)
+  }
+
   try {
     const replies = await getInstantlyReplies({ limit: 50 })
 
