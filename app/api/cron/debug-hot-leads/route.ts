@@ -27,8 +27,6 @@ export async function GET(req: Request) {
       subject: incoming_replies.subject,
       body: incoming_replies.body,
       classification: incoming_replies.classification,
-      action: incoming_replies.action,
-      processed: incoming_replies.processed,
       created_at: incoming_replies.created_at,
     })
     .from(incoming_replies)
