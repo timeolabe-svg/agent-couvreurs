@@ -215,14 +215,41 @@ TEST DU MIROIR :
 Avant validation, te poser : "Est-ce qu'un dirigeant qui reçoit 50 cold emails par semaine reconnaîtrait celui-ci comme automatisé ?"
 Si oui → réécrire. Si non → envoyer.`
 
+// Transforme les failles techniques en hook concret pour le générateur.
+// Règle : 1 seul problème mis en avant (le plus visible), formulé comme une observation humaine.
 function buildAuditContext(level?: string, weaknesses?: string[], cms?: string): string {
   if (!level || level === 'no-website') return ''
-  const cmsNote = cms ? ` (${cms})` : ''
-  const top = (weaknesses ?? []).slice(0, 3)
-  if (level === 'abandoned') return `\n- Audit site web : site abandonné${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
-  if (level === 'very-outdated') return `\n- Audit site web : site très vieillissant${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
-  if (level === 'outdated') return `\n- Audit site web : site daté${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
-  return `\n- Audit site web : site techniquement correct${cmsNote}.`
+
+  // Priorité d'impact : ce qui se voit immédiatement en tant que client ou Google
+  const PRIORITY: { match: string; hook: string }[] = [
+    { match: 'viewport',       hook: "j'ai testé votre site sur mobile : il n'est pas adapté aux smartphones, ce qui représente aujourd'hui plus de 60 % des recherches locales" },
+    { match: 'HTTPS',          hook: "votre site tourne en HTTP, pas HTTPS : Google le pénalise et les navigateurs affichent \"non sécurisé\" à vos visiteurs" },
+    { match: 'abandonné',      hook: "votre site n'a probablement pas été mis à jour depuis plusieurs années — Google dé-référence les sites sans activité récente" },
+    { match: 'copyright',      hook: `votre copyright ${(weaknesses ?? []).find(w => w.includes('copyright'))?.match(/\d{4}/)?.[0] ?? ''} indique que le site n'a pas bougé depuis plusieurs années, ce qui impacte son référencement` },
+    { match: 'Lorem ipsum',    hook: "votre site contient encore du contenu factice — il n'est probablement pas indexé par Google" },
+    { match: 'meta description', hook: "votre site n'a pas de meta description : Google n'a rien à afficher sous votre nom dans les résultats de recherche" },
+    { match: 'H1',             hook: "votre site n'a pas de balise H1 — Google ne sait pas quel est votre métier principal, ce qui nuit à votre positionnement local" },
+    { match: 'jQuery',         hook: "votre site tourne sur une librairie JavaScript obsolète, ce qui ralentit son chargement et dégrade son score Google PageSpeed" },
+    { match: 'Flash',          hook: "votre site contient du contenu Flash — il est invisible sur tous les mobiles et tablettes depuis 2020" },
+  ]
+
+  const w = weaknesses ?? []
+  const topHook = PRIORITY.find(p => w.some(weakness => weakness.toLowerCase().includes(p.match.toLowerCase())))
+  const cmsNote = cms ? ` (site ${cms})` : ''
+
+  if (!topHook) {
+    // fallback : reformuler la première faiblesse
+    const first = w[0]
+    if (!first) return ''
+    return `\n\nAUDIT SITE (UTILISE COMME HOOK D'OUVERTURE) : ${first}${cmsNote}. L'email doit ouvrir sur cette observation concrète, formulée comme si tu l'avais découverte en testant le site toi-même.`
+  }
+
+  const secondary = w.filter(weakness => !weakness.toLowerCase().includes(topHook.match.toLowerCase())).slice(0, 2)
+  const secondaryNote = secondary.length > 0 ? ` Problèmes secondaires (ne pas citer dans l'email, contexte seulement) : ${secondary.join(' ; ')}.` : ''
+
+  return `\n\nAUDIT SITE${cmsNote} — niveau : ${level} (CRITIQUE — UTILISE COMME HOOK D'OUVERTURE) :
+Observation principale à utiliser : "${topHook.hook}".
+L'email DOIT ouvrir sur cette observation concrète, reformulée naturellement comme si tu l'avais découverte en testant le site. NE PAS copier mot pour mot — adapter au ton et au métier.${secondaryNote}`
 }
 
 function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: string): string {
