@@ -29,6 +29,11 @@ export const contacts = pgTable('contacts', {
   email_confidence_score: integer('email_confidence_score'), // 0-100
   email_validated: boolean('email_validated').default(false),
   source: text('source'), // 'google_places', 'csv_import', 'manual'
+  audit_score: integer('audit_score'),
+  audit_level: text('audit_level'), // no-website | abandoned | very-outdated | outdated | modern
+  audit_weaknesses: text('audit_weaknesses').array(),
+  audit_cms: text('audit_cms'),
+  audit_done: boolean('audit_done').default(false),
   created_at: timestamp('created_at').defaultNow(),
   updated_at: timestamp('updated_at').defaultNow(),
 }, (table) => ({

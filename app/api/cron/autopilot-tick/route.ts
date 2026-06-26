@@ -368,6 +368,26 @@ export async function GET(request: NextRequest) {
 
             if (!inserted) continue // contact déjà en base → déjà contacté ou en cours, on ne recontacte pas
 
+            // Audit site web — détecte les failles techniques pour personnaliser l'email
+            if (lead.website) {
+              try {
+                const { auditWebsite } = await import('@/lib/website-audit')
+                const audit = await Promise.race([
+                  auditWebsite(lead.website, sectorLabel),
+                  new Promise<null>(r => setTimeout(() => r(null), 6000)),
+                ])
+                if (audit) {
+                  await db.update(contacts).set({
+                    audit_score: audit.score,
+                    audit_level: audit.level,
+                    audit_weaknesses: audit.weaknesses,
+                    audit_cms: audit.cms ?? null,
+                    audit_done: true,
+                  }).where(eq(contacts.id, inserted.id))
+                }
+              } catch { /* non-bloquant */ }
+            }
+
             // VALIDATION FAIL-CLOSED : on n'envoie QUE si on est sûr de l'adresse.
             // Base : confiance >= 70 (mailto explicite / préfixe pro sur le domaine
             // = email réellement publié par l'entreprise, bounce très rare).
@@ -626,6 +646,10 @@ export async function GET(request: NextRequest) {
             googleReviews: contact.google_reviews_count ?? undefined,
             specialty: contact.sector ? [contact.sector] : [] as string[],
             hasGoogleAds: false, hasWebsite: Boolean(contact.website),
+            auditScore: contact.audit_score ?? undefined,
+            auditLevel: contact.audit_level ?? undefined,
+            auditWeaknesses: contact.audit_weaknesses ?? undefined,
+            auditCms: contact.audit_cms ?? undefined,
             stage: 'contacted' as const, thread: [] as never[],
             createdAt: contact.created_at?.toISOString() ?? new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),

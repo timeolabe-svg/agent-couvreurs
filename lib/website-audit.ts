@@ -1,0 +1,171 @@
+export type AuditLevel = 'no-website' | 'abandoned' | 'very-outdated' | 'outdated' | 'modern'
+
+export interface AuditResult {
+  score: number          // 0-100
+  level: AuditLevel
+  hasWebsite: boolean
+  cms: string | null
+  ssl: boolean
+  mobileOptimized: boolean
+  weaknesses: string[]   // phrases concrètes sur les défauts
+  totalIssues: number
+}
+
+const FAKE_SITE_PATTERNS = [
+  'facebook.com', 'fb.com', 'pages.jaunesgooglemap', 'pagesjaunes.fr',
+  'linktr.ee', 'linktree', 'instagram.com', 'twitter.com', 'linkedin.com',
+  'yelp.com', 'tripadvisor', 'google.com/maps',
+]
+
+export function hasNoRealWebsite(website: string | null | undefined): boolean {
+  if (!website) return true
+  const w = website.toLowerCase()
+  return FAKE_SITE_PATTERNS.some(p => w.includes(p))
+}
+
+async function fetchPage(url: string, timeoutMs = 5000): Promise<string | null> {
+  try {
+    const normalized = url.startsWith('http') ? url : `https://${url}`
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(normalized, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        'Accept': 'text/html',
+      },
+    })
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const ct = res.headers.get('content-type') ?? ''
+    if (!ct.includes('html')) return null
+    const text = await res.text()
+    return text.slice(0, 150_000)
+  } catch {
+    return null
+  }
+}
+
+async function checkSSL(url: string): Promise<boolean> {
+  try {
+    const normalized = url.startsWith('http') ? url : `https://${url}`
+    const httpsUrl = normalized.replace(/^http:\/\//, 'https://')
+    const res = await fetch(httpsUrl, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(4000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+function detectCMS(html: string): string | null {
+  const h = html.toLowerCase()
+  if (h.includes('wp-content') || h.includes('wp-includes')) return 'WordPress'
+  if (h.includes('wix.com') || h.includes('wixstatic')) return 'Wix'
+  if (h.includes('squarespace') || h.includes('squarespace-cdn')) return 'Squarespace'
+  if (h.includes('shopify') || h.includes('myshopify')) return 'Shopify'
+  if (h.includes('webflow.com') || h.includes('webflow.io')) return 'Webflow'
+  if (h.includes('joomla')) return 'Joomla'
+  if (h.includes('next.js') || h.includes('__next')) return 'Next.js'
+  return null
+}
+
+function detectObsoleteTags(html: string): string[] {
+  const issues: string[] = []
+  const h = html.toLowerCase()
+  if (/<font[\s>]/i.test(html)) issues.push('balises <font> obsolètes (HTML 3)')
+  if (/<marquee/i.test(html)) issues.push('balise <marquee> obsolète')
+  if (/<frameset/i.test(html)) issues.push('architecture frameset obsolète')
+  if (/jquery[\s"'/]1\.[0-6]/i.test(html)) issues.push('jQuery version très ancienne (1.x)')
+  if (/jquery[\s"'/]1\.(7|8|9|10|11|12)/i.test(html)) issues.push('jQuery 1.x obsolète')
+  if (h.includes('flash') || h.includes('.swf')) issues.push('contenu Flash détecté (non supporté)')
+  if (/text\/javascript/.test(html) && /<script[^>]+language/i.test(html)) issues.push('attribut language= sur balises script (déprécié)')
+  return issues
+}
+
+function detectMissingModern(html: string): string[] {
+  const issues: string[] = []
+  const h = html.toLowerCase()
+  if (!h.includes('viewport')) issues.push('pas de balise viewport (site non optimisé mobile)')
+  if (!/<title[^>]*>[^<]{3,}/i.test(html)) issues.push('balise <title> absente ou vide')
+  if (!/meta[^>]+name=["']description["']/i.test(html)) issues.push('meta description absente (invisibilité Google)')
+  if (!/meta[^>]+property=["']og:/i.test(html)) issues.push('balises Open Graph absentes (pas de prévisualisation réseaux sociaux)')
+  if (!h.includes('schema.org') && !h.includes('application/ld+json')) issues.push('pas de données structurées Schema.org (manque de référencement local)')
+  return issues
+}
+
+function detectSeoIssues(html: string): string[] {
+  const issues: string[] = []
+  if (!/<h1[\s>]/i.test(html)) issues.push('pas de balise H1 (structure SEO défaillante)')
+  if ((html.match(/<h1[\s>]/gi) ?? []).length > 1) issues.push('plusieurs balises H1 (structure SEO incohérente)')
+  const imgMatches = html.match(/<img[^>]+>/gi) ?? []
+  const imgWithoutAlt = imgMatches.filter(img => !/alt=["'][^"']+["']/i.test(img))
+  if (imgWithoutAlt.length > 0) issues.push(`${imgWithoutAlt.length} image(s) sans attribut alt`)
+  if (html.length < 3000) issues.push('contenu HTML très léger (probablement peu indexé)')
+  return issues
+}
+
+function detectAbandoned(html: string, url: string): string[] {
+  const issues: string[] = []
+  const h = html.toLowerCase()
+  const currentYear = new Date().getFullYear()
+  // Copyright year check
+  const copyrightMatch = html.match(/copyright[^0-9]*(\d{4})/i) ?? html.match(/©\s*(\d{4})/i)
+  if (copyrightMatch) {
+    const year = parseInt(copyrightMatch[1])
+    if (currentYear - year >= 4) issues.push(`copyright ${year} (site probablement non mis à jour depuis ${currentYear - year} ans)`)
+  }
+  if (h.includes('lorem ipsum')) issues.push('contenu Lorem Ipsum détecté (site factice ou non finalisé)')
+  if (h.includes('coming soon') || h.includes('bientôt disponible') || h.includes('en construction')) issues.push('page "en construction" ou "coming soon"')
+  return issues
+}
+
+export async function auditWebsite(website: string | null | undefined, _sector?: string): Promise<AuditResult> {
+  if (hasNoRealWebsite(website)) {
+    return { score: 0, level: 'no-website', hasWebsite: false, cms: null, ssl: false, mobileOptimized: false, weaknesses: ['aucun site web trouvé'], totalIssues: 1 }
+  }
+
+  const url = website!
+  const [html, ssl] = await Promise.all([
+    fetchPage(url, 5000),
+    checkSSL(url),
+  ])
+
+  if (!html) {
+    return { score: 10, level: 'abandoned', hasWebsite: true, cms: null, ssl, mobileOptimized: false, weaknesses: ['site inaccessible ou en erreur'], totalIssues: 1 }
+  }
+
+  const cms = detectCMS(html)
+  const obsoleteTags = detectObsoleteTags(html)
+  const missingModern = detectMissingModern(html)
+  const seoIssues = detectSeoIssues(html)
+  const abandonedSigns = detectAbandoned(html, url)
+  const mobileOptimized = html.toLowerCase().includes('viewport')
+
+  const weaknesses: string[] = [
+    ...obsoleteTags,
+    ...missingModern,
+    ...seoIssues,
+    ...abandonedSigns,
+    ...(!ssl ? ['pas de HTTPS (site non sécurisé)'] : []),
+  ]
+
+  const totalIssues = weaknesses.length
+  const score = Math.max(0, 100
+    - obsoleteTags.length * 4
+    - missingModern.length * 5
+    - seoIssues.length * 3
+    - abandonedSigns.length * 8
+    - (!ssl ? 5 : 0)
+  )
+
+  let level: AuditLevel
+  if (abandonedSigns.length >= 2 || score < 25) level = 'abandoned'
+  else if (score < 50) level = 'very-outdated'
+  else if (score < 75) level = 'outdated'
+  else level = 'modern'
+
+  return { score, level, hasWebsite: true, cms, ssl, mobileOptimized, weaknesses, totalIssues }
+}

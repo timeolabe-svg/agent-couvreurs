@@ -215,6 +215,16 @@ TEST DU MIROIR :
 Avant validation, te poser : "Est-ce qu'un dirigeant qui reçoit 50 cold emails par semaine reconnaîtrait celui-ci comme automatisé ?"
 Si oui → réécrire. Si non → envoyer.`
 
+function buildAuditContext(level?: string, weaknesses?: string[], cms?: string): string {
+  if (!level || level === 'no-website') return ''
+  const cmsNote = cms ? ` (${cms})` : ''
+  const top = (weaknesses ?? []).slice(0, 3)
+  if (level === 'abandoned') return `\n- Audit site web : site abandonné${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
+  if (level === 'very-outdated') return `\n- Audit site web : site très vieillissant${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
+  if (level === 'outdated') return `\n- Audit site web : site daté${cmsNote}. Problèmes détectés : ${top.join(' ; ')}.`
+  return `\n- Audit site web : site techniquement correct${cmsNote}.`
+}
+
 function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: string): string {
   const typeMap: Record<string, string> = {
     initial:    'J+0 — Premier contact. Trouve UNE observation ultra-spécifique sur SON business (pas générique). Utilise un mot de tension. CTA permission.',
@@ -228,6 +238,8 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
     : !lead.hasGoogleAds
     ? 'Site existant mais aucune présence publicitaire (Google Ads).'
     : 'Site et ads existants mais sous-performants.'
+
+  const auditContext = buildAuditContext(lead.auditLevel, lead.auditWeaknesses, lead.auditCms)
 
   const sector = (lead.specialty?.[0] || 'artisan du bâtiment').toLowerCase()
   // Vocabulaire/recherches Google adaptés au métier (BtP)
@@ -251,7 +263,7 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
 - Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
 - Google Ads : ${lead.hasGoogleAds ? 'oui' : 'NON'}
 - Bonne réputation Google : ${lead.googleRating && lead.googleRating >= 4.0 ? 'oui' : 'non'}
-- Situation : ${situation}
+- Situation : ${situation}${auditContext}
 
 ADAPTATION MÉTIER (CRITIQUE) : ce prospect est un ${sector}. ${hint}
 Toute mention d'un autre métier (ex: toiture pour un pisciniste) est une faute grave.
@@ -341,13 +353,15 @@ export async function generateSequence(
     .replace(/thomas@hdigiweb\.fr/g, fromEmail)
     .replace(/Thomas Renard/g, fromName)
 
+  const seqAuditContext = buildAuditContext(lead.auditLevel, lead.auditWeaknesses, lead.auditCms)
+
   const userPrompt = `Génère une SÉQUENCE de 4 emails de prospection pour ce prospect, dans le style et les règles ci-dessus, 100% adaptés à son métier.
 
 PROSPECT :
 - Entreprise : ${lead.company}
 - Métier : ${sector} → vocabulaire : ${hint}
 - Ville : ${lead.city}
-- Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
+- Site web : ${lead.hasWebsite ? 'oui' : 'NON'}${seqAuditContext}
 
 Les 4 emails (même fil, sujets cohérents) :
 1. INITIAL (J+0) : observation spécifique + hook + CTA permission.

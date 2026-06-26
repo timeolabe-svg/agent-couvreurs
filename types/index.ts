@@ -34,6 +34,10 @@ export interface Lead {
   specialty: string[]
   hasGoogleAds: boolean
   hasWebsite: boolean
+  auditScore?: number
+  auditLevel?: string
+  auditWeaknesses?: string[]
+  auditCms?: string
   stage: LeadStage
   thread: EmailMessage[]
   rdvDate?: string
