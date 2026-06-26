@@ -136,11 +136,13 @@ export async function GET(request: NextRequest) {
   const replyMap = Object.fromEntries(cityRepliesRaw.map(r => [r.city ?? '', r.cnt]))
   const rdvMap = Object.fromEntries(cityRdvRaw.map(r => [r.city ?? '', r.cnt]))
 
-  const topCities = citySentRaw
-    .filter(r => r.city)
-    .map(r => {
-      const city = r.city ?? ''
-      const sent = r.cnt
+  // Fusionne les villes avec emails envoyés + les villes avec RDV (même si hors top 10 envois)
+  const sentMap = Object.fromEntries(citySentRaw.filter(r => r.city).map(r => [r.city ?? '', r.cnt]))
+  const allCities = new Set([...Object.keys(sentMap), ...Object.keys(rdvMap)])
+
+  const topCities = Array.from(allCities)
+    .map(city => {
+      const sent = sentMap[city] ?? 0
       const cityReplies = replyMap[city] ?? 0
       const cityRdv = rdvMap[city] ?? 0
       return {
@@ -152,11 +154,17 @@ export async function GET(request: NextRequest) {
         revenue: cityRdv * 50,
       }
     })
+    // Trier : RDV d'abord, puis taux de réponse, puis volume envoyé
+    .sort((a, b) => b.rdv - a.rdv || b.replyRate - a.replyRate || b.sent - a.sent)
     .slice(0, 5)
 
-  // Best city
+  // Best city : priorité aux villes avec RDV, sinon meilleur taux de réponse
   const bestCity = topCities.length > 0
-    ? topCities.reduce((best, c) => c.replyRate > best.replyRate ? c : best, topCities[0])
+    ? topCities.reduce((best, c) => {
+        if (c.rdv > best.rdv) return c
+        if (c.rdv === best.rdv && c.replyRate > best.replyRate) return c
+        return best
+      }, topCities[0])
     : null
 
   // Daily activity last 30 days
