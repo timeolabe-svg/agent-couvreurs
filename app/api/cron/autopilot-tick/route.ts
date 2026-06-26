@@ -265,7 +265,12 @@ export async function GET(request: NextRequest) {
 
         let sectorPriorities: Record<string, number> = {}
         if (priorityRow?.value) {
-          try { sectorPriorities = JSON.parse(priorityRow.value) } catch { /* ignore */ }
+          try {
+            sectorPriorities = JSON.parse(priorityRow.value)
+          } catch {
+            console.warn('[autopilot] sector_priority_override JSON invalide, fallback à priorités neutres')
+            sectorPriorities = {}
+          }
         }
 
         // Construire une liste pondérée des SECTOR_QUERIES selon les priorités

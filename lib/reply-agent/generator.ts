@@ -185,5 +185,9 @@ Rédige la réponse. JSON uniquement :
   })
 
   const parsed = extractJson<{ body: string }>(text)
+  if (!parsed?.body || parsed.body.trim().length < 10) {
+    console.error('[generator] Gemini a retourné un body vide ou trop court. Raw:', text.slice(0, 300))
+    throw new Error('Gemini reply body empty')
+  }
   return cleanEmailText(parsed.body)
 }

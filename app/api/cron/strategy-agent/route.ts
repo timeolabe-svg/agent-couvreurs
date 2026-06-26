@@ -161,6 +161,7 @@ Analyse et décide en JSON STRICT (pas de texte avant ou après) :
       maxTokens: 600,
       temperature: 0.3,
     })
+    console.log('[strategy-agent] Gemini raw response:', text.slice(0, 500))
     geminiDecision = extractJson(text)
   } catch (err) {
     console.error('[strategy-agent] Gemini call failed:', err)

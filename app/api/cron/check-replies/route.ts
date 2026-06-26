@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+﻿import { NextRequest, NextResponse } from 'next/server'
 
 // Random delay: 4 to 12 minutes (feels human)
 function randomDelayMs(): number {
@@ -371,10 +371,16 @@ export async function GET(request: NextRequest) {
           .orderBy(sql`${email_queue.sent_at} desc`)
           .limit(1)
 
+        const eaccount = orig?.from_email ?? (process.env.INSTANTLY_INBOXES ?? '').split(',')[0]?.trim()
+        if (!eaccount) {
+          console.error('[check-replies] Aucun eaccount trouvé pour relance', stale.contactId)
+          continue
+        }
+
         await sendReply({
           reply_to_id: stale.instantlyReplyId!,
           body: followUpBody,
-          eaccount: orig?.from_email,
+          eaccount,
           subject: stale.replySubject ?? undefined,
         })
 
@@ -408,6 +414,28 @@ export async function GET(request: NextRequest) {
 
         const contact = contactRows[0] ?? null
 
+        // Auto-créer un contact minimal si l'email n'est pas en base
+        // (prospect contacté via un autre canal ou données manquantes)
+        let resolvedContact = contact
+        if (!resolvedContact && reply.from_address && reply.from_address.includes('@')) {
+          try {
+            const [newContact] = await db.insert(contacts).values({
+              email: reply.from_address,
+              company: reply.from_address.split('@')[1]?.split('.')[0] ?? 'Inconnu',
+              name: null,
+              city: null,
+              sector: 'inconnu',
+              source: 'reply_auto',
+            }).onConflictDoNothing().returning()
+            if (newContact) {
+              resolvedContact = newContact
+              console.log('[check-replies] Contact minimal créé automatiquement:', reply.from_address)
+            }
+          } catch (e) {
+            console.error('[check-replies] Impossible de créer contact minimal:', e)
+          }
+        }
+
         // Look up the most recent sent email for this contact
         let originalEmailBody = ''
         if (contact) {
@@ -418,6 +446,12 @@ export async function GET(request: NextRequest) {
             .orderBy(sql`${email_queue.sent_at} desc`)
             .limit(1)
           originalEmailBody = lastSent?.body ?? ''
+        }
+
+        // Skip silencieusement les réponses sans ID Instantly (structure API inattendue)
+        if (!reply.id || !reply.from_address) {
+          console.warn('[check-replies] Reply sans ID ou adresse ignoré', reply)
+          continue
         }
 
         // 2. Dédoublonnage PERMANENT : si cet email Instantly précis a déjà été
@@ -452,7 +486,7 @@ export async function GET(request: NextRequest) {
         const [insertedReply] = await db
           .insert(incoming_replies)
           .values({
-            contact_id: contact?.id ?? undefined,
+            contact_id: resolvedContact?.id ?? undefined,
             from_email: reply.from_address,
             subject: reply.subject,
             body: reply.body,
@@ -475,11 +509,11 @@ export async function GET(request: NextRequest) {
 
           // CRITIQUE : annuler immédiatement toutes les relances en attente
           // de ce contact. Un opt-out = on arrête tout, relances comprises.
-          if (contact) {
+          if (resolvedContact) {
             const cancelled = await db
               .update(email_queue)
               .set({ status: 'cancelled' })
-              .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
+              .where(and(eq(email_queue.contact_id, resolvedContact.id), eq(email_queue.status, 'pending')))
               .returning({ id: email_queue.id })
             if (cancelled.length > 0) {
               console.log(`[check-replies] Opt-out ${reply.from_address} — ${cancelled.length} relance(s) annulée(s)`)
@@ -492,7 +526,7 @@ export async function GET(request: NextRequest) {
               contactEmail: reply.from_address,
               classification: classification.classification,
               action: 'blocklist',
-              company: contact?.company ?? reply.from_address,
+              company: resolvedContact?.company ?? reply.from_address,
             },
           })
 
@@ -507,7 +541,7 @@ export async function GET(request: NextRequest) {
               contactEmail: reply.from_address,
               classification: classification.classification,
               action: 'no_action',
-              company: contact?.company ?? reply.from_address,
+              company: resolvedContact?.company ?? reply.from_address,
             },
           })
           await markReplyProcessed(reply.id)
@@ -517,11 +551,11 @@ export async function GET(request: NextRequest) {
         // Le prospect engage une vraie conversation (intérêt, question, objection, RDV).
         // On stoppe les relances froides automatiques : le reply-agent prend le relais.
         // (on ne stoppe PAS pour 'oof' = absence : il reviendra, les relances continuent)
-        if (contact && classification.classification !== 'oof') {
+        if (resolvedContact && classification.classification !== 'oof') {
           await db
             .update(email_queue)
             .set({ status: 'cancelled' })
-            .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'pending')))
+            .where(and(eq(email_queue.contact_id, resolvedContact.id), eq(email_queue.status, 'pending')))
         }
 
         // Pour un RDV : on calcule le créneau AVANT de rédiger, pour que l'agent
@@ -529,7 +563,7 @@ export async function GET(request: NextRequest) {
         const isRdv = classification.classification === 'rdv_request'
         const extractedDate = (classification as { extractedDate?: string }).extractedDate
         const phoneMatch = reply.body.match(/0[1-9]([\s. ]?\d{2}){4}/)
-        const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
+        const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (resolvedContact?.phone ?? undefined)
 
         let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
         let parsedDate: Date | null = null
@@ -556,10 +590,10 @@ export async function GET(request: NextRequest) {
           classification: classification.classification,
           originalEmailBody,
           replyBody: reply.body,
-          contactName: contact?.name ?? reply.from_address,
-          contactCompany: contact?.company ?? reply.from_address,
-          contactCity: contact?.city ?? '',
-          contactSector: contact?.sector ?? undefined,
+          contactName: resolvedContact?.name ?? reply.from_address,
+          contactCompany: resolvedContact?.company ?? reply.from_address,
+          contactCity: resolvedContact?.city ?? '',
+          contactSector: resolvedContact?.sector ?? undefined,
           proposedSlot: proposedSlotStr,
           contactPhone: isRdv ? contactPhone : undefined,
         })
@@ -576,8 +610,8 @@ export async function GET(request: NextRequest) {
               originalEmailBody,
               replyBody: reply.body,
               draftBody,
-              contactName: contact?.name ?? reply.from_address,
-              contactCompany: contact?.company ?? reply.from_address,
+              contactName: resolvedContact?.name ?? reply.from_address,
+              contactCompany: resolvedContact?.company ?? reply.from_address,
             })
 
             let googleEventId: string | null = null
@@ -586,7 +620,7 @@ export async function GET(request: NextRequest) {
 
             try {
               const event = await createCalendarEvent({
-                summary: `RDV - ${contact?.company ?? reply.from_address}`,
+                summary: `RDV - ${resolvedContact?.company ?? reply.from_address}`,
                 description: exchangeSummary,
                 startTime: scheduledDate.toISOString(),
                 endTime: endTime.toISOString(),
@@ -607,17 +641,17 @@ export async function GET(request: NextRequest) {
                 : 'Aucune date précisée — prochain créneau disponible sélectionné.'
 
             const [insertedRdv] = await db.insert(rdvTable).values({
-              contact_id: contact?.id ?? undefined,
+              contact_id: resolvedContact?.id ?? undefined,
               incoming_reply_id: insertedReply.id,
               scheduled_at: scheduledDate,
               duration_min: availability.slotDurationMin || 30,
               status: 'confirmed',
               google_event_id: googleEventId,
               google_meet_link: googleMeetLink,
-              notes: `RDV demandé par le prospect. ${slotNote}`,
+              notes: `RDV demandé par le prospect. ${slotNote}${!googleEventId ? ' ⚠️ Sync Google Calendar échouée — à créer manuellement.' : ''}`,
             }).returning()
 
-            if (process.env.STRIPE_SECRET_KEY && insertedRdv) {
+            if (process.env.STRIPE_SECRET_KEY && insertedRdv?.id) {
               try {
                 const { stripe } = await import('@/lib/stripe')
                 const { agent_config } = await import('@/lib/db/schema')
@@ -631,10 +665,10 @@ export async function GET(request: NextRequest) {
                     payment_method: pmRow.value,
                     confirm: true,
                     off_session: true,
-                    description: `RDV Hdigiweb auto — ${contact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
-                    metadata: { rdv_id: insertedRdv.id, contact_company: contact?.company ?? reply.from_address },
+                    description: `RDV Hdigiweb auto — ${resolvedContact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
+                    metadata: { rdv_id: insertedRdv.id, contact_company: resolvedContact?.company ?? reply.from_address },
                   })
-                  console.log('[check-replies] Stripe charge 50€ OK for', contact?.company)
+                  console.log('[check-replies] Stripe charge 50€ OK for', resolvedContact?.company)
                 }
               } catch (stripeErr) {
                 console.error('[check-replies] Stripe charge failed:', stripeErr)
@@ -643,14 +677,14 @@ export async function GET(request: NextRequest) {
 
             // Notification au client : RDV calé (action effectuée, pas une demande)
             await sendRdvNotificationEmail({
-              contactName: contact?.name ?? reply.from_address,
-              contactCompany: contact?.company ?? reply.from_address,
+              contactName: resolvedContact?.name ?? reply.from_address,
+              contactCompany: resolvedContact?.company ?? reply.from_address,
               scheduledAt: scheduledDate,
               googleMeetLink,
               calendarEventUrl,
               exchangeSummary,
-              contactId: contact?.id ?? null,
-              conversationUrl: `${BASE_URL}/conversations?contact=${contact?.id ?? ''}`,
+              contactId: resolvedContact?.id ?? null,
+              conversationUrl: `${BASE_URL}/conversations?contact=${resolvedContact?.id ?? ''}`,
             })
             rdvHandled = true
           } catch (rdvErr) {
@@ -677,8 +711,8 @@ export async function GET(request: NextRequest) {
           // Notifier l'humain (sauf si un RDV a déjà été calé et notifié)
           if (!rdvHandled) {
             await sendNotificationEmail({
-              contactName: contact?.name ?? reply.from_address,
-              contactCompany: contact?.company ?? reply.from_address,
+              contactName: resolvedContact?.name ?? reply.from_address,
+              contactCompany: resolvedContact?.company ?? reply.from_address,
               classification: classification.classification,
               replyBody: reply.body,
               draftBody,
@@ -694,7 +728,7 @@ export async function GET(request: NextRequest) {
             contactEmail: reply.from_address,
             classification: classification.classification,
             action: classification.action,
-            company: contact?.company ?? reply.from_address,
+            company: resolvedContact?.company ?? reply.from_address,
             hasDraft: true,
           },
         })
