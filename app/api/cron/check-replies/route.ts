@@ -130,6 +130,8 @@ async function sendRdvNotificationEmail(params: {
   googleMeetLink: string | null
   calendarEventUrl: string | null
   exchangeSummary: string
+  contactId?: string | null
+  conversationUrl?: string
 }) {
   if (!RESEND_API_KEY) return
 
@@ -157,6 +159,7 @@ async function sendRdvNotificationEmail(params: {
         <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
         ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}
         ${params.calendarEventUrl ? `<p>📆 <a href="${params.calendarEventUrl}">Voir dans Google Calendar</a></p>` : ''}
+        ${params.conversationUrl ? `<p>💬 <a href="${params.conversationUrl}">Voir la conversation complète →</a></p>` : ''}
         <hr/>
         <h3>Résumé de l'échange</h3>
         <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
@@ -326,7 +329,7 @@ export async function GET(request: NextRequest) {
           .select({ id: reply_drafts.id })
           .from(reply_drafts)
           .where(and(eq(reply_drafts.incoming_reply_id, stale.replyId), eq(reply_drafts.status, 'sent')))
-        if (sentCount.length >= 2) continue
+        if (sentCount.length >= 3) continue
 
         // On a déjà envoyé un follow-up dans les 3 derniers jours ? → skip
         const [recentFollowUp] = await db
@@ -646,6 +649,8 @@ export async function GET(request: NextRequest) {
               googleMeetLink,
               calendarEventUrl,
               exchangeSummary,
+              contactId: contact?.id ?? null,
+              conversationUrl: `${BASE_URL}/conversations?contact=${contact?.id ?? ''}`,
             })
             rdvHandled = true
           } catch (rdvErr) {
