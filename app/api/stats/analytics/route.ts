@@ -226,7 +226,7 @@ export async function GET(request: NextRequest) {
     },
     bestCity: bestCity ? { city: bestCity.city, replyRate: bestCity.replyRate, rdv: bestCity.rdv } : null,
     classificationBreakdown,
-    autoRepliesSent: replies,
+    autoRepliesSent: 0, // TODO: compter reply_drafts status='sent' sur la période
     draftsValidated: 0,
     draftsPending: 0,
   })

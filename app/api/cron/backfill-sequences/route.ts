@@ -6,6 +6,9 @@ export const dynamic = 'force-dynamic'
 // Regénère subject2/body2/.../subject4/body4 pour les leads Instantly qui n'ont que subject/body
 
 export async function GET(req: Request) {
+  if (!process.env.CRON_SECRET) {
+    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 })
+  }
   const auth = req.headers.get('authorization')
   if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

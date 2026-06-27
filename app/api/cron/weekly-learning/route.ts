@@ -53,7 +53,7 @@ export async function GET(req: Request) {
       agent_config,
       contacts,
     } = await import('@/lib/db/schema')
-    const { count, gte, and, sql, desc } = await import('drizzle-orm')
+    const { count, gte, and, eq, sql, desc } = await import('drizzle-orm')
 
     const now = new Date()
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
@@ -67,7 +67,7 @@ export async function GET(req: Request) {
       db
         .select({ sent: count() })
         .from(email_queue)
-        .where(and(sql`${email_queue.sent_at} >= ${weekAgo}`)),
+        .where(and(eq(email_queue.status, 'sent'), sql`${email_queue.sent_at} >= ${weekAgo}`)),
       db
         .select({ replies: count() })
         .from(incoming_replies)

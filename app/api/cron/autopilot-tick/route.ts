@@ -548,6 +548,19 @@ export async function GET(request: NextRequest) {
     console.warn('[autopilot] GOOGLE_PLACES_API_KEY manquante — scraping désactivé')
   }
 
+  // ─── ÉTAPE 2b : Purger les emails bloqués en génération depuis > 48h ────────
+  try {
+    const staleThreshold = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    const { lt } = await import('drizzle-orm')
+    await db.update(email_queue)
+      .set({ status: 'failed' })
+      .where(and(
+        eq(email_queue.status, 'pending'),
+        eq(email_queue.subject, '__pending_generation__'),
+        lt(email_queue.created_at!, staleThreshold),
+      ))
+  } catch { /* non-bloquant */ }
+
   // ─── ÉTAPE 3 : Envoi des emails (logique existante) ───────────────────────
   try {
     const activeCampaigns = await db

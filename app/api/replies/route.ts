@@ -15,6 +15,13 @@ export async function GET(request: NextRequest) {
   const limit = Math.min(100, parseInt(searchParams.get('limit') ?? '20', 10))
   const offset = (page - 1) * limit
 
+  // leftJoin → reply_drafts peut être NULL pour les réponses sans brouillon.
+  // On filtre sur la réponse elle-même, pas sur le brouillon (sinon les réponses sans brouillon disparaissent).
+  const { or, isNull } = await import('drizzle-orm')
+  const statusWhere = status === 'all'
+    ? undefined
+    : or(eq(reply_drafts.status, status), isNull(reply_drafts.id))
+
   const rows = await db
     .select({
       reply: incoming_replies,
@@ -24,7 +31,7 @@ export async function GET(request: NextRequest) {
     .from(incoming_replies)
     .leftJoin(reply_drafts, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
     .leftJoin(contacts, eq(contacts.id, incoming_replies.contact_id))
-    .where(and(eq(reply_drafts.status, status)))
+    .where(statusWhere)
     .limit(limit)
     .offset(offset)
 

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     .from(reply_drafts)
     .leftJoin(incoming_replies, eq(incoming_replies.id, reply_drafts.incoming_reply_id))
     .leftJoin(contacts, eq(contacts.id, incoming_replies.contact_id))
-    .where(whereClause ?? and())
+    .where(whereClause)
     .orderBy(reply_drafts.created_at)
 
   const drafts = rows.map((row) => ({

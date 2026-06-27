@@ -329,7 +329,7 @@ export async function GET(request: NextRequest) {
           .select({ id: reply_drafts.id })
           .from(reply_drafts)
           .where(and(eq(reply_drafts.incoming_reply_id, stale.replyId), eq(reply_drafts.status, 'sent')))
-        if (sentCount.length >= 3) continue
+        if (sentCount.length >= 2) continue
 
         // On a déjà envoyé un follow-up dans les 3 derniers jours ? → skip
         const [recentFollowUp] = await db
@@ -438,11 +438,11 @@ export async function GET(request: NextRequest) {
 
         // Look up the most recent sent email for this contact
         let originalEmailBody = ''
-        if (contact) {
+        if (resolvedContact) {
           const [lastSent] = await db
             .select({ body: email_queue.body })
             .from(email_queue)
-            .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'sent')))
+            .where(and(eq(email_queue.contact_id, resolvedContact.id), eq(email_queue.status, 'sent')))
             .orderBy(sql`${email_queue.sent_at} desc`)
             .limit(1)
           originalEmailBody = lastSent?.body ?? ''

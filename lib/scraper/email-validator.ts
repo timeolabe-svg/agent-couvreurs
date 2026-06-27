@@ -183,7 +183,7 @@ interface MillionVerifierResponse {
 async function checkMillionVerifier(
   email: string
 ): Promise<{ valid: boolean; confidence: number } | null> {
-  const apiKey = process.env.MILLIONVERIFIER_API_KEY
+  const apiKey = process.env.MILLION_VERIFIER_API_KEY
   if (!apiKey) return null
 
   try {
