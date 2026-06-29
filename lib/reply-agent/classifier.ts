@@ -155,6 +155,29 @@ function isAutoResponder(body: string, subject: string, fromEmail: string): bool
   return autoPatterns.some(p => p.test(text))
 }
 
+// Détecte les plaintes "mail vide / je n'ai rien reçu" AVANT Gemini.
+// Ces messages n'ont aucune valeur commerciale → spam/no_action immédiat.
+function isEmptyEmailComplaint(body: string, subject: string): boolean {
+  const text = (body + ' ' + subject).toLowerCase()
+  const patterns = [
+    /n'ai (rien|pas|aucun|aucune) re[çc]u/,             // "je n'ai rien reçu", "je n'ai pas reçu"
+    /pas re[çc]u (votre|le|ce|cet|un|mon|de) ?(mail|message|email|document|courrier|fichier)/,
+    /mail (vide|vierge|sans contenu|sans message|sans rien)/,
+    /message (vide|vierge|sans contenu|sans rien)/,
+    /email (vide|vierge|sans contenu|sans rien)/,
+    /pas (de|de\s+)contenu/,
+    /aucun (contenu|texte|message|fichier|document)/,
+    /ne contient (rien|aucun|pas de|ni)/,               // "mail qui ne contient ni message ni fichier"
+    /(pi[eè]ce|fichier|document) (jointe?|attach[eé]e?|manquant|absent|oubli[eé])/,
+    /sans (pi[eè]ce|fichier|document|pj\b)/,
+    /oubli[eé]\s*(la|une|votre|de)?\s*(pi[eè]ce|pj|fichier|document)/,
+    /\bpj\b.*manqu/,
+    /pas joint/,
+    /rien attach[eé]/,
+  ]
+  return patterns.some(p => p.test(text))
+}
+
 // Detect opt-out without calling Claude (saves credits + faster)
 function isOptOut(body: string, subject: string): boolean {
   const text = (body + ' ' + subject).toLowerCase().trim()
@@ -189,6 +212,16 @@ export async function classifyReply(params: {
       action: 'no_action',
       confidence: 98,
       reasoning: 'Réponse automatique détectée (accusé de réception / absence / bot) — ignorée, pas de brouillon.',
+    }
+  }
+
+  // Plainte "mail vide / je n'ai rien reçu" → spam/no_action immédiat
+  if (isEmptyEmailComplaint(cleanBody, params.replySubject)) {
+    return {
+      classification: 'spam',
+      action: 'no_action',
+      confidence: 97,
+      reasoning: 'Plainte "mail vide / je n\'ai rien reçu" détectée — confusion sans valeur commerciale, aucune réponse générée.',
     }
   }
 

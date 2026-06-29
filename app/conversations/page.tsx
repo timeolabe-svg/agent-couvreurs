@@ -45,7 +45,7 @@ type Tab = 'positive' | 'negative' | 'pending'
 
 // Range une conversation dans un des 3 onglets selon sa classification
 function bucketOf(cls: string | null): Tab {
-  if (cls === 'interest' || cls === 'rdv_request' || cls === 'question') return 'positive'
+  if (cls === 'interest' || cls === 'rdv_request') return 'positive'
   if (cls === 'desinterest') return 'negative'
   return 'pending' // objection, oof, spam, other, non classé
 }
