@@ -5,16 +5,9 @@ export const dynamic = 'force-dynamic'
 // One-shot : reclasse en base les vieilles réponses "mail vide / rien reçu"
 // mal classées par Gemini (interest/question) → spam/no_action, et annule
 // les brouillons encore en attente pour que l'agent arrête de répondre.
-// Usage : GET /api/admin/reclassify?secret=<CRON_SECRET>
-export async function GET(request: NextRequest) {
-  if (!process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 })
-  }
-  const secret = request.nextUrl.searchParams.get('secret')
-  const auth = request.headers.get('authorization')
-  if (secret !== process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+// Auth : protégé par le middleware (proxy.ts) → il faut être connecté au
+// dashboard. Aucun secret nécessaire. Usage : ouvrir l'URL dans le navigateur.
+export async function GET(_request: NextRequest) {
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }
