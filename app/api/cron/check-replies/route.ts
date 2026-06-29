@@ -209,6 +209,11 @@ async function sendNotificationEmail(params: {
   })
 }
 
+// Normalise un corps de message pour comparer deux réponses (dédup contenu).
+function normalizeBody(s: string): string {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
 export async function GET(request: NextRequest) {
   if (!process.env.CRON_SECRET) {
     return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 })
@@ -229,6 +234,46 @@ export async function GET(request: NextRequest) {
   const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
   const { classifyReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+
+  // Construit l'historique chronologique complet d'une conversation pour un contact :
+  // emails envoyés + relances + messages reçus + réponses de l'agent déjà envoyées.
+  // CRITIQUE : sans ça l'IA ne voit pas ses propres réponses et répète le même pitch.
+  async function buildHistory(contactId: string): Promise<Array<{ role: 'sent' | 'received'; body: string; date: string }>> {
+    const { eq: eqOp } = await import('drizzle-orm')
+    const items: Array<{ role: 'sent' | 'received'; body: string; ts: number }> = []
+    try {
+      // Emails de prospection envoyés
+      const sentEmails = await db
+        .select({ body: email_queue.body, sentAt: email_queue.sent_at })
+        .from(email_queue)
+        .where(and(eqOp(email_queue.contact_id, contactId), eqOp(email_queue.status, 'sent')))
+      for (const e of sentEmails) {
+        if (e.body) items.push({ role: 'sent', body: e.body, ts: e.sentAt ? new Date(e.sentAt).getTime() : 0 })
+      }
+      // Messages reçus du prospect
+      const received = await db
+        .select({ body: incoming_replies.body, createdAt: incoming_replies.created_at })
+        .from(incoming_replies)
+        .where(eqOp(incoming_replies.contact_id, contactId))
+      for (const r of received) {
+        if (r.body) items.push({ role: 'received', body: r.body, ts: r.createdAt ? new Date(r.createdAt).getTime() : 0 })
+      }
+      // Réponses de l'agent déjà envoyées (drafts status=sent) — l'IA DOIT les voir
+      const agentReplies = await db
+        .select({ body: reply_drafts.body, sentAt: reply_drafts.sent_at, replyContact: incoming_replies.contact_id })
+        .from(reply_drafts)
+        .innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
+        .where(and(eqOp(incoming_replies.contact_id, contactId), eqOp(reply_drafts.status, 'sent')))
+      for (const a of agentReplies) {
+        if (a.body) items.push({ role: 'sent', body: a.body, ts: a.sentAt ? new Date(a.sentAt).getTime() : 0 })
+      }
+    } catch (e) {
+      console.error('[check-replies] buildHistory error', e)
+    }
+    return items
+      .sort((x, y) => x.ts - y.ts)
+      .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+  }
 
   let processed = 0
   let drafts = 0
@@ -351,8 +396,9 @@ export async function GET(request: NextRequest) {
         const [isBlocked] = await db.select({ id: blocklist.id }).from(blocklist).where(eq(blocklist.email, contact.email)).limit(1)
         if (isBlocked) continue
 
-        // Générer la relance
+        // Générer la relance — AVEC l'historique pour ne pas répéter le pitch précédent
         const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+        const followUpHistory = await buildHistory(stale.contactId)
         const followUpBody = await generateReplyResponse({
           classification: stale.classification as import('@/lib/reply-agent/classifier').ReplyClassification,
           originalEmailBody: '',
@@ -361,6 +407,8 @@ export async function GET(request: NextRequest) {
           contactCompany: contact.company,
           contactCity: contact.city ?? '',
           contactSector: contact.sector ?? undefined,
+          conversationHistory: followUpHistory,
+          isFollowUp: true,
         })
 
         // Retrouver la boîte expéditrice
@@ -464,6 +512,23 @@ export async function GET(request: NextRequest) {
             .where(eq(incoming_replies.instantly_reply_id, reply.id))
             .limit(1)
           if (already.length > 0) continue
+        }
+
+        // 2b. Dédup par CONTENU : le même message peut revenir avec un ID Instantly
+        //     différent (multi-inbox). Si ce contact a déjà un message reçu identique,
+        //     on saute → évite de répondre 2x au même message (bug 11:30 + 11:31).
+        if (resolvedContact) {
+          const recent = await db
+            .select({ body: incoming_replies.body })
+            .from(incoming_replies)
+            .where(eq(incoming_replies.contact_id, resolvedContact.id))
+            .orderBy(sql`${incoming_replies.created_at} desc`)
+            .limit(10)
+          const norm = normalizeBody(reply.body)
+          if (norm && recent.some(r => normalizeBody(r.body ?? '') === norm)) {
+            console.log(`[check-replies] Doublon contenu ignoré : ${reply.from_address}`)
+            continue
+          }
         }
 
         // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais)
@@ -585,6 +650,10 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        // Historique complet (emails envoyés + reçus + réponses agent passées)
+        // → l'IA voit ce qu'elle a déjà dit et ne se répète plus.
+        const history = resolvedContact ? await buildHistory(resolvedContact.id) : undefined
+
         // auto_reply or draft_for_validation — generate draft (confirme le créneau si RDV)
         const draftBody = await generateReplyResponse({
           classification: classification.classification,
@@ -594,6 +663,7 @@ export async function GET(request: NextRequest) {
           contactCompany: resolvedContact?.company ?? reply.from_address,
           contactCity: resolvedContact?.city ?? '',
           contactSector: resolvedContact?.sector ?? undefined,
+          conversationHistory: history,
           proposedSlot: proposedSlotStr,
           contactPhone: isRdv ? contactPhone : undefined,
         })

@@ -116,6 +116,7 @@ export async function generateReplyResponse(params: {
   conversationHistory?: Array<{ role: 'sent' | 'received'; body: string; date: string }>
   proposedSlot?: string   // créneau déjà réservé à confirmer (ex: "mardi 24 juin à 17h00")
   contactPhone?: string   // numéro donné par le prospect pour le rappel
+  isFollowUp?: boolean    // true = relance (le prospect n'a pas répondu à notre dernière réponse)
 }): Promise<string> {
   const historyBlock =
     params.conversationHistory && params.conversationHistory.length > 0
@@ -156,13 +157,30 @@ Confirme CE créneau précis dans ta réponse (ex: "Parfait, je vous appelle ${p
 Laisse une porte de sortie courte ("si ça ne vous convient pas, dites-moi un autre moment"). Ne redemande PAS une disponibilité ouverte puisque le créneau est posé.`
     : ''
 
+  const antiRepeatBlock = `
+=== RÈGLE ANTI-RÉPÉTITION (ABSOLUE) ===
+Lis attentivement l'HISTORIQUE ci-dessus, en particulier TES propres messages déjà envoyés (role "Envoyé").
+INTERDIT de répéter un argument, une phrase ou une question que tu as DÉJÀ utilisé. En particulier :
+- Ne redis PAS "le premier mois est offert" si tu l'as déjà dit.
+- Ne repose PAS "quand vous dites trop cher, c'est par rapport à quoi ?" si déjà posé.
+- Ne répète PAS la même proposition de RDV/échange formulée pareil.
+Chaque message doit FAIRE AVANCER la conversation : nouvel angle, nouvelle info concrète, ou prise de congé polie si le prospect ne répond plus.
+Si tu as déjà tout dit et que le prospect reste silencieux ou campe sur sa position, fais un message TRÈS court et différent (relance légère ou ouverture pour plus tard), pas un énième pavé identique.`
+
+  const followUpBlock = params.isFollowUp
+    ? `\n=== CONTEXTE RELANCE ===
+Le prospect n'a PAS répondu à ta dernière réponse. C'est une relance, pas une nouvelle objection à traiter.
+Sois bref (2-3 lignes), change d'angle, ne reformule pas ton argumentaire précédent. Une seule question simple ou une ouverture pour rester en contact.`
+    : ''
+
   const userPrompt = `Context :
 - Classification : ${params.classification}
 - Entreprise : ${params.contactCompany}, ${params.contactCity}
 - Métier du prospect : ${params.contactSector || 'artisan BtP'} (ADAPTE tout le vocabulaire à ce métier, ne parle pas de toiture si ce n'est pas un couvreur)
 - Prénom prospect : ${params.contactName}
-- Historique de conversation :
+- Historique de conversation (du plus ancien au plus récent) :
 ${historyBlock}
+${antiRepeatBlock}${followUpBlock}
 
 Email original envoyé :
 ${params.originalEmailBody}
