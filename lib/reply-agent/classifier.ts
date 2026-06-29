@@ -157,7 +157,7 @@ function isAutoResponder(body: string, subject: string, fromEmail: string): bool
 
 // Détecte les plaintes "mail vide / je n'ai rien reçu" AVANT Gemini.
 // Ces messages n'ont aucune valeur commerciale → spam/no_action immédiat.
-function isEmptyEmailComplaint(body: string, subject: string): boolean {
+export function isEmptyEmailComplaint(body: string, subject = ''): boolean {
   const text = (body + ' ' + subject).toLowerCase()
   const patterns = [
     /n'ai (rien|pas|aucun|aucune) re[çc]u/,             // "je n'ai rien reçu", "je n'ai pas reçu"

@@ -20,7 +20,7 @@ export async function GET() {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
     const { inArray, desc, ne, isNull, or } = await import('drizzle-orm')
-    const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
+    const { stripQuotedReply, isEmptyEmailComplaint } = await import('@/lib/reply-agent/classifier')
 
     // 1. Réponses reçues — on EXCLUT le spam et les réponses automatiques (bots,
     //    accusés de réception) : on ne montre que les vraies conversations.
@@ -146,11 +146,18 @@ export async function GET() {
     }
 
     // Trie les messages par date dans chaque conversation + calcule lastDate
-    const conversations = [...groups.values()].map(g => {
-      g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-      g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
-      return g
-    })
+    const conversations = [...groups.values()]
+      // Filtre RÉTROACTIF : les vieux leads mal classés par Gemini (plaintes
+      // "mail vide / rien reçu") sont exclus même si stockés en interest/question.
+      .filter(g => {
+        const lastReceived = [...g.messages].reverse().find(m => m.role === 'received')
+        return !(lastReceived && isEmptyEmailComplaint(lastReceived.body, ''))
+      })
+      .map(g => {
+        g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
+        return g
+      })
     conversations.sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime())
 
     return NextResponse.json({ conversations })
