@@ -54,6 +54,21 @@ function minutesOfDay(date: Date): number {
   return date.getHours() * 60 + date.getMinutes()
 }
 
+// CRITIQUE — sur Vercel le serveur tourne en UTC. Tout le calcul de créneau doit
+// se faire en heure de Paris, sinon un créneau "14h" devient 16h (été) côté prospect.
+// Retourne une Date dont les champs locaux (getHours/getDate/getDay) correspondent
+// à l'heure murale de Paris de l'instant `d`.
+export function toParisWallClock(d: Date = new Date()): Date {
+  return new Date(d.toLocaleString('en-US', { timeZone: 'Europe/Paris' }))
+}
+
+// Formate une Date (déjà en heure murale Paris via toParisWallClock) en ISO LOCAL
+// SANS suffixe Z, à passer à Google Agenda avec timeZone:'Europe/Paris'.
+export function toNaiveParisISO(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00`
+}
+
 export async function getAvailability(): Promise<Availability> {
   try {
     if (!process.env.DATABASE_URL) return DEFAULT_AVAILABILITY
@@ -110,8 +125,8 @@ export function findNextAvailableSlot(
   availability: Availability
 ): Date {
   const candidate = preferredDate ? new Date(preferredDate) : (() => {
-    // Start from next working day at 10:00
-    const d = new Date()
+    // Start from next working day at 10:00 (heure de Paris)
+    const d = toParisWallClock()
     d.setDate(d.getDate() + 1)
     d.setHours(10, 0, 0, 0)
     return d
@@ -154,8 +169,8 @@ export function findNextAvailableSlot(
     candidate.setHours(9, 0, 0, 0)
   }
 
-  // Fallback: next weekday at 10:00
-  const fallback = new Date()
+  // Fallback: next weekday at 10:00 (heure de Paris)
+  const fallback = toParisWallClock()
   fallback.setDate(fallback.getDate() + 1)
   fallback.setHours(10, 0, 0, 0)
   return fallback

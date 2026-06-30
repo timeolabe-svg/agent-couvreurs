@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
+import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
 
 // Random delay: 4 to 12 minutes (feels human)
 function randomDelayMs(): number {
@@ -35,7 +36,9 @@ function parseExtractedDate(dateStr: string): Date | null {
   const direct = new Date(dateStr)
   if (!isNaN(direct.getTime()) && direct.getFullYear() > 2020) return direct
 
-  const now = new Date()
+  // CRITIQUE : raisonner en heure de Paris (serveur Vercel = UTC) sinon "demain 14h"
+  // devient 16h côté prospect.
+  const now = toParisWallClock()
   const lower = dateStr.toLowerCase()
 
   // Expressions relatives FR : "fin de journée", "ce soir", "aujourd'hui", "demain"
@@ -453,6 +456,12 @@ export async function GET(request: NextRequest) {
 
     for (const reply of replies) {
       try {
+        // CRITIQUE — normaliser l'email en minuscules pour TOUTES les opérations DB
+        // (lookup contact, blocklist, opt-out). Instantly renvoie parfois une casse
+        // mixte ; sans ça un "Stop" peut être ignoré (opt-out RGPD non respecté).
+        reply.from_address = (reply.from_address ?? '').trim().toLowerCase()
+        reply.lead_email = (reply.lead_email ?? '').trim().toLowerCase()
+
         // 1. Find contact by email
         const contactRows = await db
           .select()
@@ -547,7 +556,9 @@ export async function GET(request: NextRequest) {
           fromEmail: reply.from_address,
         })
 
-        // 4. Insert into incoming_replies
+        // 4. Insert into incoming_replies — onConflictDoNothing sur instantly_reply_id :
+        //    si deux crons concurrents passent le SELECT de dédup en même temps, la
+        //    contrainte UNIQUE (à créer en base) empêche le doublon et returning() est vide.
         const [insertedReply] = await db
           .insert(incoming_replies)
           .values({
@@ -560,7 +571,14 @@ export async function GET(request: NextRequest) {
             instantly_reply_id: reply.id,
             processed_at: new Date(),
           })
+          .onConflictDoNothing({ target: incoming_replies.instantly_reply_id })
           .returning()
+
+        // Doublon (course concurrente) → on saute, rien à traiter.
+        if (!insertedReply) {
+          console.log(`[check-replies] Doublon concurrent ignoré : ${reply.from_address}`)
+          continue
+        }
 
         processed++
 
@@ -692,14 +710,21 @@ export async function GET(request: NextRequest) {
               const event = await createCalendarEvent({
                 summary: `RDV - ${resolvedContact?.company ?? reply.from_address}`,
                 description: exchangeSummary,
-                startTime: scheduledDate.toISOString(),
-                endTime: endTime.toISOString(),
+                // ISO LOCAL Paris (sans Z) — scheduledDate porte déjà l'heure murale Paris.
+                startTime: toNaiveParisISO(scheduledDate),
+                endTime: toNaiveParisISO(endTime),
                 attendeeEmail: reply.from_address,
                 meetLink: true,
               })
-              googleEventId = event.eventId
-              googleMeetLink = event.meetLink
-              calendarEventUrl = event.eventUrl
+              // Un event "mock_" = variables Google manquantes → PAS un vrai RDV.
+              // On ne le considère pas comme calé (sinon RDV fantôme + facturation à tort).
+              if (event.eventId && !event.eventId.startsWith('mock_')) {
+                googleEventId = event.eventId
+                googleMeetLink = event.meetLink
+                calendarEventUrl = event.eventUrl
+              } else {
+                console.warn('[check-replies] Google Calendar non configuré (mock) — RDV non calé, pas de facturation')
+              }
             } catch (calErr) {
               console.error('[check-replies] Google Calendar error:', calErr)
             }
@@ -721,7 +746,10 @@ export async function GET(request: NextRequest) {
               notes: `RDV demandé par le prospect. ${slotNote}${!googleEventId ? ' ⚠️ Sync Google Calendar échouée — à créer manuellement.' : ''}`,
             }).returning()
 
-            if (process.env.STRIPE_SECRET_KEY && insertedRdv?.id) {
+            // Facturation : UNIQUEMENT si un VRAI RDV Google a été calé (pas un mock),
+            // et avec une clé d'idempotence = id du RDV (re-traiter le même RDV ne
+            // refacture jamais le client). Pas de vrai event → pas de facturation.
+            if (process.env.STRIPE_SECRET_KEY && insertedRdv?.id && googleEventId) {
               try {
                 const { stripe } = await import('@/lib/stripe')
                 const { agent_config } = await import('@/lib/db/schema')
@@ -737,7 +765,7 @@ export async function GET(request: NextRequest) {
                     off_session: true,
                     description: `RDV Hdigiweb auto — ${resolvedContact?.company ?? reply.from_address} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
                     metadata: { rdv_id: insertedRdv.id, contact_company: resolvedContact?.company ?? reply.from_address },
-                  })
+                  }, { idempotencyKey: `rdv-charge-${insertedRdv.id}` })
                   console.log('[check-replies] Stripe charge 50€ OK for', resolvedContact?.company)
                 }
               } catch (stripeErr) {

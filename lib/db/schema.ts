@@ -8,6 +8,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // contacts — prospects scraped or imported
@@ -92,6 +93,9 @@ export const incoming_replies = pgTable('incoming_replies', {
 }, (table) => ({
   fromEmailCreatedIdx: index('ir_from_email_created_idx').on(table.from_email, table.created_at),
   contactIdx: index('ir_contact_idx').on(table.contact_id),
+  // Dédup permanente : un même email Instantly ne peut être inséré qu'une fois
+  // (protège contre les crons concurrents). Migration SQL à appliquer en base.
+  instantlyReplyIdUq: uniqueIndex('ir_instantly_reply_id_uq').on(table.instantly_reply_id),
 }))
 
 // reply_drafts — AI-generated drafts waiting for human validation

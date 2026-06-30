@@ -5,9 +5,10 @@ export const dynamic = 'force-dynamic'
 // One-shot : reclasse en base les vieilles réponses "mail vide / rien reçu"
 // mal classées par Gemini (interest/question) → spam/no_action, et annule
 // les brouillons encore en attente pour que l'agent arrête de répondre.
-// Auth : protégé par le middleware (proxy.ts) → il faut être connecté au
-// dashboard. Aucun secret nécessaire. Usage : ouvrir l'URL dans le navigateur.
-export async function GET(_request: NextRequest) {
+// Auth : protégé par le middleware (proxy.ts) → il faut être connecté au dashboard.
+// METHODE POST uniquement : une mutation via GET serait vulnérable au CSRF
+// (un lien piégé cliqué par un utilisateur connecté déclencherait l'écriture).
+export async function POST(_request: NextRequest) {
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }
