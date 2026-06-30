@@ -667,7 +667,30 @@ export async function GET(request: NextRequest) {
               emails = tpl ? [{ subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) }] : []
             }
           }
-          return emails.length ? { queue, contact, inbox, emails } : null
+
+          // CRITIQUE — garantir EXACTEMENT 4 emails NON VIDES.
+          // Le template Instantly a 4 étapes ({{body}}..{{body4}}). Si une relance
+          // manque ou a un body vide, Instantly envoie un mail VIDE au prospect.
+          // On comble chaque trou par le template officiel (jamais de vide).
+          const tplVars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
+          const isValid = (e?: { subject: string; body: string }) =>
+            Boolean(e && e.body && e.body.trim().length >= 20 && e.subject && e.subject.trim().length > 0)
+          const filled: Array<{ subject: string; body: string }> = []
+          for (let i = 0; i < 4; i++) {
+            if (isValid(emails[i])) {
+              filled.push(emails[i])
+            } else {
+              const tpl = getSequenceStep(i)
+              if (tpl) filled.push({ subject: renderTemplate(tpl.subject, tplVars), body: renderTemplate(tpl.body, tplVars) })
+            }
+          }
+          // L'email INITIAL doit absolument être valide, sinon on n'envoie pas
+          // (le lead reste pending et sera retenté au prochain tick).
+          if (!isValid(filled[0])) {
+            console.warn(`[autopilot-tick] Email initial vide pour ${contact.email} — lead gardé pending`)
+            return null
+          }
+          return { queue, contact, inbox, emails: filled }
         } catch (e) {
           console.error('[autopilot-tick] prep error', contact.email, e)
           return null

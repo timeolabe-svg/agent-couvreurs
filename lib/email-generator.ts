@@ -414,11 +414,16 @@ Réponds en JSON uniquement :
   })
 
   const parsed = extractJson<{ emails: Array<{ subject: string; body: string }> }>(text)
-  const emails = (parsed.emails ?? []).slice(0, 4).map(e => ({
-    subject: cleanEmailText(e.subject ?? ''),
-    body: cleanEmailText(e.body ?? ''),
-  }))
-  if (emails.length === 0) throw new Error('generateSequence: aucune email générée')
+  const emails = (parsed.emails ?? [])
+    .slice(0, 4)
+    .map(e => ({
+      subject: cleanEmailText(e.subject ?? ''),
+      body: cleanEmailText(e.body ?? ''),
+    }))
+    // CRITIQUE : on rejette tout email au body vide/trop court — sinon Instantly
+    // envoie un mail VIDE au prospect (cause des plaintes "je n'ai rien reçu").
+    .filter(e => e.body.trim().length >= 20 && e.subject.trim().length > 0)
+  if (emails.length === 0) throw new Error('generateSequence: aucun email valide généré (bodies vides)')
   return emails
 }
 
