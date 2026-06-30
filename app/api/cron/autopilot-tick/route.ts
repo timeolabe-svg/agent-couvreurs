@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkCronAuth } from '@/lib/cron-auth'
 
 const EMAILS_PER_CAMPAIGN_PER_TICK = 8 // génération parallèle → reste rapide, atteint 168/jour
 
 // Ramp schedule : emails par boîte par jour selon les semaines écoulées
-// L'agent monte tout seul — met aussi à jour Instantly automatiquement
+// L'agent monte tout seul — met aussi à jour Instantly automatiquement.
+// Les boîtes sont déjà chauffées (2-3 semaines) → on vise 35/boîte/jour rapidement.
 const RAMP_SCHEDULE = [
-  { weekStart: 0, weekEnd: 2,  perInbox: 8  },  // S1-S2
-  { weekStart: 2, weekEnd: 4,  perInbox: 16 },  // S3-S4
-  { weekStart: 4, weekEnd: 6,  perInbox: 24 },  // S5-S6
-  { weekStart: 6, weekEnd: 8,  perInbox: 30 },  // S7-S8
-  { weekStart: 8, weekEnd: 999, perInbox: 42 },  // S9+ — régime de croisière
+  { weekStart: 0, weekEnd: 1,  perInbox: 15 },  // S1
+  { weekStart: 1, weekEnd: 2,  perInbox: 25 },  // S2
+  { weekStart: 2, weekEnd: 999, perInbox: 35 }, // S3+ — régime de croisière (cible client)
 ]
 
 function getInboxCount(): number {
@@ -121,13 +121,8 @@ const OCCITANIE_CITIES = [
 ]
 
 export async function GET(request: NextRequest) {
-  if (!process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 })
-  }
-  const auth = request.headers.get('authorization')
-  if (auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const cronAuth = checkCronAuth(request)
+  if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
 
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })

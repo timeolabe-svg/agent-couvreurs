@@ -44,34 +44,24 @@ function getInboxesFromEnv(): InboxAccount[] {
   }))
 }
 
-async function getRotationIndex(): Promise<number> {
-  try {
-    const { db } = await import('@/lib/db')
-    const { agent_config } = await import('@/lib/db/schema')
-    const { eq } = await import('drizzle-orm')
-    const [row] = await db.select().from(agent_config).where(eq(agent_config.key, ROTATION_KEY))
-    return row ? parseInt(row.value, 10) || 0 : 0
-  } catch (err) {
-    console.warn('[inbox-rotation] Failed to read rotation index from DB:', err)
-    return 0
-  }
-}
-
-async function saveRotationIndex(index: number): Promise<void> {
-  try {
-    const { db } = await import('@/lib/db')
-    const { agent_config } = await import('@/lib/db/schema')
-    const { eq } = await import('drizzle-orm')
-    await db
-      .insert(agent_config)
-      .values({ key: ROTATION_KEY, value: String(index), updated_by: 'inbox_rotation' })
-      .onConflictDoUpdate({
-        target: agent_config.key,
-        set: { value: String(index), updated_at: new Date(), updated_by: 'inbox_rotation' },
-      })
-  } catch (err) {
-    console.warn('[inbox-rotation] Failed to save rotation index to DB (non-blocking):', err)
-  }
+// Incrément ATOMIQUE du compteur de rotation (anti-race) : un seul UPDATE ... RETURNING.
+// CRITIQUE : getNextInbox est appelé en PARALLÈLE (Promise.all) → l'ancienne version
+// lecture-puis-écriture donnait la MÊME boîte à plusieurs leads dans un même tick.
+// Ici Postgres verrouille la ligne par appel → chaque appel reçoit un index distinct.
+async function nextRotationValue(): Promise<number> {
+  const { db } = await import('@/lib/db')
+  const { sql } = await import('drizzle-orm')
+  const res = await db.execute(sql`
+    INSERT INTO agent_config (key, value, updated_by)
+    VALUES (${ROTATION_KEY}, '1', 'inbox_rotation')
+    ON CONFLICT (key) DO UPDATE
+      SET value = (COALESCE(NULLIF(agent_config.value, '')::int, 0) + 1)::text,
+          updated_at = now(),
+          updated_by = 'inbox_rotation'
+    RETURNING value
+  `)
+  const rows = (Array.isArray(res) ? res : (res as unknown as { rows?: Array<{ value?: string }> }).rows) ?? []
+  return parseInt(rows[0]?.value ?? '1', 10) || 1
 }
 
 export async function getNextInbox(): Promise<InboxAccount> {
@@ -85,14 +75,17 @@ export async function getNextInbox(): Promise<InboxAccount> {
     inboxes = await getInboxesFromInstantly()
     if (inboxes.length === 0) inboxes = getInboxesFromEnv()
   }
+  const len = inboxes.length || 1
 
-  const currentIndex = await getRotationIndex()
-  const selected = inboxes[currentIndex % inboxes.length]
-  const nextIndex = currentIndex + 1
+  let idx = 0
+  try {
+    const newVal = await nextRotationValue()
+    idx = (newVal - 1) % len  // newVal=1 au 1er appel → index 0
+  } catch (err) {
+    console.warn('[inbox-rotation] Compteur atomique indisponible, fallback index 0:', err)
+  }
 
-  // Persist next index (non-blocking — failure doesn't stop sending)
-  await saveRotationIndex(nextIndex)
-
-  console.log(`[inbox-rotation] Selected inbox ${selected.email} (index ${currentIndex % inboxes.length} of ${inboxes.length})`)
+  const selected = inboxes[idx]
+  console.log(`[inbox-rotation] Selected inbox ${selected.email} (index ${idx} of ${len})`)
   return selected
 }
