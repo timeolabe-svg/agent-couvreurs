@@ -2,6 +2,38 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+// GET = DRY-RUN en lecture seule (aucune modification) : permet de voir le nombre
+// de contacts éligibles en ouvrant simplement l'URL dans le navigateur (connecté).
+export async function GET() {
+  return countEligible()
+}
+
+async function countEligible() {
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
+  }
+  const { db } = await import('@/lib/db')
+  const { email_queue, contacts, blocklist, incoming_replies } = await import('@/lib/db/schema')
+  const { eq, and, sql, notInArray } = await import('drizzle-orm')
+
+  const eligible = await db
+    .select({ email: contacts.email, company: contacts.company })
+    .from(email_queue)
+    .innerJoin(contacts, eq(email_queue.contact_id, contacts.id))
+    .where(and(
+      eq(email_queue.status, 'sent'),
+      notInArray(contacts.email, db.select({ e: blocklist.email }).from(blocklist)),
+      notInArray(contacts.id, db.select({ c: incoming_replies.contact_id }).from(incoming_replies).where(sql`${incoming_replies.contact_id} is not null`)),
+    ))
+
+  return NextResponse.json({
+    dryRun: true,
+    message: 'DRY-RUN (lecture seule). Pour relancer, POST {"confirm":true,"limit":20}.',
+    eligibleCount: eligible.length,
+    samples: eligible.slice(0, 10).map(e => `${e.company} <${e.email}>`),
+  })
+}
+
 // Re-contacte proprement les contacts qui ont reçu un email avec l'ANCIEN code bugué
 // (mails vides / relances vides). On remet leur file en 'pending' → l'autopilot
 // régénère des emails CORRECTS et les renvoie progressivement (35/boîte/jour).
