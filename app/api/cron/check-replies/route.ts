@@ -588,7 +588,10 @@ export async function GET(request: NextRequest) {
             instantly_reply_id: reply.id,
             processed_at: new Date(),
           })
-          .onConflictDoNothing({ target: incoming_replies.instantly_reply_id })
+          // Sans cible explicite : valide MÊME si la contrainte unique n'est pas
+          // encore créée en base (ne plantera pas). Une fois l'index unique ajouté
+          // (migration-audit.sql), la dédup anti-doublon devient effective.
+          .onConflictDoNothing()
           .returning()
 
         // Doublon (course concurrente) → on saute, rien à traiter.
