@@ -1,6 +1,19 @@
 ﻿export function formatDistanceToNow(date: Date): string {
   const now = new Date()
   const diff = now.getTime() - date.getTime()
+
+  // Date dans le FUTUR (ex: RDV à venir, relance programmée) → "dans X"
+  if (diff < 0) {
+    const m = Math.floor(-diff / 60000)
+    const h = Math.floor(-diff / 3600000)
+    const d = Math.floor(-diff / 86400000)
+    if (m < 1) return "à l'instant"
+    if (m < 60) return `dans ${m} min`
+    if (h < 24) return `dans ${h}h`
+    if (d === 1) return 'demain'
+    return `dans ${d}j`
+  }
+
   const minutes = Math.floor(diff / 60000)
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)

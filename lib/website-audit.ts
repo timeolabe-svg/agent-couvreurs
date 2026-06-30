@@ -50,11 +50,11 @@ async function checkSSL(url: string): Promise<boolean> {
   try {
     const normalized = url.startsWith('http') ? url : `https://${url}`
     const httpsUrl = normalized.replace(/^http:\/\//, 'https://')
-    const res = await fetch(httpsUrl, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(4000),
-    })
-    return res.ok
+    // GET (pas HEAD) : beaucoup de serveurs renvoient 405 sur HEAD → faux "pas de HTTPS".
+    // Si la requête HTTPS aboutit SANS erreur TLS (quel que soit le code HTTP),
+    // c'est que le HTTPS est supporté. Seule une erreur réseau/TLS = pas de HTTPS.
+    await fetch(httpsUrl, { method: 'GET', signal: AbortSignal.timeout(4000) })
+    return true
   } catch {
     return false
   }
@@ -62,13 +62,15 @@ async function checkSSL(url: string): Promise<boolean> {
 
 function detectCMS(html: string): string | null {
   const h = html.toLowerCase()
+  // Marqueurs SPÉCIFIQUES (assets/CDN) pour éviter les faux positifs : un simple lien
+  // sortant vers shopify.com ne fait pas du prospect un site Shopify.
   if (h.includes('wp-content') || h.includes('wp-includes')) return 'WordPress'
-  if (h.includes('wix.com') || h.includes('wixstatic')) return 'Wix'
-  if (h.includes('squarespace') || h.includes('squarespace-cdn')) return 'Squarespace'
-  if (h.includes('shopify') || h.includes('myshopify')) return 'Shopify'
-  if (h.includes('webflow.com') || h.includes('webflow.io')) return 'Webflow'
-  if (h.includes('joomla')) return 'Joomla'
-  if (h.includes('next.js') || h.includes('__next')) return 'Next.js'
+  if (h.includes('wixstatic') || h.includes('static.wixstatic')) return 'Wix'
+  if (h.includes('squarespace-cdn') || h.includes('static1.squarespace')) return 'Squarespace'
+  if (h.includes('cdn.shopify.com') || h.includes('myshopify')) return 'Shopify'
+  if (h.includes('assets.website-files.com') || h.includes('webflow.io')) return 'Webflow'
+  if (h.includes('/joomla/') || h.includes('com_content')) return 'Joomla'
+  if (h.includes('/_next/') || h.includes('__next_data__')) return 'Next.js'
   return null
 }
 
@@ -111,11 +113,14 @@ function detectAbandoned(html: string, url: string): string[] {
   const issues: string[] = []
   const h = html.toLowerCase()
   const currentYear = new Date().getFullYear()
-  // Copyright year check
-  const copyrightMatch = html.match(/copyright[^0-9]*(\d{4})/i) ?? html.match(/©\s*(\d{4})/i)
+  // Copyright year check — fenêtre courte après "copyright"/"©" et année plausible
+  // (sinon on capte un SIRET, un numéro de tél, une date au hasard dans le footer).
+  const copyrightMatch = html.match(/copyright[^0-9]{0,12}(20\d{2})/i) ?? html.match(/©[^0-9]{0,8}(20\d{2})/i)
   if (copyrightMatch) {
     const year = parseInt(copyrightMatch[1])
-    if (currentYear - year >= 4) issues.push(`copyright ${year} (site probablement non mis à jour depuis ${currentYear - year} ans)`)
+    if (year >= 2000 && year <= currentYear && currentYear - year >= 4) {
+      issues.push(`copyright ${year} (site probablement non mis à jour depuis ${currentYear - year} ans)`)
+    }
   }
   if (h.includes('lorem ipsum')) issues.push('contenu Lorem Ipsum détecté (site factice ou non finalisé)')
   if (h.includes('coming soon') || h.includes('bientôt disponible') || h.includes('en construction')) issues.push('page "en construction" ou "coming soon"')

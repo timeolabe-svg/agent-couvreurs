@@ -66,8 +66,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { email_queue, incoming_replies, rdv, contacts, blocklist } = await import('@/lib/db/schema')
-  const { count, eq, gte, and, sql } = await import('drizzle-orm')
+  const { email_queue, incoming_replies, rdv, contacts, blocklist, reply_drafts } = await import('@/lib/db/schema')
+  const { count, eq, ne, gte, and, inArray, sql } = await import('drizzle-orm')
 
   const now = new Date()
   let periodStart: Date | null = null
@@ -87,25 +87,37 @@ export async function GET(request: NextRequest) {
     ? gte(incoming_replies.created_at, periodStart)
     : undefined
 
-  const rdvConditions = periodStart
-    ? gte(rdv.created_at, periodStart)
-    : undefined
+  // RDV : on EXCLUT les annulés (sinon CA gonflé par des RDV qui n'ont pas eu lieu)
+  const rdvConditions = and(
+    ne(rdv.status, 'cancelled'),
+    periodStart ? gte(rdv.created_at, periodStart) : undefined,
+  )
 
   const [
     [{ emailsSent }],
     [{ replies }],
     [{ rdvCount }],
     [{ optouts }],
+    [{ bounces }],
   ] = await Promise.all([
     db.select({ emailsSent: count() }).from(email_queue).where(emailConditions),
-    db.select({ replies: count() }).from(incoming_replies).where(replyConditions),
+    // replies = nombre de PROSPECTS distincts ayant répondu (pas le total de messages,
+    // sinon un prospect bavard fait exploser le taux de réponse au-delà de 100%).
+    db.select({ replies: sql<number>`count(distinct ${incoming_replies.contact_id})` }).from(incoming_replies).where(replyConditions),
     db.select({ rdvCount: count() }).from(rdv).where(rdvConditions),
-    db.select({ optouts: count() }).from(blocklist).where(
-      periodStart ? gte(blocklist.created_at, periodStart) : undefined
-    ),
+    // opt-outs = vraies désinscriptions seulement (pas les bounces ni ajouts manuels)
+    db.select({ optouts: count() }).from(blocklist).where(and(
+      inArray(blocklist.reason, ['unsubscribe', 'desinterest']),
+      periodStart ? gte(blocklist.created_at, periodStart) : undefined,
+    )),
+    // bounces = emails rejetés (adresse morte)
+    db.select({ bounces: count() }).from(email_queue).where(and(
+      eq(email_queue.status, 'bounced'),
+      periodStart ? gte(email_queue.sent_at, periodStart) : undefined,
+    )),
   ])
 
-  const replyRate = emailsSent > 0 ? +(replies / emailsSent * 100).toFixed(1) : 0
+  const replyRate = emailsSent > 0 ? +(Math.min(replies, emailsSent) / emailsSent * 100).toFixed(1) : 0
   const revenue = rdvCount * 50
   const conversionRate = emailsSent > 0 ? +(rdvCount / emailsSent * 100).toFixed(2) : 0
 
@@ -120,7 +132,7 @@ export async function GET(request: NextRequest) {
     .limit(10)
 
   const cityRepliesRaw = await db
-    .select({ city: contacts.city, cnt: count() })
+    .select({ city: contacts.city, cnt: sql<number>`count(distinct ${incoming_replies.contact_id})` })
     .from(incoming_replies)
     .innerJoin(contacts, eq(incoming_replies.contact_id, contacts.id))
     .where(replyConditions)
@@ -194,6 +206,18 @@ export async function GET(request: NextRequest) {
   // Pipeline
   const [{ totalContacts }] = await db.select({ totalContacts: count() }).from(contacts)
 
+  // Réponses auto envoyées / brouillons (sur la période quand applicable)
+  const [
+    [{ autoRepliesSent }],
+    [{ draftsPending }],
+  ] = await Promise.all([
+    db.select({ autoRepliesSent: count() }).from(reply_drafts).where(and(
+      eq(reply_drafts.status, 'sent'),
+      periodStart ? gte(reply_drafts.sent_at, periodStart) : undefined,
+    )),
+    db.select({ draftsPending: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
+  ])
+
   // Classification breakdown
   const classificationRaw = await db
     .select({ classification: incoming_replies.classification, cnt: count() })
@@ -212,7 +236,7 @@ export async function GET(request: NextRequest) {
     replies,
     replyRate,
     optouts,
-    bounces: 0, // bounced emails not tracked separately yet
+    bounces,
     rdvCount,
     revenue,
     conversionRate,
@@ -226,8 +250,8 @@ export async function GET(request: NextRequest) {
     },
     bestCity: bestCity ? { city: bestCity.city, replyRate: bestCity.replyRate, rdv: bestCity.rdv } : null,
     classificationBreakdown,
-    autoRepliesSent: 0, // TODO: compter reply_drafts status='sent' sur la période
-    draftsValidated: 0,
-    draftsPending: 0,
+    autoRepliesSent,
+    draftsValidated: autoRepliesSent,
+    draftsPending,
   })
 }

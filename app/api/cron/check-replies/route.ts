@@ -8,19 +8,34 @@ function randomDelayMs(): number {
 }
 
 // Filtre warmup Instantly : les faux échanges sont en anglais.
-// Les vrais prospects (couvreurs FR) répondent en français.
+// CRITIQUE — on ne doit JAMAIS jeter un vrai prospect. On TRAITE par défaut
+// (mieux vaut un faux warmup traité qu'un lead chaud perdu = un RDV perdu).
+// On ne saute QUE si le message ressemble clairement à du warmup anglais :
+// plusieurs mots anglais ET aucun signal français/téléphone.
 function isLikelyFrench(text: string): boolean {
   const lower = text.toLowerCase()
-  // Présence de caractères accentués français → forcément français
+
+  // Signaux FORTS de vrai prospect FR → toujours traiter
   if (/[àâéèêëîïôùûüçœæ]/.test(lower)) return true
-  // Mots français courants
+  if (/0[1-9]([\s.]?\d{2}){4}/.test(text)) return true // numéro de téléphone FR
   const frenchWords = [
-    'bonjour', 'merci', 'vous', 'nous', 'pour', 'avec', 'salut',
-    'cordialement', 'madame', 'monsieur', 'bonne', 'votre', 'notre',
-    'bien', 'aussi', 'mais', 'comme', 'dans', 'alors', 'donc',
-    'oui', 'non', 'devis', 'travaux', 'toiture', 'couverture',
+    'bonjour', 'merci', 'vous', 'nous', 'pour', 'avec', 'salut', 'rappel',
+    'cordialement', 'madame', 'monsieur', 'bonne', 'votre', 'notre', 'appel',
+    'bien', 'aussi', 'mais', 'comme', 'dans', 'alors', 'donc', 'rdv',
+    'oui', 'non', 'devis', 'travaux', 'toiture', 'couverture', 'site', 'prix',
   ]
-  return frenchWords.some(w => lower.includes(w))
+  if (frenchWords.some(w => lower.includes(w))) return true
+
+  // Message très court (≤ 4 mots) sans signal anglais → on traite (ex: "ok", "0612...", un nom)
+  const wordCount = lower.trim().split(/\s+/).filter(Boolean).length
+  if (wordCount <= 4) return true
+
+  // Sinon : warmup anglais probable seulement si ≥ 2 mots anglais typiques du warmup
+  const englishMarkers = ['the', 'please', 'meeting', 'regards', 'thanks', 'thank you',
+    'let me know', 'schedule', 'available', 'hello', 'hi ', 'looking forward', 'best ', 'great ']
+  const englishHits = englishMarkers.filter(w => lower.includes(w)).length
+  // Pas assez de signal anglais → dans le doute, on TRAITE (ne pas perdre de lead)
+  return englishHits < 2
 }
 
 // Peut contenir plusieurs adresses séparées par des virgules → tableau pour Resend
@@ -257,14 +272,20 @@ export async function GET(request: NextRequest) {
       for (const r of received) {
         if (r.body) items.push({ role: 'received', body: r.body, ts: r.createdAt ? new Date(r.createdAt).getTime() : 0 })
       }
-      // Réponses de l'agent déjà envoyées (drafts status=sent) — l'IA DOIT les voir
+      // Réponses de l'agent : envoyées MAIS AUSSI programmées/en attente — sinon, dans
+      // la fenêtre de 4-12 min avant envoi, l'IA ne voit pas ce qu'elle va dire et répète.
+      const { inArray: inArrayOp } = await import('drizzle-orm')
       const agentReplies = await db
-        .select({ body: reply_drafts.body, sentAt: reply_drafts.sent_at, replyContact: incoming_replies.contact_id })
+        .select({ body: reply_drafts.body, sentAt: reply_drafts.sent_at, createdAt: reply_drafts.created_at })
         .from(reply_drafts)
         .innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
-        .where(and(eqOp(incoming_replies.contact_id, contactId), eqOp(reply_drafts.status, 'sent')))
+        .where(and(
+          eqOp(incoming_replies.contact_id, contactId),
+          inArrayOp(reply_drafts.status, ['sent', 'scheduled', 'pending']),
+        ))
       for (const a of agentReplies) {
-        if (a.body) items.push({ role: 'sent', body: a.body, ts: a.sentAt ? new Date(a.sentAt).getTime() : 0 })
+        const ts = a.sentAt ? new Date(a.sentAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
+        if (a.body) items.push({ role: 'sent', body: a.body, ts })
       }
     } catch (e) {
       console.error('[check-replies] buildHistory error', e)
