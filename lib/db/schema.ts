@@ -70,6 +70,7 @@ export const email_queue = pgTable('email_queue', {
   opened_at: timestamp('opened_at'),
   replied_at: timestamp('replied_at'),
   instantly_email_id: text('instantly_email_id'),
+  variant_id: text('variant_id'), // variante d'angle testée (auto-apprentissage)
   created_at: timestamp('created_at').defaultNow(),
 }, (table) => ({
   statusScheduledIdx: index('eq_status_scheduled_idx').on(table.status, table.scheduled_at),

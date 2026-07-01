@@ -213,6 +213,7 @@ export async function generateSequence(
   lead: Lead,
   fromEmail: string,
   fromName: string,
+  variantInstruction?: string, // angle d'ouverture testé (auto-apprentissage)
 ): Promise<Array<{ subject: string; body: string }>> {
   let dynamicAddon = ''
   if (process.env.DATABASE_URL) {
@@ -244,7 +245,11 @@ export async function generateSequence(
 
   const seqAuditContext = buildAuditContext(lead.auditLevel, lead.auditWeaknesses, lead.auditCms)
 
-  const userPrompt = `Génère une SÉQUENCE de 4 emails de prospection pour ce prospect, dans le style COURT et SIMPLE décrit ci-dessus, 100% adaptés à son métier.
+  const variantBlock = variantInstruction
+    ? `\n\nANGLE D'OUVERTURE À UTILISER POUR L'EMAIL 1 (on teste cet angle) : ${variantInstruction}`
+    : ''
+
+  const userPrompt = `Génère une SÉQUENCE de 4 emails de prospection pour ce prospect, dans le style COURT et SIMPLE décrit ci-dessus, 100% adaptés à son métier.${variantBlock}
 
 PROSPECT :
 - Entreprise : ${lead.company}

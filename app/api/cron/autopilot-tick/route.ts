@@ -673,6 +673,10 @@ export async function GET(request: NextRequest) {
         candidates.push(row)
       }
 
+      // Poids des variantes d'angle (auto-apprentissage) — lus une fois par tick.
+      const { MESSAGE_VARIANTS, VARIANT_IDS, WEIGHTS_KEYS, weightedPick, getWeights } = await import('@/lib/experiments')
+      const variantWeights = await getWeights(WEIGHTS_KEYS.variant)
+
       // 2. Générer la SÉQUENCE COMPLÈTE (4 emails adaptés au métier) par lead, en parallèle.
       //    1 appel IA par lead → tous les emails (initial + relances) sont sur-mesure et par secteur.
       const prepared = await Promise.all(candidates.map(async ({ queue, contact }) => {
@@ -694,9 +698,13 @@ export async function GET(request: NextRequest) {
             createdAt: contact.created_at?.toISOString() ?? new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),
           }
+          // Tire une variante d'angle pondérée (l'agent teste et favorise les gagnantes).
+          const variantId = weightedPick(VARIANT_IDS, variantWeights)
+          const variantInstruction = MESSAGE_VARIANTS.find(v => v.id === variantId)?.instruction
+
           let emails: Array<{ subject: string; body: string }> = []
           try {
-            emails = await generateSequence(lead, inbox.email, inbox.senderName)
+            emails = await generateSequence(lead, inbox.email, inbox.senderName, variantInstruction)
           } catch {
             // Repli : email initial seul (sector-aware), sinon template
             try {
@@ -730,7 +738,7 @@ export async function GET(request: NextRequest) {
             console.warn(`[autopilot-tick] Email initial vide pour ${contact.email} — lead gardé pending`)
             return null
           }
-          return { queue, contact, inbox, emails: filled }
+          return { queue, contact, inbox, emails: filled, variantId }
         } catch (e) {
           console.error('[autopilot-tick] prep error', contact.email, e)
           return null
@@ -742,7 +750,7 @@ export async function GET(request: NextRequest) {
       for (const item of prepared) {
         if (!item || item.emails.length === 0) continue
         if (sent >= remainingCapacity) break
-        const { queue, contact, inbox, emails } = item
+        const { queue, contact, inbox, emails, variantId } = item
         try {
           const cv: Record<string, string> = { city: contact.city ?? '', sector: contact.sector ?? '' }
           emails.forEach((e, i) => {
@@ -762,7 +770,7 @@ export async function GET(request: NextRequest) {
             },
           ])
           await db.update(email_queue)
-            .set({ status: 'sent', sent_at: new Date(), subject: emails[0].subject, body: emails[0].body, from_email: inbox.email })
+            .set({ status: 'sent', sent_at: new Date(), subject: emails[0].subject, body: emails[0].body, from_email: inbox.email, variant_id: variantId })
             .where(eq(email_queue.id, queue.id))
           await db.insert(dashboard_events).values({
             type: 'email_sent',

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
-import { SECTOR_QUERIES, CITIES } from '@/lib/scrape-targets'
+import { SECTOR_QUERIES, SECTORS, REGIONS, CITIES_BY_REGION } from '@/lib/scrape-targets'
+import { WEIGHTS_KEYS, weightedPick, getWeights } from '@/lib/experiments'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -24,7 +25,7 @@ export async function GET(req: Request) {
 
   const started = Date.now()
   const { db } = await import('@/lib/db')
-  const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
+  const { contacts, campaigns, email_queue, blocklist } = await import('@/lib/db/schema')
   const { eq } = await import('drizzle-orm')
   const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
 
@@ -32,18 +33,17 @@ export async function GET(req: Request) {
   const [activeCampaign] = await db.select().from(campaigns).where(eq(campaigns.status, 'active')).limit(1)
   if (!activeCampaign) return NextResponse.json({ skipped: true, reason: 'aucune campagne active' })
 
-  // Rotation combo (secteur × ville) via un compteur en base.
-  const TOTAL_COMBOS = SECTOR_QUERIES.length * CITIES.length
-  const [comboRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'scrape_combo_index'))
-  const combo = (parseInt(comboRow?.value ?? '0', 10) || 0) % TOTAL_COMBOS
-  const queryDef = SECTOR_QUERIES[combo % SECTOR_QUERIES.length]
-  const cityIndex = Math.floor(combo / SECTOR_QUERIES.length) % CITIES.length
-  const city = CITIES[cityIndex]
-
-  // Avance l'index pour le prochain passage (round-robin sur tout le marché).
-  await db.insert(agent_config)
-    .values({ key: 'scrape_combo_index', value: String(combo + 1), updated_by: 'scrape-leads' })
-    .onConflictDoUpdate({ target: agent_config.key, set: { value: String(combo + 1), updated_at: new Date() } })
+  // SÉLECTION PONDÉRÉE (auto-apprentissage) : l'agent scrape davantage les secteurs
+  // et régions qui répondent le mieux, tout en continuant d'explorer les autres
+  // (plancher de poids). Puis terme + ville tirés au hasard dans le secteur/région choisis.
+  const sectorWeights = await getWeights(WEIGHTS_KEYS.sector)
+  const regionWeights = await getWeights(WEIGHTS_KEYS.region)
+  const sector = weightedPick(SECTORS, sectorWeights)
+  const region = weightedPick(REGIONS, regionWeights)
+  const termsForSector = SECTOR_QUERIES.filter(q => q.sector === sector)
+  const queryDef = termsForSector[Math.floor(Math.random() * termsForSector.length)] ?? SECTOR_QUERIES[0]
+  const citiesInRegion = CITIES_BY_REGION[region] ?? []
+  const city = citiesInRegion[Math.floor(Math.random() * citiesInRegion.length)] ?? 'Paris'
 
   let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
   try {
@@ -121,9 +121,9 @@ export async function GET(req: Request) {
   }
 
   return NextResponse.json({
-    combo,
     sector: queryDef.sector,
     term: queryDef.term,
+    region,
     city,
     scraped: rawLeads.length,
     inserted,
