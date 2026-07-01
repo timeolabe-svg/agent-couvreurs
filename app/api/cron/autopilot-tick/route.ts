@@ -255,7 +255,24 @@ export async function GET(request: NextRequest) {
 
       const pendingCount = Number(pendingCountResult?.count ?? 0)
 
-      if (pendingCount < MIN_PIPELINE_LEADS) {
+      // THROTTLE scraping : au plus une fois toutes les 2h. Le scraping (Google Places
+      // + MillionVerifier) est lent ; le faire à chaque tick faisait timeout la fonction
+      // et bloquait l'ENVOI. En throttlant, la plupart des ticks ne font que l'envoi (rapide).
+      let scrapeThrottled = false
+      try {
+        const [lastScrapeRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'last_scrape_at'))
+        if (lastScrapeRow?.value) {
+          const ageMs = Date.now() - new Date(lastScrapeRow.value).getTime()
+          if (ageMs < 2 * 60 * 60 * 1000) scrapeThrottled = true // < 2h → on saute le scraping
+        }
+      } catch { /* non bloquant */ }
+
+      if (pendingCount < MIN_PIPELINE_LEADS && !scrapeThrottled) {
+        // Marque tout de suite l'horodatage pour throttler les prochains ticks
+        await db.insert(agent_config)
+          .values({ key: 'last_scrape_at', value: new Date().toISOString() })
+          .onConflictDoUpdate({ target: agent_config.key, set: { value: new Date().toISOString(), updated_at: new Date() } })
+
         // Lire sector_priority_override pour pondérer le choix des combos
         const [priorityRow] = await db
           .select({ value: agent_config.value })
