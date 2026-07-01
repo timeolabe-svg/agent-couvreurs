@@ -615,7 +615,11 @@ export async function GET(request: NextRequest) {
           and(
             eq(email_queue.campaign_id, campaign.id),
             eq(email_queue.status, 'pending'),
-            lte(email_queue.scheduled_at!, now)
+            lte(email_queue.scheduled_at!, now),
+            // GARANTIE QUALITÉ : on n'envoie QUE des contacts déjà audités.
+            // Les non-audités attendent que le cron audit-sites les traite → l'IA
+            // aura toujours un vrai défaut à citer, jamais de mail générique.
+            eq(contacts.audit_done, true),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)
