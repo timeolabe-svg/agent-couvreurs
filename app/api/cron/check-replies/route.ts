@@ -48,9 +48,10 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY
 // Helper: parse a French date string into a real Date
 // ---------------------------------------------------------------------------
 function parseExtractedDate(dateStr: string): Date | null {
-  // Try direct parse first
+  // Try direct parse first (ISO). On le ramène en heure murale Paris pour rester
+  // cohérent avec le reste de la fonction (sinon un ISO parsé en UTC décalerait le RDV).
   const direct = new Date(dateStr)
-  if (!isNaN(direct.getTime()) && direct.getFullYear() > 2020) return direct
+  if (!isNaN(direct.getTime()) && direct.getFullYear() > 2020) return toParisWallClock(direct)
 
   // CRITIQUE : raisonner en heure de Paris (serveur Vercel = UTC) sinon "demain 14h"
   // devient 16h côté prospect.
@@ -246,7 +247,7 @@ export async function GET(request: NextRequest) {
   const { eq, and, sql } = await import('drizzle-orm')
   const { lte: lteOp } = await import('drizzle-orm')
   const { getInstantlyReplies, markReplyProcessed, sendReply } = await import('@/lib/instantly/client')
-  const { classifyReply } = await import('@/lib/reply-agent/classifier')
+  const { classifyReply, stripQuotedReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
 
   // Construit l'historique chronologique complet d'une conversation pour un contact :
@@ -540,6 +541,11 @@ export async function GET(request: NextRequest) {
           if (already.length > 0) continue
         }
 
+        // Texte RÉEL du prospect, sans l'historique cité (notre email d'origine en
+        // français). Sert au filtre langue, à la dédup contenu, à l'extraction du
+        // téléphone et à la génération — pas au stockage (on garde le brut en base).
+        const cleanBody = stripQuotedReply(reply.body) || reply.body
+
         // 2b. Dédup par CONTENU : le même message peut revenir avec un ID Instantly
         //     différent (multi-inbox). Si ce contact a déjà un message reçu identique,
         //     on saute → évite de répondre 2x au même message (bug 11:30 + 11:31).
@@ -550,22 +556,23 @@ export async function GET(request: NextRequest) {
             .where(eq(incoming_replies.contact_id, resolvedContact.id))
             .orderBy(sql`${incoming_replies.created_at} desc`)
             .limit(10)
-          const norm = normalizeBody(reply.body)
-          if (norm && recent.some(r => normalizeBody(r.body ?? '') === norm)) {
+          const norm = normalizeBody(cleanBody)
+          if (norm && recent.some(r => normalizeBody(stripQuotedReply(r.body ?? '') || r.body || '') === norm)) {
             console.log(`[check-replies] Doublon contenu ignoré : ${reply.from_address}`)
             continue
           }
         }
 
-        // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais)
-        if (!isLikelyFrench(reply.body + ' ' + reply.subject)) {
+        // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais).
+        //    Sur le texte réel du prospect, sinon notre email cité (FR) fausse tout.
+        if (!isLikelyFrench(cleanBody + ' ' + reply.subject)) {
           console.log(`[check-replies] Warmup ignoré (anglais) : ${reply.from_address}`)
           continue
         }
 
         // 4. Classify with AI
         const classification = await classifyReply({
-          replyBody: reply.body,
+          replyBody: cleanBody,
           replySubject: reply.subject,
           originalEmailBody,
           contactName: contact?.name ?? reply.from_address,
@@ -665,7 +672,7 @@ export async function GET(request: NextRequest) {
         // confirme une date/heure précise ET qu'on cale exactement le même créneau.
         const isRdv = classification.classification === 'rdv_request'
         const extractedDate = (classification as { extractedDate?: string }).extractedDate
-        const phoneMatch = reply.body.match(/0[1-9]([\s. ]?\d{2}){4}/)
+        const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
         const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (resolvedContact?.phone ?? undefined)
 
         let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
@@ -696,7 +703,7 @@ export async function GET(request: NextRequest) {
         const draftBody = await generateReplyResponse({
           classification: classification.classification,
           originalEmailBody,
-          replyBody: reply.body,
+          replyBody: cleanBody,
           contactName: resolvedContact?.name ?? reply.from_address,
           contactCompany: resolvedContact?.company ?? reply.from_address,
           contactCity: resolvedContact?.city ?? '',
@@ -716,7 +723,7 @@ export async function GET(request: NextRequest) {
 
             const exchangeSummary = buildExchangeSummary({
               originalEmailBody,
-              replyBody: reply.body,
+              replyBody: cleanBody,
               draftBody,
               contactName: resolvedContact?.name ?? reply.from_address,
               contactCompany: resolvedContact?.company ?? reply.from_address,
@@ -832,7 +839,7 @@ export async function GET(request: NextRequest) {
               contactName: resolvedContact?.name ?? reply.from_address,
               contactCompany: resolvedContact?.company ?? reply.from_address,
               classification: classification.classification,
-              replyBody: reply.body,
+              replyBody: cleanBody,
               draftBody,
             })
           }

@@ -14,10 +14,7 @@ export const dynamic = 'force-dynamic'
 //
 // USAGE (ouvrir l'URL dans le navigateur, connecté) :
 //  - Voir le nombre éligible (aucune modif) :  /api/admin/resend-broken
-//  - Relancer réellement N contacts          :  /api/admin/resend-broken?go=RELANCE&limit=20
-//    (le token ?go=RELANCE évite un déclenchement accidentel / CSRF)
-
-const CONFIRM_TOKEN = 'RELANCE'
+//  - Relancer réellement N contacts          :  POST { confirm:true, limit:N }
 
 async function selectEligible(limit: number | null) {
   const { db } = await import('@/lib/db')
@@ -73,24 +70,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }
 
-  const go = request.nextUrl.searchParams.get('go')
-  const limitParam = request.nextUrl.searchParams.get('limit')
-  const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 0, 1), 600) : 20
-
-  // Sans token ?go=RELANCE → DRY-RUN (lecture seule, rien modifié)
-  if (go !== CONFIRM_TOKEN) {
-    const eligible = await selectEligible(null)
-    return NextResponse.json({
-      dryRun: true,
-      message: `DRY-RUN (lecture seule). Pour relancer ${limit} contacts, ajoute ?go=RELANCE&limit=${limit} à l'URL.`,
-      eligibleCount: eligible.length,
-      samples: eligible.slice(0, 10).map(e => `${e.company} <${e.email}>`),
-    })
-  }
-
-  // Avec token → relance réelle
-  const result = await doReset(limit)
-  return NextResponse.json({ dryRun: false, ...result })
+  // GET = DRY-RUN en LECTURE SEULE uniquement (aucune mutation → pas de vecteur CSRF).
+  // Pour relancer réellement, utiliser POST { confirm:true, limit:N }.
+  const eligible = await selectEligible(null)
+  return NextResponse.json({
+    dryRun: true,
+    message: 'DRY-RUN (lecture seule). Pour relancer : POST {"confirm":true,"limit":N}.',
+    eligibleCount: eligible.length,
+    samples: eligible.slice(0, 10).map(e => `${e.company} <${e.email}>`),
+  })
 }
 
 // POST conservé (équivalent), pour un usage programmatique.
