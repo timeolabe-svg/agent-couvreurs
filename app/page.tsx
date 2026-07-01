@@ -408,7 +408,7 @@ export default function DashboardPage() {
           {learning ? (
             <div>
               <p style={{ fontSize: 13, lineHeight: 1.7, color: '#c4b5fd', marginBottom: 16 }}>
-                Cette semaine, l&apos;agent a envoyé {learning.emails_sent ?? 0} emails avec un taux de réponse de {((learning.reply_rate ?? 0) * 100).toFixed(1)}% et généré {learning.rdv_count ?? 0} RDV.
+                Sur la période, l&apos;agent a envoyé {learning.emails_sent ?? 0} emails avec un taux de réponse de {(learning.reply_rate ?? 0).toFixed(1)}% et généré {learning.rdv_count ?? 0} RDV.
               </p>
 
               {/* Top actions */}
