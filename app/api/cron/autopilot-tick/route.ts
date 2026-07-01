@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 
+// Laisse Vercel exécuter jusqu'à 60s (le scraping + génération peut dépasser 30s).
+// Sans ça, la fonction était coupée et n'envoyait pas les emails.
+export const maxDuration = 60
+
 const EMAILS_PER_CAMPAIGN_PER_TICK = 8 // génération parallèle → reste rapide, atteint 168/jour
 
 // Ramp schedule : emails par boîte par jour selon les semaines écoulées
@@ -23,7 +27,7 @@ function getDailyCapacity(weeksElapsed: number): number {
   return step.perInbox * getInboxCount()
 }
 const MIN_PIPELINE_LEADS = 80    // scrape quand il reste moins de X leads en attente
-const SCRAPE_BATCH_SIZE = 20     // leads par requête
+const SCRAPE_BATCH_SIZE = 12     // leads par requête (réduit pour tenir sous le timeout)
 
 // Secteurs ciblés (BtP) + termes de recherche par secteur. Priorité Gabin :
 // couvreurs, terrassiers, piscinistes. Facile d'ajouter d'autres métiers BtP.
