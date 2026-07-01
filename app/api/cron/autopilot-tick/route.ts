@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
-  const { eq, and, gte, lte, sql } = await import('drizzle-orm')
+  const { eq, and, or, gte, lte, sql } = await import('drizzle-orm')
   const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
@@ -624,10 +624,13 @@ export async function GET(request: NextRequest) {
             // Les non-audités attendent que le cron audit-sites les traite → l'IA
             // aura toujours un vrai défaut à citer, jamais de mail générique.
             eq(contacts.audit_done, true),
-            // GARANTIE DÉLIVRABILITÉ : on n'envoie QU'aux emails vérifiés par
-            // MillionVerifier (email_validated=true). Les autres restent en stock
-            // jusqu'à validation → plus jamais de bounce "adresse introuvable".
-            eq(contacts.email_validated, true),
+            // GARANTIE DÉLIVRABILITÉ : on envoie si l'email est SÛR (email cliquable
+            // publié sur leur site, confiance >= 90) OU validé par MillionVerifier.
+            // Les emails INCERTAINS (préfixe deviné) attendent MV → pas de bounce.
+            or(
+              gte(contacts.email_confidence_score, 90),
+              eq(contacts.email_validated, true),
+            ),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)
