@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
 
-// Laisse Vercel exécuter jusqu'à 60s (le scraping + génération peut dépasser 30s).
-// Sans ça, la fonction était coupée et n'envoyait pas les emails.
+// Laisse Vercel exécuter jusqu'à 60s (la génération de plusieurs séquences peut être longue).
 export const maxDuration = 60
+
+// Le scraping est désormais géré par le cron DÉDIÉ /api/cron/scrape-leads (découplé).
+// autopilot-tick ne fait plus que L'ENVOI → rapide, jamais de timeout.
+// (Réactivable via AUTOPILOT_SCRAPING=true si besoin de secours.)
+const SCRAPING_IN_AUTOPILOT = process.env.AUTOPILOT_SCRAPING === 'true'
 
 const EMAILS_PER_CAMPAIGN_PER_TICK = 8 // génération parallèle → reste rapide, atteint 168/jour
 
@@ -240,8 +244,8 @@ export async function GET(request: NextRequest) {
     console.error('[autopilot] Erreur vérification campagne :', err)
   }
 
-  // ─── ÉTAPE 2 : Scraping autonome si pipeline faible ───────────────────────
-  if (activeCampaignId && process.env.GOOGLE_PLACES_API_KEY) {
+  // ─── ÉTAPE 2 : Scraping — DÉSACTIVÉ ici (délégué au cron scrape-leads) ─────
+  if (SCRAPING_IN_AUTOPILOT && activeCampaignId && process.env.GOOGLE_PLACES_API_KEY) {
     try {
       // Compter les leads en attente
       const [pendingCountResult] = await db
