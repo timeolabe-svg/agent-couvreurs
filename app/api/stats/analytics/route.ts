@@ -101,9 +101,12 @@ export async function GET(request: NextRequest) {
     [{ bounces }],
   ] = await Promise.all([
     db.select({ emailsSent: count() }).from(email_queue).where(emailConditions),
-    // replies = nombre de PROSPECTS distincts ayant répondu (pas le total de messages,
-    // sinon un prospect bavard fait exploser le taux de réponse au-delà de 100%).
-    db.select({ replies: sql<number>`count(distinct ${incoming_replies.contact_id})` }).from(incoming_replies).where(replyConditions),
+    // replies = PROSPECTS distincts ayant fait une VRAIE réponse (on exclut le spam et
+    // les auto-réponses/absences, ex : les vieilles plaintes "mail vide").
+    db.select({ replies: sql<number>`count(distinct ${incoming_replies.contact_id})` }).from(incoming_replies).where(and(
+      replyConditions,
+      sql`(${incoming_replies.classification} is null or ${incoming_replies.classification} not in ('spam','oof'))`,
+    )),
     db.select({ rdvCount: count() }).from(rdv).where(rdvConditions),
     // opt-outs = vraies désinscriptions seulement (pas les bounces ni ajouts manuels)
     db.select({ optouts: count() }).from(blocklist).where(and(
