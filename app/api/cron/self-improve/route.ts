@@ -86,20 +86,40 @@ export async function GET(req: Request) {
   const now = new Date()
   const periodStart = new Date(now.getTime() - PERIOD_DAYS * 24 * 60 * 60 * 1000)
 
-  // 1. Tous les emails envoyés sur la période, avec leur variante + secteur + ville.
+  // 1. Tous les emails envoyés sur la période, avec leur variante + secteur + ville + DATE.
   const sentRows = await db
-    .select({ variant: email_queue.variant_id, contactId: email_queue.contact_id, sector: contacts.sector, city: contacts.city })
+    .select({ variant: email_queue.variant_id, contactId: email_queue.contact_id, sector: contacts.sector, city: contacts.city, sentAt: email_queue.sent_at })
     .from(email_queue)
     .innerJoin(contacts, eq(email_queue.contact_id, contacts.id))
     .where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, periodStart)))
 
-  // 2. Contacts qui ont RÉPONDU, et contacts avec un RDV (non annulé).
-  const repliedRows = await db.selectDistinct({ id: incoming_replies.contact_id }).from(incoming_replies).where(isNotNull(incoming_replies.contact_id))
-  const rdvRows = await db.selectDistinct({ id: rdvTable.contact_id }).from(rdvTable).where(and(isNotNull(rdvTable.contact_id), ne(rdvTable.status, 'cancelled')))
-  const repliedSet = new Set(repliedRows.map(r => r.id))
-  const rdvSet = new Set(rdvRows.map(r => r.id))
+  // 2. VRAIES réponses (pas spam ni auto/absence) et RDV, AVEC leur date, par contact.
+  //    On n'attribue une réponse à un envoi que si elle est arrivée APRÈS lui → pas de
+  //    comptage des vieilles plaintes comme si c'était des réponses aux envois récents.
+  const replyRows = await db
+    .select({ id: incoming_replies.contact_id, ts: incoming_replies.created_at, cls: incoming_replies.classification })
+    .from(incoming_replies)
+    .where(isNotNull(incoming_replies.contact_id))
+  const rdvRows = await db
+    .select({ id: rdvTable.contact_id, ts: rdvTable.created_at })
+    .from(rdvTable)
+    .where(and(isNotNull(rdvTable.contact_id), ne(rdvTable.status, 'cancelled')))
 
-  // 3. Agréger par variante / secteur / région.
+  // Une "vraie" réponse = engagement humain réel (on exclut spam / auto-réponse / absence).
+  const IGNORED_CLS = new Set(['spam', 'oof'])
+  const repliesByContact = new Map<string, number[]>()
+  for (const r of replyRows) {
+    if (!r.id || !r.ts) continue
+    if (r.cls && IGNORED_CLS.has(r.cls)) continue
+    ;(repliesByContact.get(r.id) ?? repliesByContact.set(r.id, []).get(r.id)!).push(new Date(r.ts).getTime())
+  }
+  const rdvByContact = new Map<string, number[]>()
+  for (const r of rdvRows) {
+    if (!r.id || !r.ts) continue
+    ;(rdvByContact.get(r.id) ?? rdvByContact.set(r.id, []).get(r.id)!).push(new Date(r.ts).getTime())
+  }
+
+  // 3. Agréger par variante / secteur / région, avec attribution APRÈS l'envoi.
   const emptyStat = (): Stat => ({ sent: 0, replied: 0, rdv: 0 })
   const byVariant: Record<string, Stat> = {}
   const bySector: Record<string, Stat> = {}
@@ -112,8 +132,9 @@ export async function GET(req: Request) {
     if (hasRdv) s.rdv++
   }
   for (const row of sentRows) {
-    const replied = row.contactId ? repliedSet.has(row.contactId) : false
-    const hasRdv = row.contactId ? rdvSet.has(row.contactId) : false
+    const sentTs = row.sentAt ? new Date(row.sentAt).getTime() : 0
+    const replied = row.contactId ? (repliesByContact.get(row.contactId) ?? []).some(t => t > sentTs) : false
+    const hasRdv = row.contactId ? (rdvByContact.get(row.contactId) ?? []).some(t => t > sentTs) : false
     bump(byVariant, row.variant, replied, hasRdv)
     bump(bySector, row.sector, replied, hasRdv)
     bump(byRegion, row.city ? CITY_TO_REGION[row.city] : null, replied, hasRdv)
@@ -134,8 +155,14 @@ export async function GET(req: Request) {
   ])
 
   const totalSent = sentRows.length
-  const totalReplied = sentRows.filter(r => r.contactId && repliedSet.has(r.contactId)).length
-  const totalRdv = sentRows.filter(r => r.contactId && rdvSet.has(r.contactId)).length
+  const totalReplied = sentRows.filter(r => {
+    const t = r.sentAt ? new Date(r.sentAt).getTime() : 0
+    return r.contactId && (repliesByContact.get(r.contactId) ?? []).some(x => x > t)
+  }).length
+  const totalRdv = sentRows.filter(r => {
+    const t = r.sentAt ? new Date(r.sentAt).getTime() : 0
+    return r.contactId && (rdvByContact.get(r.contactId) ?? []).some(x => x > t)
+  }).length
 
   // 5. Rapport (stocké + envoyé).
   const label = (id: string) => MESSAGE_VARIANTS.find(v => v.id === id)?.label ?? id
