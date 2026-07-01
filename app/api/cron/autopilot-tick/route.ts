@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { isFakeEmail } from '@/lib/fake-email'
 
 // Laisse Vercel exécuter jusqu'à 60s (le scraping + génération peut dépasser 30s).
 // Sans ça, la fonction était coupée et n'envoyait pas les emails.
@@ -636,6 +637,14 @@ export async function GET(request: NextRequest) {
       // 1. Pré-filtre : retirer les blocklistés (et annuler leur file restante)
       const candidates: typeof pendingLeads = []
       for (const row of pendingLeads) {
+        // Filtre FAKE EMAILS : ne jamais envoyer à nom@exemple.fr, test@..., etc.
+        // (ça bounce → abîme la réputation). On annule leur file.
+        if (isFakeEmail(row.contact.email)) {
+          await db.update(email_queue).set({ status: 'cancelled' })
+            .where(and(eq(email_queue.contact_id, row.contact.id), eq(email_queue.status, 'pending')))
+          console.log(`[autopilot] Email bidon ignoré : ${row.contact.email}`)
+          continue
+        }
         const [blocked] = await db
           .select({ id: blocklist.id })
           .from(blocklist)
