@@ -624,6 +624,10 @@ export async function GET(request: NextRequest) {
             // Les non-audités attendent que le cron audit-sites les traite → l'IA
             // aura toujours un vrai défaut à citer, jamais de mail générique.
             eq(contacts.audit_done, true),
+            // GARANTIE DÉLIVRABILITÉ : on n'envoie QU'aux emails vérifiés par
+            // MillionVerifier (email_validated=true). Les autres restent en stock
+            // jusqu'à validation → plus jamais de bounce "adresse introuvable".
+            eq(contacts.email_validated, true),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)

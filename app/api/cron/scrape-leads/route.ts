@@ -52,7 +52,6 @@ export async function GET(req: Request) {
     console.error('[scrape-leads] Google Places échoué :', err)
   }
 
-  const hasMV = Boolean(process.env.MILLION_VERIFIER_API_KEY)
 
   // Emails présents, confiance minimale, pas de fausse adresse.
   const leadsWithEmail = rawLeads
@@ -95,30 +94,13 @@ export async function GET(req: Request) {
       if (!ins) { skipped++; continue } // déjà en base → pas de recontact
       inserted++
 
-      // Validation email fail-closed : confiance >= 70 sûr ; sinon MillionVerifier.
-      let emailOk = lead.emailConfidence >= 70
-      if (hasMV && lead.emailConfidence < 70) {
-        try {
-          const mv = await fetch(
-            `https://api.millionverifier.com/api/v3/?api=${process.env.MILLION_VERIFIER_API_KEY}&email=${encodeURIComponent(email)}`,
-            { signal: AbortSignal.timeout(5000) }
-          )
-          if (mv.ok) {
-            const r = (await mv.json() as { result?: string }).result
-            if (r === 'ok') {
-              emailOk = true
-              await db.update(contacts).set({ email_validated: true, email_confidence_score: 99 }).where(eq(contacts.id, ins.id))
-            } else if (r === 'invalid' || r === 'catch_all' || r === 'disposable') {
-              emailOk = false
-            }
-          }
-        } catch { /* MV indispo → on garde la règle de confiance */ }
-      }
+      // On ne met en file que les emails PLAUSIBLES (confiance >= 70 : mailto publié
+      // ou préfixe pro). La VALIDATION réelle est faite en amont par validate-emails
+      // (MillionVerifier), et l'envoi ne partira QU'aux contacts email_validated=true.
+      // Les emails trop incertains restent en base (stock), jamais mis en file.
+      if (lead.emailConfidence < 70) continue
 
-      // Email pas sûr → contact gardé en base (pas re-scrapé) mais PAS mis en file.
-      if (!emailOk) continue
-
-      // File d'envoi : partira une fois le contact audité (garde-fou autopilot).
+      // File d'envoi : partira une fois le contact validé (MV) ET audité.
       await db.insert(email_queue).values({
         contact_id: ins.id,
         campaign_id: activeCampaign.id,
