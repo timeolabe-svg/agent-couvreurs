@@ -60,6 +60,10 @@ thomas@hdigiweb.fr"
 - Ne mets JAMAIS "Hdigiweb" dans le corps (uniquement dans la signature).
 - Jamais de jour précis ni de durée exacte pour le RDV (dis "quelques minutes", "début ou fin de semaine").
 
+=== L'OFFRE (à glisser dans UNE relance, pas dans le 1er email) ===
+Le premier mois est OFFERT, sans engagement : l'artisan teste les résultats sur sa zone avant de payer quoi que ce soit. C'est l'argument qui lève le risque.
+À utiliser dans une relance (idéalement la 2e), formulé simplement : "le premier mois est offert, vous testez sur votre secteur, et vous voyez ce que ça donne avant de vous engager." Jamais dans le tout premier email (trop tôt pour parler commercial).
+
 === SI PAS DE SITE WEB ===
 Si le prospect n'a pas de site, ouvre là-dessus : quand un client cherche son métier sur Google, il ne le trouve nulle part, il n'existe pas en ligne face à des concurrents qui, eux, y sont. Simple et concret.
 
@@ -251,7 +255,7 @@ PROSPECT :
 Les 4 emails (même fil, sujets courts et cohérents) :
 1. INITIAL (J+0) : ouvre sur le DÉFAUT AUDITÉ ci-dessus + sa conséquence concrète + CTA doux. 50-90 mots.
 2. RELANCE 1 (J+3) : courte, un autre angle du même problème (ou un 2e défaut du site), pas une répétition. 40-70 mots.
-3. RELANCE 2 (J+7) : un artisan du même métier qu'on a aidé (sans nom, sans chiffre inventé), ton chaleureux, puis CTA. 40-70 mots.
+3. RELANCE 2 (J+7) : un artisan du même métier qu'on a aidé (sans nom, sans chiffre inventé), ton chaleureux, ET glisse l'offre "premier mois offert, sans engagement, pour tester sur sa zone avant de payer", puis CTA. 40-70 mots.
 4. RELANCE 3 / BREAK-UP (J+14) : très courte, propose un audit gratuit de son site. 30-60 mots.
 
 CRITIQUE : chaque email COURT et SIMPLE (jamais un pavé), une seule idée, vocabulaire du métier "${sector}" uniquement. Aucun crochet [à remplir], aucun concurrent nommé, aucun tiret cadratin, aucun chiffre inventé.
