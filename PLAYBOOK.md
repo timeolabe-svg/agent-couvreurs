@@ -169,6 +169,9 @@ Pour CHAQUE cron (section 6), créer une tâche :
 | `AUTH_USER1_EMAIL` / `AUTH_USER1_PASSWORD` | NextAuth | Login dashboard (admin) |
 | `AUTH_USER2_EMAIL` / `AUTH_USER2_PASSWORD` | NextAuth | Login dashboard (client) |
 | `AUTOPILOT_SCRAPING` | interne | Mettre `true` pour réactiver le scraping DANS autopilot (secours). Défaut off. |
+| `ADMIN_API_KEY` | interne | Auth alternative du endpoint de scrape manuel (`/api/leads/scrape`) |
+| `NEXT_PUBLIC_SCRAPE_TOKEN` | interne | Token navigateur pour déclencher un scrape manuel depuis le dashboard |
+| `NODE_ENV` | standard | Géré par Vercel (production/development) |
 
 > ⚠️ Sur Vercel, ces variables sont "Sensitive" (chiffrées) : impossible de les relire après enregistrement. Note-les ailleurs. Pour les récupérer si oubliées : voir cron-job.org (le `CRON_SECRET` est dans le header des tâches).
 
@@ -395,6 +398,51 @@ Endpoints admin one-shot utiles : `/api/admin/preview-email` (prévisualise les 
 - **Signature** : les tokens `Thomas Renard` / `thomas@hdigiweb.fr` sont remplacés par l'inbox réelle → garder ces tokens dans le prompt.
 - **Vocabulaire métier** : `sectorHints` dans `lib/email-generator.ts` (évite de parler toiture à un pisciniste).
 - Tout le reste (pipeline, crons, auto-apprentissage) est **générique** et se réutilise tel quel.
+
+---
+
+---
+
+## 14. Annexe — TOUTES les routes API (pour ne rien oublier)
+
+**Crons (`/api/cron/…`)** : `scrape-leads`, `audit-sites`, `validate-emails`, `autopilot-tick`, `check-replies`, `self-improve` (les 6 actifs) · `morning-digest`, `weekly-learning` (remplacé), `backfill-sequences` (obsolète), `strategy-agent`, `debug-hot-leads`, `manual-relay` (secondaires).
+
+**Admin one-shot (`/api/admin/…`)** : `preview-email` (prévisualise les mails sans envoyer), `reclassify` (reclasse les réponses), `resend-broken` (relance des contacts). Tous protégés par la session (middleware).
+
+**Dashboard / données** : `stats/analytics`, `conversations`, `dashboard/summary`, `dashboard/stream` (SSE temps réel), `leads`, `leads/[id]`, `rdv`, `rdv/[id]`, `learning/reports`, `learning/reports/[id]`, `campaigns`, `settings` (lit/écrit `agent_config`), `notifications/rdv`.
+
+**Réponses (validation manuelle)** : `replies`, `replies/[id]/draft`, `replies/[id]/reject`, `replies/[id]/send`, `reply-drafts`, `reply-drafts/[id]`.
+
+**Génération / scrape manuel / test** : `generate-email` (1 email à la demande), `leads/import` (import CSV), `leads/scrape` (scrape manuel, auth ADMIN_API_KEY / NEXT_PUBLIC_SCRAPE_TOKEN), `simulate-send` (test sans envoi réel).
+
+**Stripe** : `stripe/setup` + `stripe/create-setup-session` (enregistrer la CB du client), `stripe/webhook`.
+
+**Auth** : `auth/[...nextauth]` (NextAuth).
+
+> Le **cœur** du système = les 6 crons actifs + les libs. Le reste sert le dashboard, les tests, ou est du legacy conservé.
+
+## 15. Fichiers clés (où est quoi)
+
+| Besoin | Fichier |
+|--------|---------|
+| Schéma DB | `lib/db/schema.ts` · connexion : `lib/db/index.ts` |
+| Wrapper IA (Gemini) | `lib/ai.ts` |
+| Génération d'emails + prompt | `lib/email-generator.ts` |
+| Templates de secours | `data/sequence.ts` |
+| Cibles (secteurs/villes) | `lib/scrape-targets.ts` |
+| Scraping Google | `lib/scraper/google-places.ts` |
+| Audit de site | `lib/website-audit.ts` |
+| Validation email (module) | `lib/scraper/email-validator.ts` |
+| Filtre fake emails | `lib/fake-email.ts` |
+| Client Instantly | `lib/instantly/client.ts` · rotation : `lib/instantly/inbox-rotation.ts` |
+| Réponses (classer/rédiger) | `lib/reply-agent/classifier.ts` · `lib/reply-agent/generator.ts` |
+| Créneaux RDV (timezone) | `lib/availability.ts` |
+| Google Calendar | `lib/google-calendar.ts` |
+| Stripe | `lib/stripe.ts` |
+| Auto-apprentissage (leviers) | `lib/experiments.ts` |
+| Auth cron | `lib/cron-auth.ts` |
+| Middleware auth dashboard | `proxy.ts` |
+| Config crons Vercel | `vercel.json` |
 
 ---
 
