@@ -1,10 +1,29 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
 import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { isFakeEmail } from '@/lib/fake-email'
 
 // Random delay: 4 to 12 minutes (feels human)
 function randomDelayMs(): number {
   return (4 + Math.floor(Math.random() * 9)) * 60 * 1000 // 4-12 min in ms
+}
+
+// Détecte un CHANGEMENT D'ADRESSE dans la réponse du prospect et renvoie la nouvelle
+// adresse (ex : "Veuillez noter notre changement d'adresse : contact@x.fr").
+// On ne renvoie une adresse que si l'intention de changement est explicite, pour
+// ne pas confondre avec un email cité par hasard.
+function extractNewEmail(text: string, currentEmail: string): string | null {
+  const changeIntent = /(chang\w*\s+d['’]?adresse|nouvelle\s+adresse|nouveau\s+(mail|email)|nouvel\s+(email|e-mail)|contactez[-\s]?(moi|nous)\s+(à|au|sur)|écrivez[-\s]?(moi|nous)|mon\s+(nouveau\s+|nouvel\s+)?(mail|email|adresse)|à\s+cette\s+adresse|utilisez\s+plut[oô]t|désormais\s+à|dorénavant)/i.test(text)
+  if (!changeIntent) return null
+  const emails = text.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi) ?? []
+  const cur = (currentEmail ?? '').toLowerCase()
+  for (const e of emails) {
+    const el = e.toLowerCase().replace(/[.,;)\]]+$/, '')
+    if (el !== cur && !isFakeEmail(el) && !el.includes('hdigiweb') && !el.includes('@instantly')) {
+      return el
+    }
+  }
+  return null
 }
 
 // Filtre warmup Instantly : les faux échanges sont en anglais.
@@ -617,6 +636,34 @@ export async function GET(request: NextRequest) {
         }
 
         processed++
+
+        // 4b. CHANGEMENT D'ADRESSE : le prospect indique une nouvelle adresse mail.
+        //     On la capte, on met à jour le contact (validé = il l'a confirmée lui-même),
+        //     et on relance une séquence propre sur la nouvelle adresse.
+        if (resolvedContact) {
+          const newEmail = extractNewEmail(cleanBody, resolvedContact.email)
+          if (newEmail) {
+            try {
+              await db.update(contacts)
+                .set({ email: newEmail, email_validated: true, email_confidence_score: 99, updated_at: new Date() })
+                .where(eq(contacts.id, resolvedContact.id))
+              // Relance une file propre sur la nouvelle adresse (sera renvoyée par autopilot).
+              await db.update(email_queue)
+                .set({ status: 'pending', scheduled_at: new Date(), sent_at: null, sequence_step: 0, subject: '__pending_generation__', body: '__pending_generation__' })
+                .where(eq(email_queue.contact_id, resolvedContact.id))
+              await db.insert(dashboard_events).values({
+                type: 'reply_received',
+                data: { contactEmail: reply.from_address, newEmail, company: resolvedContact.company, action: 'email_updated' },
+              })
+              console.log(`[check-replies] Changement d'adresse capté : ${resolvedContact.email} -> ${newEmail} (${resolvedContact.company})`)
+              await markReplyProcessed(reply.id)
+              continue // pas d'auto-réponse : la relance sur la nouvelle adresse EST l'action
+            } catch (e) {
+              // Nouvelle adresse déjà utilisée par un autre contact, ou erreur → on ignore.
+              console.error('[check-replies] MAJ adresse échouée', e)
+            }
+          }
+        }
 
         // 5. Handle action
         if (classification.action === 'blocklist') {
