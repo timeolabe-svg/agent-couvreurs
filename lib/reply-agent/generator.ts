@@ -198,11 +198,20 @@ Rédige la réponse. JSON uniquement :
   const text = await generateText({
     system: SYSTEM_PROMPT,
     prompt: userPrompt,
-    maxTokens: 600,
+    maxTokens: 1000,
     temperature: 0.8,
   })
 
-  const parsed = extractJson<{ body: string }>(text)
+  let parsed: { body: string } | null = null
+  try {
+    parsed = extractJson<{ body: string }>(text)
+  } catch (err) {
+    console.error('[generator] extractJson a échoué (JSON tronqué ?):', err, '— Raw:', text.slice(0, 300))
+    // Fallback court plutôt que crasher le cron
+    return cleanEmailText(
+      `Bonjour ${params.contactName},\n\nMerci pour votre retour. Je reviens vers vous très vite pour vous répondre dans les meilleures conditions.\n\nBien à vous,\nGabin\nHdigiweb`
+    )
+  }
   if (!parsed?.body || parsed.body.trim().length < 10) {
     console.error('[generator] Gemini a retourné un body vide ou trop court. Raw:', text.slice(0, 300))
     throw new Error('Gemini reply body empty')

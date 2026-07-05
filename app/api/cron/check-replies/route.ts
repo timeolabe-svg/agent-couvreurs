@@ -220,9 +220,9 @@ async function sendNotificationEmail(params: {
         <p><strong>De :</strong> ${params.contactName} (${params.contactCompany})</p>
         <p><strong>Classification :</strong> ${params.classification}</p>
         <p><strong>Message reçu :</strong></p>
-        <blockquote style="border-left:3px solid #ccc;padding-left:12px;color:#555">${params.replyBody.replace(/\n/g, '<br>')}</blockquote>
+        <blockquote style="border-left:3px solid #ccc;padding-left:12px;color:#555">${escapeHtml(params.replyBody).replace(/\n/g, '<br>')}</blockquote>
         <p><strong>Draft de réponse :</strong></p>
-        <blockquote style="border-left:3px solid #2563eb;padding-left:12px;color:#333">${params.draftBody.replace(/\n/g, '<br>')}</blockquote>
+        <blockquote style="border-left:3px solid #2563eb;padding-left:12px;color:#333">${escapeHtml(params.draftBody).replace(/\n/g, '<br>')}</blockquote>
         <p><a href="${BASE_URL}/reponses-a-valider" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none">Valider / Modifier</a></p>
       `,
     }),
@@ -232,6 +232,11 @@ async function sendNotificationEmail(params: {
 // Normalise un corps de message pour comparer deux réponses (dédup contenu).
 function normalizeBody(s: string): string {
   return (s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+// Échappe les caractères HTML pour éviter les injections dans les emails de notification.
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 export async function GET(request: NextRequest) {
@@ -329,13 +334,15 @@ export async function GET(request: NextRequest) {
             eaccount = orig?.from_email
           }
           await sendReply({ reply_to_id: reply.instantly_reply_id, body: draft.body, eaccount, subject: reply.subject ?? undefined })
+          await db.update(reply_drafts)
+            .set({ status: 'sent', sent_at: new Date() })
+            .where(eq(reply_drafts.id, draft.id))
+          await db.update(incoming_replies)
+            .set({ action_taken: 'replied' })
+            .where(eq(incoming_replies.id, reply.id))
+        } else {
+          console.error('[check-replies] ERREUR: draft schedulé sans instantly_reply_id, skipped', draft.id)
         }
-        await db.update(reply_drafts)
-          .set({ status: 'sent', sent_at: new Date() })
-          .where(eq(reply_drafts.id, draft.id))
-        await db.update(incoming_replies)
-          .set({ action_taken: 'replied' })
-          .where(eq(incoming_replies.id, reply.id))
       } catch (err) {
         console.error('[check-replies] Failed to send scheduled reply', draft.id, err)
       }
@@ -373,7 +380,9 @@ export async function GET(request: NextRequest) {
           isNotNull(incoming_replies.instantly_reply_id),
         )
       )
-      .limit(5)
+      // TODO: batch queries — laterReply + sentCount pourraient être regroupés
+      // en une seule query pour éviter le N+1. Limite à 3 pour réduire le risque de timeout.
+      .limit(3)
 
     for (const stale of staleDrafts) {
       try {
@@ -565,7 +574,7 @@ export async function GET(request: NextRequest) {
 
         // 3. Ignorer les faux échanges warmup Instantly (toujours en anglais).
         //    Sur le texte réel du prospect, sinon notre email cité (FR) fausse tout.
-        if (!isLikelyFrench(cleanBody + ' ' + reply.subject)) {
+        if (!isLikelyFrench(cleanBody)) {
           console.log(`[check-replies] Warmup ignoré (anglais) : ${reply.from_address}`)
           continue
         }

@@ -118,7 +118,7 @@ export async function addLeadsToCampaign(
         website: lead.website,
         custom_variables: lead.custom_variables ?? {},
         // skip_if_in_campaign évite les doublons côté Instantly
-        skip_if_in_workspace: false,
+        skip_if_in_workspace: true,
       }),
     })
     added++

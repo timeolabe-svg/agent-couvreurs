@@ -187,7 +187,16 @@ function isOptOut(body: string, subject: string): boolean {
     /^(d[ée]sinscri(re|ption)|unsubscribe|me d[ée]sabonner|ne plus recevoir|ne plus me contacter|ne plus contacter|plus de mail|plus d'email)/m,
     /merci de (me retirer|ne plus|stopper|cesser|me d[ée]sabonner)/,
     /souhait(e|ons) (ne plus|pas) [eê]tre contact/,
-    /(ne m'int[eé]resse pas|pas int[eé]ress[eé]e?\b)/,
+    // "cela/ce ne m'intéresse pas" — tournure explicite
+    /ce(la|ci) ne m'int[eé]resse pas/,
+    // "je ne suis / nous ne sommes pas intéressé(s)"
+    /(je ne suis|nous ne sommes) pas int[eé]ress[eé]e?s?\b/,
+    // "ne m'intéresse pas" UNIQUEMENT si non suivi de "mais" ou "cependant" dans les 30 chars
+    /ne m'int[eé]resse pas(?!.{0,30}(mais|cependant))/,
+    // message de moins de 50 chars contenant "pas intéressé"
+    ...(((body + ' ' + subject).toLowerCase().trim().length < 50)
+      ? [/pas int[eé]ress[eé]e?\b/]
+      : []),
     /me retirer de (votre|vos|la) (liste|base|mailing)/,
   ]
   return optOutPatterns.some(p => p.test(text))
