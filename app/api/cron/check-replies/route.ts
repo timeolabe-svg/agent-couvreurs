@@ -377,73 +377,71 @@ export async function GET(request: NextRequest) {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
     const WARM = ['interest', 'rdv_request', 'objection', 'question']
 
-    const staleDrafts = await db
-      .select({
-        draftId: reply_drafts.id,
-        sentAt: reply_drafts.sent_at,
-        replyId: incoming_replies.id,
-        instantlyReplyId: incoming_replies.instantly_reply_id,
-        contactId: incoming_replies.contact_id,
-        classification: incoming_replies.classification,
-        replyBody: incoming_replies.body,
-        replySubject: incoming_replies.subject,
-      })
-      .from(reply_drafts)
-      .innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
-      .where(
-        and(
-          eq(reply_drafts.status, 'sent'),
-          lteOp(reply_drafts.sent_at!, threeDaysAgo),
-          inArray(incoming_replies.classification, WARM),
-          isNotNull(incoming_replies.contact_id),
-          isNotNull(incoming_replies.instantly_reply_id),
-        )
-      )
-      // TODO: batch queries — laterReply + sentCount pourraient être regroupés
-      // en une seule query pour éviter le N+1. Limite à 3 pour réduire le risque de timeout.
-      .limit(3)
+    // Batch query : récupère les candidats relance + filtres en une seule passe SQL
+    // (évite le N+1 : sentCount + recentFollowUp + laterReply étaient 3 requêtes × N drafts)
+    type StaleRow = {
+      draftId: number; sentAt: Date | null; replyId: number
+      instantlyReplyId: string | null; contactId: number | null
+      classification: string; replyBody: string; replySubject: string | null
+      sentCount: number; hasRecentFollowUp: boolean; hasLaterReply: boolean
+    }
+    const staleDrafts = await db.execute<StaleRow>(sql`
+      SELECT
+        d.id                          AS "draftId",
+        d.sent_at                     AS "sentAt",
+        r.id                          AS "replyId",
+        r.instantly_reply_id          AS "instantlyReplyId",
+        r.contact_id                  AS "contactId",
+        r.classification,
+        r.body                        AS "replyBody",
+        r.subject                     AS "replySubject",
+        (SELECT COUNT(*) FROM reply_drafts
+         WHERE incoming_reply_id = r.id AND status = 'sent')::int          AS "sentCount",
+        EXISTS(SELECT 1 FROM reply_drafts
+               WHERE incoming_reply_id = r.id AND status = 'sent'
+                 AND sent_at >= NOW() - INTERVAL '3 days')                  AS "hasRecentFollowUp",
+        EXISTS(SELECT 1 FROM incoming_replies r2
+               WHERE r2.contact_id = r.contact_id
+                 AND r2.created_at  >= d.sent_at)                           AS "hasLaterReply"
+      FROM reply_drafts d
+      INNER JOIN incoming_replies r ON r.id = d.incoming_reply_id
+      WHERE d.status = 'sent'
+        AND d.sent_at <= NOW() - INTERVAL '3 days'
+        AND r.classification = ANY(${WARM})
+        AND r.contact_id IS NOT NULL
+        AND r.instantly_reply_id IS NOT NULL
+      LIMIT 5
+    `)
 
-    for (const stale of staleDrafts) {
+    // Batch : charge tous les contacts candidats en 1 requête, puis blocklist en 1 requête
+    const candidateContactIds = staleDrafts.rows
+      .filter(s => !s.hasLaterReply && !s.hasRecentFollowUp && s.sentCount < 2)
+      .map(s => s.contactId as number)
+
+    const batchContacts = candidateContactIds.length > 0
+      ? await db.select().from(contacts).where(inArray(contacts.id, candidateContactIds))
+      : []
+
+    const candidateEmails = batchContacts.map(c => c.email)
+    const batchBlocked = candidateEmails.length > 0
+      ? await db.select({ email: blocklist.email }).from(blocklist)
+          .where(inArray(blocklist.email, candidateEmails))
+      : []
+
+    const contactById = new Map(batchContacts.map(c => [c.id, c]))
+    const blockedEmails = new Set(batchBlocked.map(b => b.email))
+
+    for (const stale of staleDrafts.rows) {
       try {
         if (!stale.contactId) continue
+        if (stale.hasLaterReply) continue       // prospect a répondu → pas de relance
+        if (stale.sentCount >= 2) continue      // déjà 2 relances envoyées
+        if (stale.hasRecentFollowUp) continue   // relance déjà envoyée dans les 3 jours
 
-        // Le prospect a-t-il répondu depuis qu'on lui a répondu ?
-        const [laterReply] = await db
-          .select({ id: incoming_replies.id })
-          .from(incoming_replies)
-          .where(and(
-            eq(incoming_replies.contact_id, stale.contactId),
-            gte(incoming_replies.created_at, stale.sentAt!),
-          ))
-          .limit(1)
-        if (laterReply) continue
-
-        // Max 2 drafts envoyés par conversation (évite le spam)
-        const sentCount = await db
-          .select({ id: reply_drafts.id })
-          .from(reply_drafts)
-          .where(and(eq(reply_drafts.incoming_reply_id, stale.replyId), eq(reply_drafts.status, 'sent')))
-        if (sentCount.length >= 2) continue
-
-        // On a déjà envoyé un follow-up dans les 3 derniers jours ? → skip
-        const [recentFollowUp] = await db
-          .select({ id: reply_drafts.id })
-          .from(reply_drafts)
-          .where(and(
-            eq(reply_drafts.incoming_reply_id, stale.replyId),
-            eq(reply_drafts.status, 'sent'),
-            gte(reply_drafts.sent_at!, threeDaysAgo),
-          ))
-          .limit(1)
-        if (recentFollowUp) continue
-
-        // Récupérer le contact
-        const [contact] = await db.select().from(contacts).where(eq(contacts.id, stale.contactId)).limit(1)
+        const contact = contactById.get(stale.contactId as number)
         if (!contact) continue
 
-        // Bloqué ?
-        const [isBlocked] = await db.select({ id: blocklist.id }).from(blocklist).where(eq(blocklist.email, contact.email)).limit(1)
-        if (isBlocked) continue
+        if (blockedEmails.has(contact.email)) continue
 
         // Générer la relance — AVEC l'historique pour ne pas répéter le pitch précédent
         const { generateReplyResponse } = await import('@/lib/reply-agent/generator')

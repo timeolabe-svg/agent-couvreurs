@@ -125,12 +125,26 @@ export async function GET(req: Request) {
         ? `<h3 style="color:#f59e0b">⚠️ Alertes deliverability</h3><ul>${warmupIssues.map((i) => `<li>${i}</li>`).join('')}</ul>`
         : ''
 
+    // Alerte critique : aucun email envoyé depuis 20h un jour de semaine → problème pipeline
+    const dayOfWeek = now.getDay() // 0=dim, 6=sam
+    const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5
+    const zeroSendAlertHtml = (emailsNight === 0 && isWeekday)
+      ? `<div style="background:#fef2f2;border:2px solid #ef4444;border-radius:8px;padding:16px;margin:16px 0">
+          <h3 style="color:#dc2626;margin:0 0 8px">🚨 ALERTE — Aucun email envoyé cette nuit</h3>
+          <p style="margin:0;color:#7f1d1d">Le pipeline n'a envoyé aucun email depuis 20h en jour ouvré. Vérifier :<br>
+          1. Cron autopilot actif sur cron-job.org ?<br>
+          2. Logs Vercel → /api/cron/autopilot-tick<br>
+          3. Quota Instantly non dépassé ?<br>
+          4. Leads en attente en base (contacts audit_done + email_validated) ?</p>
+        </div>`
+      : ''
+
     const html = `
 <!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="UTF-8"><title>Digest matinal Hdigiweb</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#111">
-  <h1 style="font-size:20px;margin-bottom:4px">🌅 Bonne journée, Thomas !</h1>
+  <h1 style="font-size:20px;margin-bottom:4px">🌅 Bonne journée, ${process.env.CLIENT_NAME ?? 'Thomas'} !</h1>
   <p style="color:#6b7280;margin-top:0">Digest du ${now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
 
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0">
@@ -147,6 +161,7 @@ export async function GET(req: Request) {
   <h2 style="font-size:15px">⚡ Actions requises</h2>
   ${actionsHtml}
 
+  ${zeroSendAlertHtml}
   ${warmupHtml}
 
   <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0">
@@ -156,11 +171,10 @@ export async function GET(req: Request) {
 
     const notifyEmail = process.env.CLIENT_NOTIFY_EMAIL
     if (notifyEmail) {
-      await sendEmail(
-        notifyEmail,
-        `🌅 Digest matinal — ${emailsNight} emails · ${newReplies} réponses · ${todayRdvs.length} RDV`,
-        html,
-      )
+      const subject = (emailsNight === 0 && isWeekday)
+        ? `🚨 ALERTE — 0 email envoyé cette nuit · ${newReplies} réponses · ${todayRdvs.length} RDV`
+        : `🌅 Digest matinal — ${emailsNight} emails · ${newReplies} réponses · ${todayRdvs.length} RDV`
+      await sendEmail(notifyEmail, subject, html)
     }
 
     return NextResponse.json({
