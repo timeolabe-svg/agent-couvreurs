@@ -446,4 +446,39 @@ Endpoints admin one-shot utiles : `/api/admin/preview-email` (prévisualise les 
 
 ---
 
+## 16. Opérations manuelles utiles (SQL Neon)
+
+### Changement d'adresse email d'un prospect (rattrapage manuel)
+> Automatique depuis le fix `extractNewEmail` (check-replies) pour les nouvelles réponses.
+> Ce SQL sert pour les cas déjà traités ou une formulation ratée par l'auto-détection.
+```sql
+-- Remplace ANCIENNE_ADRESSE / NOUVELLE_ADRESSE
+UPDATE contacts
+SET email = 'NOUVELLE_ADRESSE', email_validated = true, email_confidence_score = 99, updated_at = now()
+WHERE email = 'ANCIENNE_ADRESSE';
+
+UPDATE email_queue
+SET status = 'pending', scheduled_at = now(), sent_at = null, sequence_step = 0,
+    subject = '__pending_generation__', body = '__pending_generation__'
+WHERE contact_id = (SELECT id FROM contacts WHERE email = 'NOUVELLE_ADRESSE');
+```
+⚠️ Si NOUVELLE_ADRESSE existe déjà comme autre contact → la 1ère requête échoue (unicité).
+
+### Relancer un contact (re-générer + renvoyer)
+```sql
+UPDATE email_queue SET status='pending', scheduled_at=now(), sent_at=null, sequence_step=0,
+  subject='__pending_generation__', body='__pending_generation__'
+WHERE contact_id = (SELECT id FROM contacts WHERE email = 'EMAIL');
+```
+
+### Diagnostic rapide (état du système)
+```sql
+SELECT status, count(*) FROM email_queue GROUP BY status;            -- file d'envoi
+SELECT count(*) FROM contacts WHERE audit_done = false;               -- reste à auditer
+SELECT count(*) FROM contacts WHERE email_validated = false;          -- reste à valider
+SELECT id, name, status, instantly_campaign_id FROM campaigns;        -- campagne active
+```
+
+---
+
 *Dernière mise à jour : construit à partir du projet agent-couvreurs (Hdigiweb), juillet 2026.*
