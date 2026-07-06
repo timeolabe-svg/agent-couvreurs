@@ -19,7 +19,7 @@ export async function GET() {
   try {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
-    const { inArray, desc, ne, isNull, or } = await import('drizzle-orm')
+    const { inArray, desc, ne, isNull, or, and, eq } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint } = await import('@/lib/reply-agent/classifier')
 
     // 1. Réponses reçues — on EXCLUT le spam et les réponses automatiques (bots,
@@ -62,7 +62,13 @@ export async function GET() {
             status: email_queue.status,
           })
           .from(email_queue)
-          .where(inArray(email_queue.contact_id, contactIds))
+          // Seulement les VRAIS emails envoyés (jamais les placeholders "__pending_generation__"
+          // ni les lignes en attente/annulées) → l'affichage messagerie reste propre.
+          .where(and(
+            inArray(email_queue.contact_id, contactIds),
+            eq(email_queue.status, 'sent'),
+            ne(email_queue.body, '__pending_generation__'),
+          ))
       : []
 
     // 4. Réponses de l'agent (drafts) liées à ces réponses
