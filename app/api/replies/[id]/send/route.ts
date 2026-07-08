@@ -11,7 +11,7 @@ export async function POST(
   const { db } = await import('@/lib/db')
   const { reply_drafts, incoming_replies } = await import('@/lib/db/schema')
   const { eq } = await import('drizzle-orm')
-  const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
+  const { sendReply } = await import('@/lib/instantly/client')
 
   const [draft] = await db.select().from(reply_drafts).where(eq(reply_drafts.id, id))
   if (!draft) return NextResponse.json({ error: 'Draft not found' }, { status: 404 })
@@ -20,9 +20,7 @@ export async function POST(
 
   try {
     if (incoming) {
-      // Envoi via le moteur MAISON (SMTP Gmail).
-      const r = await sendReplyEmail(incoming.id, draft.body)
-      if (!r.ok) return NextResponse.json({ error: `Send failed: ${r.error ?? 'inconnu'}` }, { status: 500 })
+      await sendReply({ reply_to_id: incoming.instantly_reply_id ?? incoming.id, body: draft.body })
     }
     await db.update(reply_drafts).set({ status: 'sent', sent_at: new Date() }).where(eq(reply_drafts.id, id))
     return NextResponse.json({ ok: true })
