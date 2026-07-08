@@ -151,13 +151,25 @@ export async function GET() {
       })
     }
 
+    // Détecte les expéditeurs "junk" (passerelles antispam, no-reply, daemons) à ne pas afficher.
+    const isJunkSender = (email: string) =>
+      /antispam|xefi\.fr|mailer-daemon|no[-.]?reply|do[-.]?not[-.]?reply|postmaster|bounce@/i.test(email || '')
+
     // Trie les messages par date dans chaque conversation + calcule lastDate
     const conversations = [...groups.values()]
-      // Filtre RÉTROACTIF : les vieux leads mal classés par Gemini (plaintes
-      // "mail vide / rien reçu") sont exclus même si stockés en interest/question.
       .filter(g => {
+        // 1) Expéditeur junk (antispam/no-reply/daemon) → jamais une vraie conversation.
+        if (isJunkSender(g.email)) return false
         const lastReceived = [...g.messages].reverse().find(m => m.role === 'received')
-        return !(lastReceived && isEmptyEmailComplaint(lastReceived.body, ''))
+        // 2) Aucune vraie réponse reçue, ou réponse vide/triviale → on n'affiche pas.
+        if (!lastReceived) return false
+        const txt = (lastReceived.body || '').trim()
+        if (txt.length < 3) return false
+        // 3) Réponses automatiques (absence 'oof') / spam → hors messagerie (rien à faire).
+        if (lastReceived.classification === 'oof' || lastReceived.classification === 'spam') return false
+        // 4) Filtre RÉTROACTIF : vieux leads mal classés (plaintes "mail vide / rien reçu").
+        if (isEmptyEmailComplaint(lastReceived.body, '')) return false
+        return true
       })
       .map(g => {
         g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
