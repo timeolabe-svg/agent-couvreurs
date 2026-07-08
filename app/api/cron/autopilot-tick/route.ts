@@ -723,7 +723,10 @@ export async function GET(request: NextRequest) {
         const { queue, contact, inbox, emails, variantId } = item
         try {
           // Étape 0 (initial) : réutilise la ligne 'pending' existante → 'queued', J+0.
-          await db.update(email_queue)
+          // CLAIM CONDITIONNEL (anti-concurrence) : on ne passe la ligne step 0 en
+          // 'queued' QUE si elle est encore 'pending'. Si un run parallèle l'a déjà
+          // prise, .returning() est vide → on n'insère PAS les relances (pas de doublon).
+          const claimedStep0 = await db.update(email_queue)
             .set({
               status: 'queued',
               from_email: inbox.email,
@@ -732,7 +735,9 @@ export async function GET(request: NextRequest) {
               variant_id: variantId,
               scheduled_at: now,
             })
-            .where(eq(email_queue.id, queue.id))
+            .where(and(eq(email_queue.id, queue.id), eq(email_queue.status, 'pending')))
+            .returning({ id: email_queue.id })
+          if (claimedStep0.length === 0) continue // déjà pris par un autre run → on saute
 
           // Étapes 1..3 (relances) : nouvelles lignes planifiées J+delays[i].
           for (let i = 1; i < emails.length; i++) {
