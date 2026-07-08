@@ -26,7 +26,7 @@ export const maxDuration = 60
 
 const GLOBAL_DEADLINE_MS = 44_000 // + 13s/boîte max = 57s < 60s Vercel
 const PER_BOX_TIMEOUT_MS = 13_000
-const MAX_MSGS_PER_BOX = 8
+const MAX_MSGS_PER_BOX = 50   // large : le warmup remplit la boîte, il faut voir au-delà des non-lus
 const LOOKBACK_HOURS = 24
 
 const CLIENT_NOTIFY_EMAIL = (process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr')
@@ -134,30 +134,37 @@ async function processBox(box: { email: string; password: string }, started: num
     const lock = await client.getMailboxLock('INBOX')
     try {
       const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000)
-      const found = await client.search({ seen: false, since })
+      // TOUS les messages récents (plus seulement les non-lus) : une réponse OUVERTE dans Gmail
+      // (marquée "lue") était ratée par seen:false. Dédup par Message-ID + filtre "vrai contact"
+      // (le warmup vient d'adresses tierces → ignoré sans coût IA).
+      const found = await client.search({ since })
       const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX)
-      results.push(`[${box.email}] ${uids.length} non-lus`)
+      results.push(`[${box.email}] ${uids.length} messages récents`)
 
       for (const uid of uids) {
         if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push(`⏱ budget atteint pendant ${box.email}`); break }
-        let msg
-        try { msg = await client.fetchOne(uid, { envelope: true, source: true }) } catch { continue }
-        if (!msg || !msg.envelope) continue
-
-        const from = (msg.envelope.from?.[0]?.address ?? '').toLowerCase()
-        const subject = msg.envelope.subject ?? ''
-        const messageId = msg.envelope.messageId ?? `imap-${box.email}-${uid}`
-        const rawSrc = msg.source?.toString() ?? ''
-        const body = extractPlainText(rawSrc.length > 60_000 ? rawSrc.slice(0, 60_000) : rawSrc)
-        await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
+        // Enveloppe d'abord (léger) → on filtre avant de télécharger le corps.
+        let env
+        try { env = await client.fetchOne(uid, { envelope: true }) } catch { continue }
+        if (!env || !env.envelope) continue
+        const from = (env.envelope.from?.[0]?.address ?? '').toLowerCase()
+        const subject = env.envelope.subject ?? ''
+        const messageId = env.envelope.messageId ?? `imap-${box.email}-${uid}`
         if (!from) continue
-        stats.processed++
 
-        // Bounce → blocklist + annule les relances DU VRAI destinataire.
+        // Dédup par Message-ID : déjà traité ? on saute (jamais de 2e réponse).
+        const already = (await sql`SELECT 1 FROM incoming_replies WHERE instantly_reply_id = ${'imap:' + messageId} LIMIT 1`) as Array<unknown>
+        if (already.length > 0) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+
+        const fetchBody = async (): Promise<string> => {
+          const src = await client.fetchOne(uid, { source: true }).catch(() => null)
+          const raw = src && src.source ? src.source.toString() : ''
+          return extractPlainText(raw.length > 60_000 ? raw.slice(0, 60_000) : raw)
+        }
+
+        // Bounce → blocklist du VRAI destinataire (jamais un daemon).
         if (isBounceMessage(from, subject)) {
-          // On ne blocklist QUE le destinataire d'origine fiable extrait du DSN.
-          // Surtout PAS `from` (= mailer-daemon@...), sinon on blocklist un daemon inutile
-          // ET on n'annule pas les relances du vrai prospect à l'adresse morte (→ bounces en boucle).
+          const body = await fetchBody()
           const orig = extractOriginalRecipient(body)
           if (orig && !isDaemonAddress(orig)) {
             await blocklistOnce(orig, 'bounce')
@@ -165,11 +172,19 @@ async function processBox(box: { email: string; password: string }, started: num
             stats.bounces++
             results.push(`[${box.email}] 🔴 bounce ${orig}`)
           } else {
-            // Destinataire d'origine introuvable dans le DSN → on NE blocklist RIEN à l'aveugle.
             results.push(`[${box.email}] ⚠ bounce sans destinataire identifiable (ignoré, from=${from})`)
           }
+          await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
           continue
         }
+
+        // Ne traiter QUE les réponses de VRAIS prospects (contact en base) → filtre le warmup.
+        const known = (await sql`SELECT 1 FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Array<unknown>
+        if (known.length === 0) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+
+        const body = await fetchBody()
+        await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
+        stats.processed++
 
         try {
           const outcome = await processReply({ from, subject, body, messageId, boxEmail: box.email, results })
