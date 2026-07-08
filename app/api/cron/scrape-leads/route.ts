@@ -15,6 +15,12 @@ export const maxDuration = 60
 const SCRAPE_MAX_RESULTS = 12
 const TIME_BUDGET_MS = 45000
 
+// ─── FREINS COÛT GOOGLE PLACES (API payante ~0,03-0,04 €/recherche) ───
+// Ne JAMAIS payer pour scraper alors qu'on a déjà des leads en réserve.
+const SCRAPE_PIPELINE_THRESHOLD = 100 // ne scrape QUE s'il reste < 100 leads frais en attente
+const DAILY_PLACES_CAP = 30           // plafond DUR d'appels Places / jour (protège la facture)
+const SCRAPE_MIN_INTERVAL_MIN = 30    // throttle : au plus 1 scrape / 30 min
+
 export async function GET(req: Request) {
   const cronAuth = checkCronAuth(req)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
@@ -25,13 +31,44 @@ export async function GET(req: Request) {
 
   const started = Date.now()
   const { db } = await import('@/lib/db')
-  const { contacts, campaigns, email_queue, blocklist } = await import('@/lib/db/schema')
-  const { eq } = await import('drizzle-orm')
+  const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
+  const { eq, and, sql } = await import('drizzle-orm')
   const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
 
   // Campagne active (pour rattacher les email_queue)
   const [activeCampaign] = await db.select().from(campaigns).where(eq(campaigns.status, 'active')).limit(1)
   if (!activeCampaign) return NextResponse.json({ skipped: true, reason: 'aucune campagne active' })
+
+  // ─── FREINS COÛT GOOGLE PLACES ──────────────────────────────────────────
+  const now = new Date()
+  const todayKey = now.toISOString().slice(0, 10)
+
+  // 1) Kill-switch manuel : SCRAPING_PAUSED=1 → zéro appel Places.
+  if (process.env.SCRAPING_PAUSED === '1') {
+    return NextResponse.json({ ok: true, scraping_paused: true })
+  }
+  // 2) Réserve suffisante : leads frais en attente (pending step 0). >= seuil → pas de scraping.
+  const [reserveRow] = await db.select({ n: sql<number>`count(*)::int` }).from(email_queue)
+    .where(and(eq(email_queue.campaign_id, activeCampaign.id), eq(email_queue.status, 'pending'), eq(email_queue.sequence_step, 0)))
+  const reserve = Number(reserveRow?.n ?? 0)
+  if (reserve >= SCRAPE_PIPELINE_THRESHOLD) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `réserve pleine (${reserve} leads ≥ ${SCRAPE_PIPELINE_THRESHOLD}) — économie API`, reserve })
+  }
+  // 3) Plafond DUR journalier d'appels Places.
+  const [capRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'places_calls_today'))
+  let placesToday = 0
+  try { const p = capRow?.value ? JSON.parse(capRow.value) : null; if (p?.date === todayKey) placesToday = p.count ?? 0 } catch { /* défaut 0 */ }
+  if (placesToday >= DAILY_PLACES_CAP) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `plafond Places atteint (${placesToday}/${DAILY_PLACES_CAP})` })
+  }
+  // 4) Throttle : au plus 1 scrape / SCRAPE_MIN_INTERVAL_MIN.
+  const [lastRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'last_scrape_at'))
+  if (lastRow?.value) {
+    const ageMin = (now.getTime() - new Date(lastRow.value).getTime()) / 60000
+    if (ageMin >= 0 && ageMin < SCRAPE_MIN_INTERVAL_MIN) {
+      return NextResponse.json({ ok: true, skipped: true, reason: `throttle (${ageMin.toFixed(0)}/${SCRAPE_MIN_INTERVAL_MIN} min)` })
+    }
+  }
 
   // SÉLECTION PONDÉRÉE (auto-apprentissage) : l'agent scrape davantage les secteurs
   // et régions qui répondent le mieux, tout en continuant d'explorer les autres
@@ -51,6 +88,14 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error('[scrape-leads] Google Places échoué :', err)
   }
+
+  // Un appel Places a été consommé → compte (plafond/jour) + horodate (throttle).
+  placesToday++
+  const placesVal = JSON.stringify({ date: todayKey, count: placesToday })
+  await db.insert(agent_config).values({ key: 'places_calls_today', value: placesVal })
+    .onConflictDoUpdate({ target: agent_config.key, set: { value: placesVal, updated_at: new Date() } })
+  await db.insert(agent_config).values({ key: 'last_scrape_at', value: now.toISOString() })
+    .onConflictDoUpdate({ target: agent_config.key, set: { value: now.toISOString(), updated_at: new Date() } })
 
 
   // Emails présents, confiance minimale, pas de fausse adresse.
