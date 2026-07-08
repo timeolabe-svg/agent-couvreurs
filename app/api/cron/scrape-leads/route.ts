@@ -54,20 +54,33 @@ export async function GET(req: Request) {
   if (reserve >= SCRAPE_PIPELINE_THRESHOLD) {
     return NextResponse.json({ ok: true, skipped: true, reason: `réserve pleine (${reserve} leads ≥ ${SCRAPE_PIPELINE_THRESHOLD}) — économie API`, reserve })
   }
-  // 3) Plafond DUR journalier d'appels Places.
-  const [capRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'places_calls_today'))
-  let placesToday = 0
-  try { const p = capRow?.value ? JSON.parse(capRow.value) : null; if (p?.date === todayKey) placesToday = p.count ?? 0 } catch { /* défaut 0 */ }
-  if (placesToday >= DAILY_PLACES_CAP) {
-    return NextResponse.json({ ok: true, skipped: true, reason: `plafond Places atteint (${placesToday}/${DAILY_PLACES_CAP})` })
-  }
-  // 4) Throttle : au plus 1 scrape / SCRAPE_MIN_INTERVAL_MIN.
+  // 3) Throttle : au plus 1 scrape / SCRAPE_MIN_INTERVAL_MIN (évite de consommer un crédit pour rien).
   const [lastRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'last_scrape_at'))
   if (lastRow?.value) {
     const ageMin = (now.getTime() - new Date(lastRow.value).getTime()) / 60000
     if (ageMin >= 0 && ageMin < SCRAPE_MIN_INTERVAL_MIN) {
       return NextResponse.json({ ok: true, skipped: true, reason: `throttle (${ageMin.toFixed(0)}/${SCRAPE_MIN_INTERVAL_MIN} min)` })
     }
+  }
+  // 4) Plafond DUR journalier — RÉSERVE ATOMIQUE d'un crédit AVANT l'appel Places.
+  //    Un seul UPDATE incrémente ET retourne le compteur → deux runs concurrents ne peuvent
+  //    PAS dépasser le plafond (contrairement à un lire-puis-écrire non atomique).
+  const reserveRes = await db.execute(sql`
+    INSERT INTO agent_config (key, value, updated_at)
+    VALUES ('places_calls_today', ${JSON.stringify({ date: todayKey, count: 1 })}, now())
+    ON CONFLICT (key) DO UPDATE SET
+      value = CASE
+        WHEN (agent_config.value::jsonb->>'date') = ${todayKey}
+          THEN jsonb_build_object('date', ${todayKey}::text, 'count', ((agent_config.value::jsonb->>'count')::int + 1))::text
+        ELSE jsonb_build_object('date', ${todayKey}::text, 'count', 1)::text
+      END,
+      updated_at = now()
+    RETURNING (value::jsonb->>'count')::int AS count
+  `)
+  const rrows = (Array.isArray(reserveRes) ? reserveRes : (reserveRes as unknown as { rows?: Array<{ count?: number }> }).rows) ?? []
+  const placesToday = Number(rrows[0]?.count ?? 999)
+  if (placesToday > DAILY_PLACES_CAP) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `plafond Places atteint (${placesToday}/${DAILY_PLACES_CAP})` })
   }
 
   // SÉLECTION PONDÉRÉE (auto-apprentissage) : l'agent scrape davantage les secteurs
@@ -89,11 +102,7 @@ export async function GET(req: Request) {
     console.error('[scrape-leads] Google Places échoué :', err)
   }
 
-  // Un appel Places a été consommé → compte (plafond/jour) + horodate (throttle).
-  placesToday++
-  const placesVal = JSON.stringify({ date: todayKey, count: placesToday })
-  await db.insert(agent_config).values({ key: 'places_calls_today', value: placesVal })
-    .onConflictDoUpdate({ target: agent_config.key, set: { value: placesVal, updated_at: new Date() } })
+  // Crédit Places déjà réservé atomiquement en amont. On ne fait qu'horodater le scrape (throttle).
   await db.insert(agent_config).values({ key: 'last_scrape_at', value: now.toISOString() })
     .onConflictDoUpdate({ target: agent_config.key, set: { value: now.toISOString(), updated_at: new Date() } })
 

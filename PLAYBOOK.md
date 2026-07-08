@@ -10,6 +10,37 @@
 
 ---
 
+## ⚠️ MISE À JOUR MAJEURE — 2026-07-08 (fait autorité sur les sections "envoi/réponses" ci-dessous)
+
+Le projet a migré de **Instantly (envoi)** vers un **moteur d'envoi + réponses MAISON** (SMTP/IMAP Gmail). Raison : Instantly plafonne à **1000 contacts uploadés** (limite dure, partagée entre projets, vite saturée). Le moteur maison n'a **aucune limite de leads**. **Instantly ne sert plus qu'au WARMUP.**
+
+**Nouvelle architecture d'envoi :**
+- `lib/gmail-sender.ts` : envoi SMTP (`smtp.gmail.com:465`) depuis les boîtes de la variable `IMAP_ACCOUNTS` (JSON `[{"email","password":"mdp app 16c","name"}]`).
+- `autopilot-tick` : ne pousse **plus** vers Instantly → génère la séquence (4 mails) et insère **4 lignes `email_queue`** (J+0/J+3/J+7/J+14, statut `queued`).
+- `send-campaign` (**NOUVEAU cron**) : draine `email_queue` via SMTP, **≤40/boîte/jour** (35 côté client hdigiweb).
+- `poll-imap-replies` (**NOUVEAU cron**) : lit les boîtes en **IMAP**, classe, capture changement d'adresse, cale les RDV, blocklist, et envoie les auto-réponses via SMTP (`lib/reply-agent/send-reply.ts`). **Remplace `check-replies` (supprimé)**. `backfill-sequences` supprimé aussi.
+
+**🛑 6 PROTECTIONS ANTI-BOUCLE OBLIGATOIRES** (après un incident réel : 130 mails au même contact + "Stop" ignoré) — dans tout `send-campaign` maison :
+1. Kill-switch `SEND_PAUSED=1` (env).
+2. **Claim atomique** : `UPDATE email_queue SET status='sending' WHERE id IN (SELECT ... 'queued' ... LIMIT n)` → une ligne réclamée n'est plus re-sélectionnable (zéro renvoi concurrent/après-timeout).
+3. **Reaper** : `status='sending' AND sent_at < NOW()-15min` → requeue (récupère les crashs).
+4. Échec d'envoi → `'failed'`, **jamais** de retour en `'queued'`.
+5. **Anti-doublon** : `NOT EXISTS (email_queue s WHERE s.contact_id=eq.contact_id AND s.sequence_step=eq.sequence_step AND s.status='sent')` → jamais 2× le même (contact, étape). Neutralise RÉTROACTIVEMENT une pile de doublons déjà en base.
+6. **Plafond à vie** : `COUNT(sent par contact) < 4`.
++ Opt-out dans le claim : exclure `incoming_replies` (hors oof/spam) ET `blocklist` (email + domaine). Côté mise en file : `ON CONFLICT DO NOTHING` (jamais `DO UPDATE status='queued'`, qui écraserait un opt-out) et ne queue QUE les contacts neufs.
+
+**🛑 4 FREINS COÛT GOOGLE PLACES OBLIGATOIRES** (l'API Places est **payante** ~0,03-0,04€/appel ; un scraping non bridé a coûté 119€) — dans tout cron de scraping :
+1. Kill-switch `SCRAPING_PAUSED=1`.
+2. **Ne scraper QUE si réserve < ~100 leads** (le vrai levier).
+3. **Plafond dur ~30 appels/jour** (compteur `places_calls_today` en `agent_config`).
+4. Throttle 1 scrape / 30 min (`last_scrape_at`).
++ Côté Google Cloud (seul plafond vraiment dur) : **APIs → Places API → Quotas → "Requests per day" (ou "SearchTextRequest per day") bas** + alerte de budget. NB : Places API **classique** (`maps/api/place/textsearch`) et **New** (`places:searchText`) ont des lignes de quota DIFFÉRENTES — vérifier laquelle le code utilise.
+
+**Nouvelles variables d'env :** `IMAP_ACCOUNTS` (obligatoire pour envoyer), `SEND_PAUSED`, `SCRAPING_PAUSED` (kill-switches). `INSTANTLY_INBOXES`/`INSTANTLY_INBOX_NAMES` restent (servent au nom d'expéditeur / signature).
+**Nouveaux crons cron-job.org :** `send-campaign` + `poll-imap-replies` (5-10 min). **Supprimer** l'ancien cron `check-replies`.
+
+---
+
 ## 0. Ce que fait l'agent (résumé)
 
 Un agent **100% autonome** qui, tout seul, en boucle :
@@ -17,7 +48,7 @@ Un agent **100% autonome** qui, tout seul, en boucle :
 2. **Audite** leur site web (détecte les vrais défauts techniques/SEO)
 3. **Valide** leurs emails (délivrabilité)
 4. **Écrit** un cold email ultra-personnalisé qui attaque le vrai défaut du site
-5. **Envoie** via Instantly (4 emails de séquence : initial + 3 relances)
+5. **Envoie** via ses propres boîtes Google chauffées (moteur SMTP maison — voir la MISE À JOUR 2026-07-08 ci-dessus ; Instantly = warmup only) — 4 emails de séquence : initial + 3 relances
 6. **Gère les réponses** (classe, répond automatiquement, gère les objections)
 7. **Cale les RDV** dans Google Calendar + facture via Stripe
 8. **S'améliore chaque mois** (teste des variantes/segments, garde les gagnants)

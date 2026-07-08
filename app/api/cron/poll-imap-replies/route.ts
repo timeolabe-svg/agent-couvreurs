@@ -153,13 +153,21 @@ async function processBox(box: { email: string; password: string }, started: num
         if (!from) continue
         stats.processed++
 
-        // Bounce → blocklist + annule les relances
+        // Bounce → blocklist + annule les relances DU VRAI destinataire.
         if (isBounceMessage(from, subject)) {
-          const orig = extractOriginalRecipient(body) ?? from
-          await sql`INSERT INTO blocklist (email, reason) VALUES (${orig}, 'bounce') ON CONFLICT DO NOTHING`.catch(() => {})
-          stats.cancelled += await cancelSteps(orig)
-          stats.bounces++
-          results.push(`[${box.email}] 🔴 bounce ${orig}`)
+          // On ne blocklist QUE le destinataire d'origine fiable extrait du DSN.
+          // Surtout PAS `from` (= mailer-daemon@...), sinon on blocklist un daemon inutile
+          // ET on n'annule pas les relances du vrai prospect à l'adresse morte (→ bounces en boucle).
+          const orig = extractOriginalRecipient(body)
+          if (orig && !isDaemonAddress(orig)) {
+            await blocklistOnce(orig, 'bounce')
+            stats.cancelled += await cancelSteps(orig)
+            stats.bounces++
+            results.push(`[${box.email}] 🔴 bounce ${orig}`)
+          } else {
+            // Destinataire d'origine introuvable dans le DSN → on NE blocklist RIEN à l'aveugle.
+            results.push(`[${box.email}] ⚠ bounce sans destinataire identifiable (ignoré, from=${from})`)
+          }
           continue
         }
 
@@ -263,21 +271,48 @@ async function processReply(params: {
   if (!inserted[0]) return null // course concurrente (index unique présent) → on saute
   const incomingReplyId = inserted[0].id
 
+  // ── OPT-OUT DÉTERMINISTE (prioritaire sur tout, y compris changement d'adresse) ──
+  // Ne dépend PAS de l'IA : un "Stop" / "désabonnez-moi" explicite = blocklist immédiate.
+  // (Analysé sur cleanBody = texte réel du prospect, pas notre footer cité.)
+  if (isExplicitOptOut(cleanBody)) {
+    await blocklistOnce(from, 'unsubscribe')
+    if (contact?.id) await cancelSteps(from)
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'blocklist', reason: 'opt-out explicite', company: contact?.company ?? from })}::jsonb)`
+    results.push(`⛔ opt-out explicite → blocklist ${from}`)
+    return { processed: true, classification: 'desinterest' }
+  }
+
   // ── Changement d'adresse : le prospect indique une nouvelle adresse mail ──
-  if (contact?.id) {
+  // On NE ressuscite PAS l'ancienne file (les 'sent' resteraient comptés → renvoi complet
+  // de la séquence + plafond à vie réinitialisé = le bug "130 mails"). À la place : on crée
+  // un contact NEUF sur la nouvelle adresse (compteurs anti-doublon/plafond repartent propres),
+  // on stoppe l'ancienne file, et l'autopilot régénère une séquence sur-mesure.
+  if (contact?.id && classification.action !== 'blocklist') {
     const newEmail = extractNewEmail(cleanBody, contact.email)
-    if (newEmail) {
+    if (newEmail && !isDaemonAddress(newEmail)) {
       try {
-        await sql`UPDATE contacts SET email = ${newEmail}, email_validated = true, email_confidence_score = 99, updated_at = NOW() WHERE id = ${contact.id}`
-        // Relance une file propre sur la nouvelle adresse (regénérée par autopilot).
-        await sql`
-          UPDATE email_queue
-          SET status = 'pending', scheduled_at = NOW(), sent_at = NULL, sequence_step = 0,
-              subject = '__pending_generation__', body = '__pending_generation__'
-          WHERE contact_id = ${contact.id}
-        `
+        // 1) Stoppe l'ancienne file — JAMAIS les 'sent'/'failed'.
+        await sql`UPDATE email_queue SET status = 'cancelled' WHERE contact_id = ${contact.id} AND status IN ('pending', 'queued', 'queued_instantly', 'sending')`
+        // 2) Contact neuf (hérite de l'audit déjà fait ; email confirmé par le prospect).
+        const nc = (await sql`
+          INSERT INTO contacts (email, company, name, city, sector, phone, website, source,
+            email_validated, email_confidence_score, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms)
+          SELECT ${newEmail}, company, name, city, sector, phone, website, 'email_change',
+            true, 99, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms
+          FROM contacts WHERE id = ${contact.id}
+          ON CONFLICT (email) DO NOTHING
+          RETURNING id
+        `) as Array<{ id: string }>
+        // 3) Une seule ligne step 0 'pending' → autopilot régénère une séquence propre.
+        if (nc[0]?.id) {
+          await sql`
+            INSERT INTO email_queue (contact_id, campaign_id, sequence_step, from_email, subject, body, status, scheduled_at)
+            SELECT ${nc[0].id}, campaign_id, 0, 'pending@hdigiweb.fr', '__pending_generation__', '__pending_generation__', 'pending', NOW()
+            FROM email_queue WHERE contact_id = ${contact.id} ORDER BY created_at ASC LIMIT 1
+          `
+        }
         await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, newEmail, company: contact.company, action: 'email_updated' })}::jsonb)`
-        results.push(`✉ changement d'adresse : ${contact.email} -> ${newEmail}`)
+        results.push(`✉ changement d'adresse : ${contact.email} -> ${newEmail} (contact neuf, file propre)`)
         return { processed: true, classification: classification.classification }
       } catch (e) {
         results.push(`MAJ adresse échouée ${from}: ${String(e).slice(0, 60)}`)
@@ -285,9 +320,9 @@ async function processReply(params: {
     }
   }
 
-  // ── Opt-out / désintérêt → blocklist + annulation des relances ──
+  // ── Opt-out / désintérêt (classé par l'IA) → blocklist + annulation des relances ──
   if (classification.action === 'blocklist') {
-    await sql`INSERT INTO blocklist (email, reason) VALUES (${from}, 'desinterest') ON CONFLICT DO NOTHING`.catch(() => {})
+    await blocklistOnce(from, 'desinterest')
     if (contact?.id) await cancelSteps(from)
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: 'blocklist', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
@@ -472,6 +507,30 @@ async function cancelSteps(email: string): Promise<number> {
   } catch { return 0 }
 }
 
+/** Détection DÉTERMINISTE d'un opt-out ("Stop", "désabonnez-moi"...) — indépendante de l'IA.
+ *  Analysé sur le texte réel du prospect (cleanBody), pas sur notre footer cité. */
+function isExplicitOptOut(text: string): boolean {
+  const t = (text || '').trim().toLowerCase()
+  if (/^stop\b/.test(t)) return true
+  return /désabonn|désinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|écrire|solliciter)|ne plus recevoir (vos|de|d'|ces)?\s*(mail|e-?mail|message|sollicit)|retir(ez|er)[- ]?(moi|nous)?.{0,15}(liste|mailing|base|diffusion)|enlev(ez|er).{0,15}(liste|mailing|base|diffusion)|arrêtez de (m'|nous )?(envoyer|écrire|contacter|solliciter)/i.test(t)
+}
+
+/** Adresse technique (daemon/postmaster) qu'il ne faut JAMAIS blocklister comme un prospect. */
+function isDaemonAddress(email: string): boolean {
+  return /mailer-daemon|postmaster|no[-.]?reply|do[-.]?not[-.]?reply|bounce/i.test(email)
+}
+
+/** Ajoute une adresse à la blocklist SANS créer de doublon (la table n'a pas de contrainte unique). */
+async function blocklistOnce(email: string, reason: string): Promise<void> {
+  try {
+    await sql`
+      INSERT INTO blocklist (email, reason)
+      SELECT ${email}, ${reason}
+      WHERE NOT EXISTS (SELECT 1 FROM blocklist WHERE LOWER(email) = LOWER(${email}))
+    `
+  } catch { /* non bloquant */ }
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     p,
@@ -550,7 +609,14 @@ function extractOriginalRecipient(body: string): string | null {
   const match = body.match(/Final-Recipient:\s*rfc822;\s*([^\s\r\n]+)/i)
     ?? body.match(/Original-Recipient:\s*rfc822;\s*([^\s\r\n]+)/i)
     ?? body.match(/To:\s*([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})/i)
-  return match ? match[1].trim().toLowerCase() : null
+  if (match) return match[1].trim().toLowerCase().replace(/[<>.,;)\]]+$/, '')
+  // Fallback : 1re adresse du corps qui n'est ni un daemon ni notre propre domaine.
+  const emails = body.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi) ?? []
+  for (const e of emails) {
+    const el = e.toLowerCase().replace(/[<>.,;)\]]+$/, '')
+    if (!isDaemonAddress(el) && !el.includes('hdigiweb') && !el.includes('google') && !el.includes('gmail')) return el
+  }
+  return null
 }
 
 // ─── Capture d'un changement d'adresse dans la réponse ───

@@ -76,8 +76,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, sent: 0, results: [...results, 'Plafond quotidien atteint sur toutes les boîtes'] })
     }
 
-    // REAPER : récupère les lignes coincées en 'sending' (crash/timeout) depuis > 15 min → requeue.
-    await sql`UPDATE email_queue SET status = 'queued' WHERE status = 'sending' AND sent_at < NOW() - INTERVAL '15 minutes'`
+    // REAPER : une ligne coincée en 'sending' > 15 min = le run qui l'a réclamée a crashé.
+    // On ne peut PAS savoir si le SMTP est parti avant le crash → on la marque 'failed' (JAMAIS
+    // 'queued'), pour ne JAMAIS risquer de renvoyer un mail déjà parti. Un mail rare perdu est
+    // acceptable ; un doublon (réputation/juridique) ne l'est pas. Cas très rare (runs < 30s).
+    const reaped = (await sql`
+      UPDATE email_queue SET status = 'failed'
+      WHERE status = 'sending' AND sent_at < NOW() - INTERVAL '15 minutes'
+      RETURNING id
+    `) as Array<{ id: string }>
+    if (reaped.length > 0) results.push(`⚠ ${reaped.length} ligne(s) 'sending' coincée(s) → 'failed' (anti-renvoi)`)
 
     // CLAIM ATOMIQUE : sort les lignes 'queued' → 'sending' en UNE requête (UPDATE ... WHERE id IN (SELECT)).
     // Une ligne passée en 'sending' ne peut PLUS être re-sélectionnée par un run concurrent
