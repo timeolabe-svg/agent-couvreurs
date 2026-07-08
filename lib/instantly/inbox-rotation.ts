@@ -44,6 +44,14 @@ function getInboxesFromEnv(): InboxAccount[] {
   }))
 }
 
+/** Nom d'expéditeur associé à une boîte (via INSTANTLY_INBOXES/INSTANTLY_INBOX_NAMES).
+ *  Sert au moteur d'envoi maison pour que l'enveloppe "From" colle à la signature du corps. */
+export function getInboxSenderName(email: string): string {
+  const inboxes = getInboxesFromEnv()
+  const found = inboxes.find(i => i.email.toLowerCase() === email.toLowerCase())
+  return found?.senderName ?? FALLBACK_NAME
+}
+
 // Incrément ATOMIQUE du compteur de rotation (anti-race) : un seul UPDATE ... RETURNING.
 // CRITIQUE : getNextInbox est appelé en PARALLÈLE (Promise.all) → l'ancienne version
 // lecture-puis-écriture donnait la MÊME boîte à plusieurs leads dans un même tick.

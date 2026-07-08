@@ -1,0 +1,706 @@
+/**
+ * GET/POST /api/cron/poll-imap-replies
+ *
+ * Détection FIABLE des réponses aux envois du moteur MAISON (SMTP Gmail).
+ * Lit UNIQUEMENT les boîtes Google (imap.gmail.com) via IMAP, timeouts courts,
+ * budget global < 55s, et traite chaque réponse : classification IA + historique
+ * de conversation + capture changement d'adresse + RDV auto + blocklist + brouillon.
+ *
+ * Sur toute vraie réponse (hors absence auto 'oof'), ANNULE les relances en file
+ * (ne pas se répéter). Remplace check-replies (Instantly, aveugle aux envois SMTP).
+ */
+import { NextRequest, NextResponse } from 'next/server'
+import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { checkCronAuth } from '@/lib/cron-auth'
+import { getGmailBoxes } from '@/lib/gmail-sender'
+import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
+import { isFakeEmail } from '@/lib/fake-email'
+import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
+
+// Client SQL brut, assigné dynamiquement dans le handler (évite d'évaluer neon()
+// au build, où DATABASE_URL est absent — cause d'échec de "collect page data").
+let sql!: NeonQueryFunction<false, false>
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+const GLOBAL_DEADLINE_MS = 44_000 // + 13s/boîte max = 57s < 60s Vercel
+const PER_BOX_TIMEOUT_MS = 13_000
+const MAX_MSGS_PER_BOX = 8
+const LOOKBACK_HOURS = 24
+
+const CLIENT_NOTIFY_EMAIL = (process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr')
+  .split(',').map(s => s.trim()).filter(Boolean)
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL ?? 'https://hdigiweb.fr'
+const RESEND_API_KEY = process.env.RESEND_API_KEY
+
+function randomDelayMs(): number {
+  return (4 + Math.floor(Math.random() * 9)) * 60 * 1000 // 4-12 min
+}
+
+export async function GET(req: NextRequest) { return POST(req) }
+
+export async function POST(req: NextRequest) {
+  const auth = checkCronAuth(req)
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
+
+  sql = (await import('@/lib/db')).sql
+
+  const boxes = getGmailBoxes()
+  if (boxes.length === 0) return NextResponse.json({ ok: false, results: ['aucune boîte Gmail (IMAP_ACCOUNTS)'] })
+
+  const mode = new URL(req.url).searchParams.get('mode')
+  if (mode === 'ping') return NextResponse.json({ ok: true, ping: true, boxes: boxes.map(b => b.email) })
+
+  const started = Date.now()
+  const results: string[] = []
+  const stats = { processed: 0, replies: 0, bounces: 0, cancelled: 0, sentReplies: 0 }
+
+  // ── Partie A : envoyer les auto-réponses programmées et prêtes (délai humain écoulé) ──
+  try {
+    const ready = (await sql`
+      SELECT rd.id AS draft_id, rd.body, rd.incoming_reply_id
+      FROM reply_drafts rd
+      WHERE rd.status = 'scheduled' AND rd.send_after <= NOW()
+      LIMIT 10
+    `) as Array<{ draft_id: string; body: string; incoming_reply_id: string }>
+    for (const d of ready) {
+      try {
+        const r = await sendReplyEmail(d.incoming_reply_id, d.body)
+        if (r.ok) {
+          await sql`UPDATE reply_drafts SET status = 'sent', sent_at = NOW() WHERE id = ${d.draft_id}`
+          await sql`UPDATE incoming_replies SET action_taken = 'replied' WHERE id = ${d.incoming_reply_id}`
+          stats.sentReplies++
+          results.push(`↩ auto-réponse envoyée → ${r.to} via ${r.via}`)
+        } else {
+          results.push(`✗ auto-réponse KO (${d.draft_id}): ${(r.error ?? '').slice(0, 80)}`)
+        }
+      } catch (e) {
+        results.push(`✗ auto-réponse erreur (${d.draft_id}): ${String(e).slice(0, 80)}`)
+      }
+    }
+  } catch (e) {
+    results.push(`Partie A erreur: ${String(e).slice(0, 80)}`)
+  }
+
+  // ── Partie B : lecture IMAP des boîtes + traitement des nouvelles réponses ──
+  const loop = (async () => {
+    for (const box of boxes) {
+      if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push('⏱ budget global atteint'); break }
+      try {
+        await withTimeout(processBox(box, started, results, stats), PER_BOX_TIMEOUT_MS, `box ${box.email}`)
+      } catch (e) {
+        results.push(`[${box.email}] ⏱/❌ ${String(e).slice(0, 90)}`)
+      }
+    }
+  })()
+
+  try {
+    await withTimeout(loop, 50_000, 'global')
+  } catch {
+    results.push('⏱ garde-fou global 50s déclenché — réponse partielle')
+  }
+
+  return NextResponse.json({
+    ok: true,
+    processed: stats.processed,
+    replies: stats.replies,
+    bounces: stats.bounces,
+    cancelled_steps: stats.cancelled,
+    sent_replies: stats.sentReplies,
+    results,
+  })
+}
+
+interface Stats { processed: number; replies: number; bounces: number; cancelled: number; sentReplies: number }
+
+/** Traite UNE boîte : connexion IMAP, lecture des non-lus, routage vers le pipeline. */
+async function processBox(box: { email: string; password: string }, started: number, results: string[], stats: Stats): Promise<void> {
+  const { ImapFlow } = await import('imapflow')
+  const client = new ImapFlow({
+    host: 'imap.gmail.com',
+    port: 993,
+    secure: true,
+    auth: { user: box.email, pass: box.password.replace(/\s+/g, '') },
+    logger: false,
+    socketTimeout: 7000,
+    greetingTimeout: 5000,
+    connectionTimeout: 5000,
+  })
+
+  await client.connect()
+  try {
+    const lock = await client.getMailboxLock('INBOX')
+    try {
+      const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000)
+      const found = await client.search({ seen: false, since })
+      const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX)
+      results.push(`[${box.email}] ${uids.length} non-lus`)
+
+      for (const uid of uids) {
+        if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push(`⏱ budget atteint pendant ${box.email}`); break }
+        let msg
+        try { msg = await client.fetchOne(uid, { envelope: true, source: true }) } catch { continue }
+        if (!msg || !msg.envelope) continue
+
+        const from = (msg.envelope.from?.[0]?.address ?? '').toLowerCase()
+        const subject = msg.envelope.subject ?? ''
+        const messageId = msg.envelope.messageId ?? `imap-${box.email}-${uid}`
+        const rawSrc = msg.source?.toString() ?? ''
+        const body = extractPlainText(rawSrc.length > 60_000 ? rawSrc.slice(0, 60_000) : rawSrc)
+        await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
+        if (!from) continue
+        stats.processed++
+
+        // Bounce → blocklist + annule les relances
+        if (isBounceMessage(from, subject)) {
+          const orig = extractOriginalRecipient(body) ?? from
+          await sql`INSERT INTO blocklist (email, reason) VALUES (${orig}, 'bounce') ON CONFLICT DO NOTHING`.catch(() => {})
+          stats.cancelled += await cancelSteps(orig)
+          stats.bounces++
+          results.push(`[${box.email}] 🔴 bounce ${orig}`)
+          continue
+        }
+
+        try {
+          const outcome = await processReply({ from, subject, body, messageId, boxEmail: box.email, results })
+          if (outcome?.processed) {
+            stats.replies++
+            if (outcome.classification && outcome.classification !== 'oof') {
+              stats.cancelled += await cancelSteps(from)
+            }
+          }
+        } catch (e) {
+          results.push(`[${box.email}] erreur pipeline ${from}: ${String(e).slice(0, 80)}`)
+        }
+      }
+    } finally {
+      lock.release()
+    }
+  } finally {
+    await client.logout().catch(() => { try { client.close() } catch { /* noop */ } })
+  }
+}
+
+// ── Pipeline de traitement d'une nouvelle réponse (classification → action) ──
+async function processReply(params: {
+  from: string; subject: string; body: string; messageId: string; boxEmail: string; results: string[]
+}): Promise<{ processed: boolean; classification?: string } | null> {
+  const { from, subject, body, messageId, results } = params
+  const { classifyReply, stripQuotedReply } = await import('@/lib/reply-agent/classifier')
+  const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+
+  const dedupKey = `imap:${messageId}`
+  // Dédup permanente par Message-ID (index unique sur instantly_reply_id).
+  const seen = (await sql`SELECT id FROM incoming_replies WHERE instantly_reply_id = ${dedupKey} LIMIT 1`) as Array<{ id: string }>
+  if (seen.length > 0) return null
+
+  // Contact (par email) — sinon création minimale.
+  type Contact = { id: string; email: string; name: string | null; company: string | null; city: string | null; sector: string | null; phone: string | null }
+  const contactRows = (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Contact[]
+  let contact: Contact | undefined = contactRows[0]
+
+  if (!contact && from.includes('@')) {
+    const created = (await sql`
+      INSERT INTO contacts (email, company, sector, source)
+      VALUES (${from}, ${from.split('@')[1]?.split('.')[0] ?? 'Inconnu'}, 'inconnu', 'reply_auto')
+      ON CONFLICT DO NOTHING
+      RETURNING id, email, name, company, city, sector, phone
+    `) as Contact[]
+    if (created[0]) contact = created[0]
+  }
+
+  const cleanBody = stripQuotedReply(body) || body
+
+  // Dédup par CONTENU (même message ré-entrant) pour ce contact.
+  if (contact?.id) {
+    const recent = (await sql`
+      SELECT body FROM incoming_replies WHERE contact_id = ${contact.id}
+      ORDER BY created_at DESC LIMIT 10
+    `) as Array<{ body: string }>
+    const norm = normalizeBody(cleanBody)
+    if (norm && recent.some(r => normalizeBody(stripQuotedReply(r.body ?? '') || r.body || '') === norm)) {
+      results.push(`doublon contenu ignoré : ${from}`)
+      return null
+    }
+  }
+
+  // Filtre warmup anglais (ne jamais jeter un vrai prospect FR).
+  if (!isLikelyFrench(cleanBody)) {
+    results.push(`warmup ignoré (anglais) : ${from}`)
+    return null
+  }
+
+  // Dernier email envoyé (contexte pour la classification).
+  let originalEmailBody = ''
+  if (contact?.id) {
+    const last = (await sql`
+      SELECT body FROM email_queue WHERE contact_id = ${contact.id} AND status = 'sent'
+      ORDER BY sent_at DESC LIMIT 1
+    `) as Array<{ body: string }>
+    originalEmailBody = last[0]?.body ?? ''
+  }
+
+  const classification = await classifyReply({
+    replyBody: cleanBody,
+    replySubject: subject,
+    originalEmailBody,
+    contactName: contact?.name ?? from,
+    contactCompany: contact?.company ?? from,
+    fromEmail: from,
+  })
+
+  // Insert incoming_replies. La dédup permanente est faite par le SELECT ci-dessus
+  // (dedupKey = Message-ID). ON CONFLICT DO NOTHING sans cible = filet de sécurité qui
+  // ne dépend PAS d'un index unique (pas encore garanti en base) → jamais d'erreur SQL.
+  const inserted = (await sql`
+    INSERT INTO incoming_replies (contact_id, from_email, subject, body, classification, action_taken, instantly_reply_id, processed_at)
+    VALUES (${contact?.id ?? null}, ${from}, ${subject}, ${body}, ${classification.classification}, ${classification.action}, ${dedupKey}, NOW())
+    ON CONFLICT DO NOTHING
+    RETURNING id
+  `) as Array<{ id: string }>
+  if (!inserted[0]) return null // course concurrente (index unique présent) → on saute
+  const incomingReplyId = inserted[0].id
+
+  // ── Changement d'adresse : le prospect indique une nouvelle adresse mail ──
+  if (contact?.id) {
+    const newEmail = extractNewEmail(cleanBody, contact.email)
+    if (newEmail) {
+      try {
+        await sql`UPDATE contacts SET email = ${newEmail}, email_validated = true, email_confidence_score = 99, updated_at = NOW() WHERE id = ${contact.id}`
+        // Relance une file propre sur la nouvelle adresse (regénérée par autopilot).
+        await sql`
+          UPDATE email_queue
+          SET status = 'pending', scheduled_at = NOW(), sent_at = NULL, sequence_step = 0,
+              subject = '__pending_generation__', body = '__pending_generation__'
+          WHERE contact_id = ${contact.id}
+        `
+        await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, newEmail, company: contact.company, action: 'email_updated' })}::jsonb)`
+        results.push(`✉ changement d'adresse : ${contact.email} -> ${newEmail}`)
+        return { processed: true, classification: classification.classification }
+      } catch (e) {
+        results.push(`MAJ adresse échouée ${from}: ${String(e).slice(0, 60)}`)
+      }
+    }
+  }
+
+  // ── Opt-out / désintérêt → blocklist + annulation des relances ──
+  if (classification.action === 'blocklist') {
+    await sql`INSERT INTO blocklist (email, reason) VALUES (${from}, 'desinterest') ON CONFLICT DO NOTHING`.catch(() => {})
+    if (contact?.id) await cancelSteps(from)
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: 'blocklist', company: contact?.company ?? from })}::jsonb)`
+    return { processed: true, classification: classification.classification }
+  }
+
+  if (classification.action === 'no_action') {
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: 'no_action', company: contact?.company ?? from })}::jsonb)`
+    return { processed: true, classification: classification.classification }
+  }
+
+  // Vraie conversation (intérêt/question/objection/RDV) → on stoppe les relances froides.
+  if (contact?.id && classification.classification !== 'oof') await cancelSteps(from)
+
+  // ── RDV : calcule le créneau AVANT de rédiger ──
+  const isRdv = classification.classification === 'rdv_request'
+  const extractedDate = (classification as { extractedDate?: string }).extractedDate
+  const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
+  const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
+
+  let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
+  let parsedDate: Date | null = null
+  let scheduledDate: Date | null = null
+  let proposedSlotStr: string | undefined
+
+  if (isRdv) {
+    try {
+      const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+      availabilityCfg = await getAvailability()
+      parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
+      scheduledDate = findNextAvailableSlot(parsedDate, availabilityCfg)
+      proposedSlotStr =
+        scheduledDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) +
+        ' à ' + scheduledDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    } catch (e) {
+      results.push(`calcul créneau échoué: ${String(e).slice(0, 60)}`)
+    }
+  }
+
+  const history = contact?.id ? await buildHistory(contact.id) : undefined
+
+  const draftBody = await generateReplyResponse({
+    classification: classification.classification,
+    originalEmailBody,
+    replyBody: cleanBody,
+    contactName: contact?.name ?? from,
+    contactCompany: contact?.company ?? from,
+    contactCity: contact?.city ?? '',
+    contactSector: contact?.sector ?? undefined,
+    conversationHistory: history,
+    proposedSlot: proposedSlotStr,
+    contactPhone: isRdv ? contactPhone : undefined,
+  })
+
+  // ── RDV auto-booking (Google Calendar + facturation Stripe) ──
+  let rdvHandled = false
+  if (isRdv && scheduledDate && availabilityCfg) {
+    const availability = availabilityCfg
+    try {
+      const { createCalendarEvent } = await import('@/lib/google-calendar')
+      const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
+      const exchangeSummary = buildExchangeSummary({
+        originalEmailBody, replyBody: cleanBody, draftBody,
+        contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
+      })
+
+      let googleEventId: string | null = null
+      let googleMeetLink: string | null = null
+      let calendarEventUrl: string | null = null
+      try {
+        const event = await createCalendarEvent({
+          summary: `RDV - ${contact?.company ?? from}`,
+          description: exchangeSummary,
+          startTime: toNaiveParisISO(scheduledDate),
+          endTime: toNaiveParisISO(endTime),
+          attendeeEmail: from,
+          meetLink: true,
+        })
+        if (event.eventId && !event.eventId.startsWith('mock_')) {
+          googleEventId = event.eventId
+          googleMeetLink = event.meetLink
+          calendarEventUrl = event.eventUrl
+        }
+      } catch (calErr) {
+        results.push(`Google Calendar error: ${String(calErr).slice(0, 60)}`)
+      }
+
+      const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
+        ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
+        : extractedDate ? `Date extraite : "${extractedDate}".` : 'Aucune date précisée — prochain créneau disponible sélectionné.'
+
+      const insertedRdv = (await sql`
+        INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, google_event_id, google_meet_link, notes)
+        VALUES (${contact?.id ?? null}, ${incomingReplyId}, ${scheduledDate.toISOString()}, ${availability.slotDurationMin || 30}, 'confirmed', ${googleEventId}, ${googleMeetLink}, ${`RDV demandé par le prospect. ${slotNote}${!googleEventId ? ' ⚠️ Sync Google Calendar échouée — à créer manuellement.' : ''}`})
+        RETURNING id
+      `) as Array<{ id: string }>
+
+      // Facturation UNIQUEMENT si un vrai event Google a été calé (idempotence = id RDV).
+      if (process.env.STRIPE_SECRET_KEY && insertedRdv[0]?.id && googleEventId) {
+        try {
+          const { stripe } = await import('@/lib/stripe')
+          const cust = (await sql`SELECT value FROM agent_config WHERE key = 'stripe_customer_id'`) as Array<{ value: string }>
+          const pm = (await sql`SELECT value FROM agent_config WHERE key = 'stripe_payment_method_id'`) as Array<{ value: string }>
+          if (cust[0]?.value && pm[0]?.value) {
+            await stripe.paymentIntents.create({
+              amount: 5000, currency: 'eur', customer: cust[0].value, payment_method: pm[0].value,
+              confirm: true, off_session: true,
+              description: `RDV Hdigiweb auto — ${contact?.company ?? from} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
+              metadata: { rdv_id: insertedRdv[0].id, contact_company: contact?.company ?? from },
+            }, { idempotencyKey: `rdv-charge-${insertedRdv[0].id}` })
+          }
+        } catch (stripeErr) {
+          results.push(`Stripe charge failed: ${String(stripeErr).slice(0, 60)}`)
+        }
+      }
+
+      await sendRdvNotificationEmail({
+        contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
+        scheduledAt: scheduledDate, googleMeetLink, calendarEventUrl, exchangeSummary,
+        conversationUrl: `${BASE_URL}/conversations?contact=${contact?.id ?? ''}`,
+      })
+      rdvHandled = true
+    } catch (rdvErr) {
+      results.push(`RDV auto-booking failed: ${String(rdvErr).slice(0, 60)}`)
+    }
+  }
+
+  // ── Brouillon de réponse ──
+  if (classification.action === 'auto_reply') {
+    // L'agent répond seul → envoi programmé avec délai humain (4-12 min), envoyé par la Partie A.
+    await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${incomingReplyId}, ${draftBody}, 'scheduled', ${new Date(Date.now() + randomDelayMs()).toISOString()})`
+  } else {
+    // draft_for_validation → validation humaine
+    await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status) VALUES (${incomingReplyId}, ${draftBody}, 'pending')`
+    if (!rdvHandled) {
+      await sendNotificationEmail({
+        contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
+        classification: classification.classification, replyBody: cleanBody, draftBody,
+      })
+    }
+  }
+
+  await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: classification.action, company: contact?.company ?? from, hasDraft: true })}::jsonb)`
+  return { processed: true, classification: classification.classification }
+}
+
+/** Historique chronologique complet d'une conversation (envoyés + reçus + réponses agent). */
+async function buildHistory(contactId: string): Promise<Array<{ role: 'sent' | 'received'; body: string; date: string }>> {
+  const items: Array<{ role: 'sent' | 'received'; body: string; ts: number }> = []
+  try {
+    const sent = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${contactId} AND status = 'sent'`) as Array<{ body: string; sent_at: string | null }>
+    for (const e of sent) if (e.body) items.push({ role: 'sent', body: e.body, ts: e.sent_at ? new Date(e.sent_at).getTime() : 0 })
+
+    const received = (await sql`SELECT body, created_at FROM incoming_replies WHERE contact_id = ${contactId}`) as Array<{ body: string; created_at: string | null }>
+    for (const r of received) if (r.body) items.push({ role: 'received', body: r.body, ts: r.created_at ? new Date(r.created_at).getTime() : 0 })
+
+    const agent = (await sql`
+      SELECT rd.body, rd.sent_at, rd.created_at
+      FROM reply_drafts rd
+      JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      WHERE ir.contact_id = ${contactId} AND rd.status IN ('sent', 'scheduled', 'pending')
+    `) as Array<{ body: string; sent_at: string | null; created_at: string | null }>
+    for (const a of agent) {
+      const ts = a.sent_at ? new Date(a.sent_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0)
+      if (a.body) items.push({ role: 'sent', body: a.body, ts })
+    }
+  } catch { /* non bloquant */ }
+  return items
+    .sort((x, y) => x.ts - y.ts)
+    .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+}
+
+/** Annule les relances en file pour un email (statuts d'attente/envoi du moteur maison). */
+async function cancelSteps(email: string): Promise<number> {
+  try {
+    const rows = await sql`
+      UPDATE email_queue SET status = 'cancelled'
+      WHERE contact_id = (SELECT id FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1)
+        AND status IN ('pending', 'queued', 'queued_instantly')
+      RETURNING id
+    `
+    return (rows as Array<{ id: string }>).length
+  } catch { return 0 }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout ${label}`)), ms)),
+  ])
+}
+
+// ─── Détection de bounce (échec de remise) ───
+function isBounceMessage(from: string, subject: string): boolean {
+  const f = from.toLowerCase()
+  if (/mailer-daemon|postmaster|mail\.?delivery|no[-.]?reply@.*(google|gmail)/.test(f)) return true
+  const s = subject.toLowerCase()
+  return /delivery status|undeliverable|mail delivery failed|returned mail|delivery failure|delivery has failed|échec.*remise|non distribu|adresse introuvable|address not found/i.test(s)
+}
+
+// ─── Extraction texte lisible d'un message RFC 2822 (ReDoS-safe) ───
+function extractPlainText(raw: string): string {
+  if (!raw) return ''
+  function decodePart(content: string, encoding: string): string {
+    const enc = encoding.toLowerCase().trim()
+    if (enc === 'base64') {
+      try { return Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8') } catch { return content }
+    }
+    if (enc === 'quoted-printable') {
+      return content.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    }
+    return content
+  }
+  function stripHtml(html: string): string {
+    return html
+      .replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+      .replace(/\s+/g, ' ').trim()
+  }
+  const headerEnd = raw.search(/\r?\n\r?\n/)
+  const headerZone = headerEnd > 0 ? raw.slice(0, headerEnd) : raw.slice(0, 4000)
+  const isMultipart = /Content-Type:\s*multipart\//i.test(headerZone)
+  const bMatch = isMultipart ? headerZone.match(/boundary="?([^"\r\n;]+)"?/i) : null
+  if (bMatch) {
+    const boundary = bMatch[1].trim()
+    const parts = raw.split(new RegExp('--' + boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:--)?'))
+    let textPlain: string | null = null, textHtml: string | null = null
+    for (const part of parts) {
+      if (!part.trim() || part.trim() === '--') continue
+      const sepIdx = part.search(/\r?\n\r?\n/)
+      if (sepIdx === -1) continue
+      const partHeaders = part.slice(0, sepIdx)
+      const partBody = part.slice(sepIdx).replace(/^\r?\n/, '')
+      const ctMatch = partHeaders.match(/Content-Type:\s*([^\s;]+)/i)
+      const cteMatch = partHeaders.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
+      const ct = ctMatch ? ctMatch[1].toLowerCase() : ''
+      const cte = cteMatch ? cteMatch[1] : '7bit'
+      if (ct === 'text/plain' && textPlain === null) textPlain = decodePart(partBody, cte)
+      else if (ct === 'text/html' && textHtml === null) textHtml = decodePart(partBody, cte)
+    }
+    if (textPlain) return textPlain.trim()
+    if (textHtml) return stripHtml(textHtml)
+  }
+  const sepIdx = raw.search(/\r?\n\r?\n/)
+  if (sepIdx !== -1) {
+    const headers = raw.slice(0, sepIdx)
+    const bodyRaw = raw.slice(sepIdx).replace(/^\r?\n/, '')
+    const cteMatch = headers.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
+    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i)
+    const cte = cteMatch ? cteMatch[1] : '7bit'
+    const ct = ctMatch ? ctMatch[1].toLowerCase() : 'text/plain'
+    const decoded = decodePart(bodyRaw, cte)
+    if (ct === 'text/html') return stripHtml(decoded)
+    return decoded.replace(/\s+/g, ' ').trim()
+  }
+  return stripHtml(raw)
+}
+
+function extractOriginalRecipient(body: string): string | null {
+  const match = body.match(/Final-Recipient:\s*rfc822;\s*([^\s\r\n]+)/i)
+    ?? body.match(/Original-Recipient:\s*rfc822;\s*([^\s\r\n]+)/i)
+    ?? body.match(/To:\s*([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})/i)
+  return match ? match[1].trim().toLowerCase() : null
+}
+
+// ─── Capture d'un changement d'adresse dans la réponse ───
+function extractNewEmail(text: string, currentEmail: string): string | null {
+  const changeIntent = /(chang\w*\s+d['’]?adresse|nouvelle\s+adresse|nouveau\s+(mail|email)|nouvel\s+(email|e-mail)|contactez[-\s]?(moi|nous)\s+(à|au|sur)|écrivez[-\s]?(moi|nous)|mon\s+(nouveau\s+|nouvel\s+)?(mail|email|adresse)|à\s+cette\s+adresse|utilisez\s+plut[oô]t|désormais\s+à|dorénavant)/i.test(text)
+  if (!changeIntent) return null
+  const emails = text.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi) ?? []
+  const cur = (currentEmail ?? '').toLowerCase()
+  for (const e of emails) {
+    const el = e.toLowerCase().replace(/[.,;)\]]+$/, '')
+    if (el !== cur && !isFakeEmail(el) && !el.includes('hdigiweb') && !el.includes('@instantly')) return el
+  }
+  return null
+}
+
+// ─── Filtre langue : garde tout vrai prospect FR, ne saute que du warmup anglais évident ───
+function isLikelyFrench(text: string): boolean {
+  const lower = text.toLowerCase()
+  if (/[àâéèêëîïôùûüçœæ]/.test(lower)) return true
+  if (/0[1-9]([\s.]?\d{2}){4}/.test(text)) return true
+  const frenchWords = ['bonjour', 'merci', 'vous', 'nous', 'pour', 'avec', 'salut', 'rappel',
+    'cordialement', 'madame', 'monsieur', 'bonne', 'votre', 'notre', 'appel',
+    'bien', 'aussi', 'mais', 'comme', 'dans', 'alors', 'donc', 'rdv',
+    'oui', 'non', 'devis', 'travaux', 'toiture', 'couverture', 'site', 'prix']
+  if (frenchWords.some(w => lower.includes(w))) return true
+  const wordCount = lower.trim().split(/\s+/).filter(Boolean).length
+  if (wordCount <= 4) return true
+  const englishMarkers = ['the', 'please', 'meeting', 'regards', 'thanks', 'thank you',
+    'let me know', 'schedule', 'available', 'hello', 'hi ', 'looking forward', 'best ', 'great ']
+  return englishMarkers.filter(w => lower.includes(w)).length < 2
+}
+
+// ─── Parse d'une date FR relative en Date (heure murale Paris) ───
+function parseExtractedDate(dateStr: string): Date | null {
+  const direct = new Date(dateStr)
+  if (!isNaN(direct.getTime()) && direct.getFullYear() > 2020) return toParisWallClock(direct)
+  const now = toParisWallClock()
+  const lower = dateStr.toLowerCase()
+  const setHourFromText = (d: Date) => {
+    const hm = lower.match(/(\d{1,2})\s*h\s*(\d{0,2})/)
+    if (hm) { d.setHours(parseInt(hm[1]), parseInt(hm[2] || '0'), 0, 0); return }
+    if (/fin de journ[ée]e|fin d'?apr[èe]s-?midi|ce soir|en soir[ée]e/.test(lower)) { d.setHours(17, 0, 0, 0); return }
+    if (/d[ée]but d'?apr[èe]s-?midi|d[ée]but apr[èe]s-?midi/.test(lower)) { d.setHours(14, 0, 0, 0); return }
+    if (/matin|matin[ée]e/.test(lower)) { d.setHours(9, 30, 0, 0); return }
+    if (/apr[èe]s-?midi/.test(lower)) { d.setHours(15, 0, 0, 0); return }
+    if (/midi/.test(lower)) { d.setHours(12, 0, 0, 0); return }
+    d.setHours(17, 0, 0, 0)
+  }
+  if (/aujourd'?hui|ce soir|fin de journ[ée]e|en soir[ée]e/.test(lower) && !/demain/.test(lower)) {
+    const d = new Date(now); setHourFromText(d); return d
+  }
+  if (/demain/.test(lower)) {
+    const d = new Date(now); d.setDate(d.getDate() + 1); setHourFromText(d); return d
+  }
+  const dayMap: Record<string, number> = { lundi: 1, mardi: 2, mercredi: 3, jeudi: 4, vendredi: 5, samedi: 6, dimanche: 0 }
+  for (const [day, dayNum] of Object.entries(dayMap)) {
+    if (lower.includes(day)) {
+      const target = new Date(now)
+      const currentDay = target.getDay()
+      let daysUntil = dayNum - currentDay
+      if (daysUntil <= 0) daysUntil += 7
+      target.setDate(target.getDate() + daysUntil)
+      const hourMatch = lower.match(/(\d{1,2})h(\d{0,2})/)
+      if (hourMatch) target.setHours(parseInt(hourMatch[1]), parseInt(hourMatch[2] || '0'), 0, 0)
+      else if (lower.includes('matin')) target.setHours(9, 0, 0, 0)
+      else if (lower.includes('après-midi') || lower.includes('apres-midi')) target.setHours(14, 0, 0, 0)
+      else target.setHours(10, 0, 0, 0)
+      return target
+    }
+  }
+  return null
+}
+
+function buildExchangeSummary(params: {
+  originalEmailBody: string; replyBody: string; draftBody: string; contactName: string; contactCompany: string
+}): string {
+  return `=== RÉSUMÉ DE L'ÉCHANGE ===
+
+PROSPECT : ${params.contactName} (${params.contactCompany})
+
+EMAIL ENVOYÉ :
+${params.originalEmailBody.substring(0, 500)}${params.originalEmailBody.length > 500 ? '...' : ''}
+
+RÉPONSE DU PROSPECT :
+${params.replyBody.substring(0, 500)}${params.replyBody.length > 500 ? '...' : ''}
+
+DRAFT DE RÉPONSE PRÉPARÉ :
+${params.draftBody.substring(0, 300)}${params.draftBody.length > 300 ? '...' : ''}
+
+=== FIN DU RÉSUMÉ ===`
+}
+
+async function sendRdvNotificationEmail(params: {
+  contactName: string; contactCompany: string; scheduledAt: Date
+  googleMeetLink: string | null; calendarEventUrl: string | null; exchangeSummary: string; conversationUrl?: string
+}) {
+  if (!RESEND_API_KEY) return
+  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+      to: CLIENT_NOTIFY_EMAIL,
+      subject: `🎯 RDV automatiquement calé — ${params.contactCompany}`,
+      html: `
+        <h2 style="color:#22c55e">🎯 RDV calé automatiquement !</h2>
+        <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
+        <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
+        ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}
+        ${params.calendarEventUrl ? `<p>📆 <a href="${params.calendarEventUrl}">Voir dans Google Calendar</a></p>` : ''}
+        ${params.conversationUrl ? `<p>💬 <a href="${params.conversationUrl}">Voir la conversation complète →</a></p>` : ''}
+        <hr/>
+        <h3>Résumé de l'échange</h3>
+        <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
+      `,
+    }),
+  }).catch(() => {})
+}
+
+async function sendNotificationEmail(params: {
+  contactName: string; contactCompany: string; classification: string; replyBody: string; draftBody: string
+}) {
+  if (!RESEND_API_KEY) return
+  await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
+    body: JSON.stringify({
+      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+      to: CLIENT_NOTIFY_EMAIL,
+      subject: `Réponse à valider — ${params.contactCompany}`,
+      html: `
+        <h2>Nouvelle réponse à valider</h2>
+        <p><strong>De :</strong> ${params.contactName} (${params.contactCompany})</p>
+        <p><strong>Classification :</strong> ${params.classification}</p>
+        <p><strong>Message reçu :</strong></p>
+        <blockquote style="border-left:3px solid #ccc;padding-left:12px;color:#555">${escapeHtml(params.replyBody).replace(/\n/g, '<br>')}</blockquote>
+        <p><strong>Draft de réponse :</strong></p>
+        <blockquote style="border-left:3px solid #2563eb;padding-left:12px;color:#333">${escapeHtml(params.draftBody).replace(/\n/g, '<br>')}</blockquote>
+        <p><a href="${BASE_URL}/reponses-a-valider" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none">Valider / Modifier</a></p>
+      `,
+    }),
+  }).catch(() => {})
+}
+
+function normalizeBody(s: string): string {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}

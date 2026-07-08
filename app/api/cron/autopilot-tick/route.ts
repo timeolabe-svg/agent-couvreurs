@@ -140,12 +140,11 @@ export async function GET(request: NextRequest) {
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
   const { eq, and, or, gte, lte, sql } = await import('drizzle-orm')
-  const { addLeadsToCampaign } = await import('@/lib/instantly/client')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
-  let sent = 0
+  let queued = 0
   let campaignsProcessed = 0
   let leadsScraped = 0
   let scrapedCity = ''
@@ -569,45 +568,25 @@ export async function GET(request: NextRequest) {
     console.warn('[autopilot] GOOGLE_PLACES_API_KEY manquante — scraping désactivé')
   }
 
-  // ─── ÉTAPE 3 : Envoi des emails (logique existante) ───────────────────────
+  // ─── ÉTAPE 3 : Génération + mise en FILE (moteur d'envoi MAISON) ───────────
+  // On ne pousse PLUS vers Instantly (limite dure de leads, partagée/saturée).
+  // Pour chaque nouveau contact (ligne step 0 'pending', audité + email fiable),
+  // on génère la séquence de 4 emails sur-mesure et on insère 4 lignes dans
+  // email_queue (J+0/J+3/J+7/J+14, status 'queued'). Le cron send-campaign envoie
+  // ensuite ces lignes via nos boîtes Google chauffées (SMTP), sans limite de leads.
+  // Instantly ne sert plus qu'au WARMUP.
   try {
     const activeCampaigns = await db
       .select()
       .from(campaigns)
       .where(eq(campaigns.status, 'active'))
 
-    const todayStart = new Date()
-    todayStart.setHours(0, 0, 0, 0)
-
-    const [sentTodayResult] = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(email_queue)
-      .where(
-        and(
-          eq(email_queue.status, 'sent'),
-          gte(email_queue.sent_at!, todayStart)
-        )
-      )
-
-    const sentToday = Number(sentTodayResult?.count ?? 0)
-    const remainingCapacity = dailyCapacity - sentToday
-
-    if (remainingCapacity <= 0) {
-      return NextResponse.json({
-        sent: 0,
-        campaigns_processed: 0,
-        leads_scraped: leadsScraped,
-        scraped_city: scrapedCity,
-        agent_decisions: agentDecisions,
-        reason: 'daily_capacity_reached',
-      })
-    }
-
     for (const campaign of activeCampaigns) {
-      if (sent >= remainingCapacity) break
-
       const now = new Date()
+      // Délais entre étapes (jours). Par défaut [0, 3, 7, 14].
+      const delays = ((campaign.sequence_delay_days as number[] | null) ?? [0, 3, 7, 14])
 
+      // Nouveaux contacts à préparer : ligne step 0 'pending', déjà auditée + email fiable.
       const pendingLeads = await db
         .select({
           queue: email_queue,
@@ -619,12 +598,13 @@ export async function GET(request: NextRequest) {
           and(
             eq(email_queue.campaign_id, campaign.id),
             eq(email_queue.status, 'pending'),
+            eq(email_queue.sequence_step, 0),
             lte(email_queue.scheduled_at!, now),
-            // GARANTIE QUALITÉ : on n'envoie QUE des contacts déjà audités.
+            // GARANTIE QUALITÉ : on ne prépare QUE des contacts déjà audités.
             // Les non-audités attendent que le cron audit-sites les traite → l'IA
             // aura toujours un vrai défaut à citer, jamais de mail générique.
             eq(contacts.audit_done, true),
-            // GARANTIE DÉLIVRABILITÉ : on envoie si l'email est SÛR (email cliquable
+            // GARANTIE DÉLIVRABILITÉ : on prépare si l'email est SÛR (email cliquable
             // publié sur leur site, confiance >= 90) OU validé par MillionVerifier.
             // Les emails INCERTAINS (préfixe deviné) attendent MV → pas de bounce.
             or(
@@ -638,16 +618,6 @@ export async function GET(request: NextRequest) {
       if (pendingLeads.length === 0) continue
 
       campaignsProcessed++
-
-      const instantlyId = campaign.instantly_campaign_id ?? process.env.INSTANTLY_CAMPAIGN_ID
-      if (!instantlyId) {
-        console.warn('[autopilot-tick] Pas d\'INSTANTLY_CAMPAIGN_ID')
-        continue
-      }
-
-      const sequenceTypeMap: Record<number, 'initial' | 'followup_1' | 'followup_2' | 'followup_3'> = {
-        0: 'initial', 1: 'followup_1', 2: 'followup_2', 3: 'followup_3', 4: 'followup_3',
-      }
 
       // 1. Pré-filtre : retirer les blocklistés (et annuler leur file restante)
       const candidates: typeof pendingLeads = []
@@ -745,44 +715,53 @@ export async function GET(request: NextRequest) {
         }
       }))
 
-      // 3. Pousser vers Instantly + MAJ DB. On pousse les 4 emails comme variables
-      //    ({{subject}}/{{body}} pour l'initial, {{subject2}}/{{body2}}... pour les relances).
+      // 3. Mettre en FILE (moteur maison) : on réutilise la ligne step 0 existante
+      //    pour l'email initial, et on insère 3 lignes planifiées pour les relances.
+      //    Rien n'est envoyé ici — send-campaign draine la file via SMTP.
       for (const item of prepared) {
         if (!item || item.emails.length === 0) continue
-        if (sent >= remainingCapacity) break
         const { queue, contact, inbox, emails, variantId } = item
         try {
-          const cv: Record<string, string> = { city: contact.city ?? '', sector: contact.sector ?? '' }
-          emails.forEach((e, i) => {
-            const suffix = i === 0 ? '' : String(i + 1)
-            cv[`subject${suffix}`] = e.subject
-            cv[`body${suffix}`] = e.body
-          })
-          await addLeadsToCampaign(instantlyId, [
-            {
-              email: contact.email,
-              first_name: contact.name?.split(' ')[0] || undefined,
-              last_name: contact.name?.split(' ').slice(1).join(' ') || undefined,
-              company_name: contact.company,
-              phone: contact.phone ?? undefined,
-              website: contact.website ?? undefined,
-              custom_variables: cv,
-            },
-          ])
+          // Étape 0 (initial) : réutilise la ligne 'pending' existante → 'queued', J+0.
           await db.update(email_queue)
-            .set({ status: 'sent', sent_at: new Date(), subject: emails[0].subject, body: emails[0].body, from_email: inbox.email, variant_id: variantId })
+            .set({
+              status: 'queued',
+              from_email: inbox.email,
+              subject: emails[0].subject,
+              body: emails[0].body,
+              variant_id: variantId,
+              scheduled_at: now,
+            })
             .where(eq(email_queue.id, queue.id))
+
+          // Étapes 1..3 (relances) : nouvelles lignes planifiées J+delays[i].
+          for (let i = 1; i < emails.length; i++) {
+            const dayOffset = delays[i] ?? [0, 3, 7, 14][i] ?? i * 3
+            const when = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000)
+            await db.insert(email_queue).values({
+              contact_id: contact.id,
+              campaign_id: campaign.id,
+              sequence_step: i,
+              from_email: inbox.email,
+              subject: emails[i].subject,
+              body: emails[i].body,
+              status: 'queued',
+              scheduled_at: when,
+              variant_id: variantId,
+            })
+          }
+
           await db.insert(dashboard_events).values({
-            type: 'email_sent',
+            type: 'email_queued',
             data: {
               contactId: contact.id, contactEmail: contact.email, company: contact.company,
               city: contact.city, campaignId: campaign.id, campaignName: campaign.name,
-              sequenceStep: queue.sequence_step, subject: emails[0].subject,
+              steps: emails.length, fromEmail: inbox.email, subject: emails[0].subject,
             },
           })
-          sent++
+          queued++
         } catch (err) {
-          console.error('[autopilot-tick] Error sending lead', queue.id, err)
+          console.error('[autopilot-tick] Error queueing lead', queue.id, err)
           if (!firstSendError) firstSendError = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
         }
       }
@@ -790,7 +769,7 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error('[autopilot-tick] Fatal error in email sending', err)
     return NextResponse.json({
-      sent,
+      queued,
       campaigns_processed: campaignsProcessed,
       leads_scraped: leadsScraped,
       scraped_city: scrapedCity,
@@ -800,7 +779,7 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json({
-    sent,
+    queued,
     campaigns_processed: campaignsProcessed,
     leads_scraped: leadsScraped,
     scraped_city: scrapedCity || null,

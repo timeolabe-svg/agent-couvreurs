@@ -5,3 +5,5 @@ import * as schema from './schema'
 const sql = neon(process.env.DATABASE_URL!)
 export const db = drizzle(sql, { schema })
 export type DB = typeof db
+// Accès SQL brut (pour requêtes complexes : moteur d'envoi maison, anti-répétition...).
+export { sql }

@@ -17,9 +17,9 @@ export async function GET(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts, incoming_replies, reply_drafts, email_queue } = await import('@/lib/db/schema')
-  const { eq, and, sql } = await import('drizzle-orm')
-  const { sendReply } = await import('@/lib/instantly/client')
+  const { contacts, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
+  const { eq, sql } = await import('drizzle-orm')
+  const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
 
   // 1. Find contact by email
@@ -40,21 +40,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: `No incoming reply found for contact: ${email}` }, { status: 404 })
   }
 
-  if (!latestReply.instantly_reply_id) {
-    return NextResponse.json({ error: 'Latest incoming reply has no instantly_reply_id' }, { status: 422 })
-  }
-
-  // 3. Find the original sender email account
-  const [orig] = await db
-    .select({ from_email: email_queue.from_email })
-    .from(email_queue)
-    .where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'sent')))
-    .orderBy(sql`${email_queue.sent_at} desc`)
-    .limit(1)
-
-  const eaccount = orig?.from_email
-
-  // 4. Generate a targeted follow-up with rdv_request strategy
+  // 3. Generate a targeted follow-up with rdv_request strategy
   const replyBody = await generateReplyResponse({
     classification: 'rdv_request',
     originalEmailBody: '',
@@ -65,13 +51,11 @@ export async function GET(request: NextRequest) {
     contactSector: contact.sector ?? undefined,
   })
 
-  // 5. Send via Instantly
-  await sendReply({
-    reply_to_id: latestReply.instantly_reply_id,
-    body: replyBody,
-    eaccount,
-    subject: latestReply.subject ?? undefined,
-  })
+  // 4. Send via le moteur MAISON (SMTP Gmail) — depuis la boîte gabin@ d'origine.
+  const sendRes = await sendReplyEmail(latestReply.id, replyBody)
+  if (!sendRes.ok) {
+    return NextResponse.json({ error: `Send failed: ${sendRes.error ?? 'inconnu'}` }, { status: 500 })
+  }
 
   // 6. Insert into reply_drafts with status sent
   await db.insert(reply_drafts).values({

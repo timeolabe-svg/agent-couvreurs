@@ -18,8 +18,8 @@ export async function PATCH(
   }
 
   const { db } = await import('@/lib/db')
-  const { reply_drafts, incoming_replies, learned_replies, email_queue } = await import('@/lib/db/schema')
-  const { eq, and, sql } = await import('drizzle-orm')
+  const { reply_drafts, incoming_replies, learned_replies } = await import('@/lib/db/schema')
+  const { eq } = await import('drizzle-orm')
 
   const [draft] = await db.select().from(reply_drafts).where(eq(reply_drafts.id, id))
   if (!draft) return NextResponse.json({ error: 'Draft not found' }, { status: 404 })
@@ -42,28 +42,14 @@ export async function PATCH(
       ? await db.select().from(incoming_replies).where(eq(incoming_replies.id, draft.incoming_reply_id))
       : [null]
 
-    const { sendReply } = await import('@/lib/instantly/client')
+    const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
     const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
 
     try {
       if (incoming) {
-        // Retrouver la boîte gabin@ d'origine (eaccount requis par Instantly)
-        let eaccount: string | undefined
-        if (incoming.contact_id) {
-          const [orig] = await db
-            .select({ from_email: email_queue.from_email })
-            .from(email_queue)
-            .where(and(eq(email_queue.contact_id, incoming.contact_id), eq(email_queue.status, 'sent')))
-            .orderBy(sql`${email_queue.sent_at} desc`)
-            .limit(1)
-          eaccount = orig?.from_email
-        }
-        await sendReply({
-          reply_to_id: incoming.instantly_reply_id ?? incoming.id,
-          body: updatedBody,
-          eaccount,
-          subject: incoming.subject ?? undefined,
-        })
+        // Envoi via le moteur MAISON (SMTP Gmail) — depuis la boîte gabin@ d'origine.
+        const r = await sendReplyEmail(incoming.id, updatedBody)
+        if (!r.ok) return NextResponse.json({ error: `Send failed: ${r.error ?? 'inconnu'}` }, { status: 500 })
       }
 
       await db
