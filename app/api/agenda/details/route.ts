@@ -12,28 +12,15 @@ export const dynamic = 'force-dynamic'
 
 type ConvMsg = { role: 'nous' | 'prospect'; body: string; date: string }
 
-/** Nettoie la conversation pour l'affichage client : RÉÉCRIT les messages incohérents
- *  de l'agent (ancien bug : faux appels immédiats, "avez-vous répondu à mon appel") en
- *  messages cohérents, masque les "oui/ok" seuls redondants et les doublons.
- *  N'affecte QUE l'affichage — les vrais emails envoyés au prospect ne changent pas. */
+/** Affiche la VRAIE conversation (ce qui a réellement été échangé) : on retire juste
+ *  les messages vides et les doublons consécutifs quasi identiques. Aucune réécriture :
+ *  l'affichage doit correspondre à ce que le prospect a réellement reçu. */
 function cleanConversation(msgs: ConvMsg[]): ConvMsg[] {
-  // Faux appel immédiat → réécrit en report poli et cohérent.
-  const CALL_NOW = /je vous (contacte|appelle|rappelle)[^.\n]*?(tout de suite|maintenant|imm[ée]diatement)/i
-  // Messages de boucle sans valeur → masqués.
-  const LOOP_JUNK = /avez[- ]vous (pu )?(r[ée]pondu à mon appel|me joindre|donner suite)|j'ai bien not[ée] votre/i
-  const TRIVIAL = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|maintenant|👍)[\s.!]*$/i
   const norm = (s: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim()
   const out: ConvMsg[] = []
   for (const m of msgs) {
-    let body = (m.body || '').trim()
+    const body = (m.body || '').trim()
     if (!body) continue
-    if (m.role === 'nous') {
-      if (LOOP_JUNK.test(body)) continue // redondant → masqué
-      if (CALL_NOW.test(body)) {
-        body = "Bien noté. On est un peu chargés aujourd'hui, je vous rappelle demain plutôt. Ça vous convient ?"
-      }
-    }
-    if (m.role === 'prospect' && TRIVIAL.test((body.split('\n')[0] ?? '').trim())) continue
     const prev = out[out.length - 1]
     if (prev && prev.role === m.role && norm(prev.body).slice(0, 80) === norm(body).slice(0, 80)) {
       if (body.length > prev.body.length) out[out.length - 1] = m
