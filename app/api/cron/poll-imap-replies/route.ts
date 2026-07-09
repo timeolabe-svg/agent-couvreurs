@@ -357,12 +357,23 @@ async function processReply(params: {
   const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
   const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
 
+  // RDV déjà calé ? → on ne re-propose rien, on confirme juste (et on saute les "oui/ok").
+  const existRdv = contact?.id ? (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }> : []
+  const existRdvAt = existRdv[0]?.scheduled_at ? new Date(existRdv[0].scheduled_at) : null
+  const existingRdvSlot = existRdvAt ? existRdvAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + existRdvAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : undefined
+  const firstLine = (cleanBody.split('\n')[0] ?? '').trim()
+  const trivialAck = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|[çc]a marche|tr[èe]s bien|👍)\s*[.!]?$/i.test(firstLine)
+  if (existingRdvSlot && trivialAck) {
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'no_action_rdv_deja_cale', company: contact?.company ?? from })}::jsonb)`
+    return { processed: true, classification: classification.classification }
+  }
+
   let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
   let parsedDate: Date | null = null
   let scheduledDate: Date | null = null
   let proposedSlotStr: string | undefined
 
-  if (isRdv) {
+  if (isRdv && !existingRdvSlot) {
     try {
       const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
       availabilityCfg = await getAvailability()
@@ -397,6 +408,7 @@ async function processReply(params: {
     proposedSlot: proposedSlotStr,
     contactPhone: isRdv ? contactPhone : undefined,
     fromEmail: ownerBox,
+    existingRdvSlot,
   })
 
   // ── RDV auto-booking (Google Calendar + facturation Stripe) ──

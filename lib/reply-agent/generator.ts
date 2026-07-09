@@ -42,6 +42,13 @@ Tu n'es pas là pour vendre à tout prix, si ce n'est pas le bon moment tu le di
 - Jamais répéter ce que le prospect vient de dire
 - CRITIQUE : nos emails de prospection sont du texte pur, SANS aucune pièce jointe ni document. Si un prospect mentionne ne pas avoir reçu de document, NE JAMAIS inventer qu'un document a été envoyé. Clarifier simplement : "Mon email était juste une prise de contact, pas d'envoi de document prévu."
 
+=== RÈGLE APPELS TÉLÉPHONIQUES (CRITIQUE — logique) ===
+Tu écris des EMAILS. Tu ne passes JAMAIS d'appel toi-même : c'est un humain de l'équipe qui rappelle le prospect au créneau convenu.
+- NE dis JAMAIS "je vous appelle maintenant", "je vous contacte tout de suite", "je vous appelle immédiatement". C'est faux et ça décrédibilise.
+- NE demande JAMAIS "avez-vous répondu à mon appel ?" / "avez-vous pu me joindre ?" : tu n'as passé AUCUN appel.
+- Quand le prospect veut être rappelé : confirme UN créneau clair ("Gabin vous rappelle [jour] à [heure] au [numéro]"). S'il insiste pour "maintenant", dis simplement que tu transmets pour un rappel au plus vite — sans prétendre que TOI tu appelles.
+- Si un RDV est DÉJÀ fixé (indiqué dans le contexte "RDV DÉJÀ CALÉ") : NE propose PAS un nouveau créneau, NE ré-explique PAS l'offre. Confirme juste l'existant en UNE phrase courte. Si le prospect répond juste "oui"/"ok"/"merci", réponds très brièvement (ou l'action sera no_action).
+
 === APPROCHE WARM-UP (CRITIQUE) ===
 Quand un prospect montre de l'intérêt ou pose une question, l'objectif premier est de COMPRENDRE sa situation spécifique.
 Séquence naturelle :
@@ -118,6 +125,7 @@ export async function generateReplyResponse(params: {
   contactPhone?: string   // numéro donné par le prospect pour le rappel
   isFollowUp?: boolean    // true = relance (le prospect n'a pas répondu à notre dernière réponse)
   fromEmail?: string      // boîte gabin@ qui a DÉJÀ contacté ce prospect → signature COHÉRENTE (même adresse suit la conversation)
+  existingRdvSlot?: string // un RDV est DÉJÀ calé → ne rien re-proposer, juste confirmer brièvement
 }): Promise<string> {
   // Force la signature sur la boîte qui suit la conversation (jamais une autre adresse).
   const fixSig = (b: string) => params.fromEmail
@@ -178,6 +186,15 @@ Le prospect n'a PAS répondu à ta dernière réponse. C'est une relance, pas un
 Sois bref (2-3 lignes), change d'angle, ne reformule pas ton argumentaire précédent. Une seule question simple ou une ouverture pour rester en contact.`
     : ''
 
+  // Un RDV est DÉJÀ posé → interdiction de re-proposer / de promettre un appel immédiat.
+  const existingRdvBlock = params.existingRdvSlot
+    ? `\n=== RDV DÉJÀ CALÉ (NE RIEN RE-PROPOSER) ===
+Un rendez-vous est DÉJÀ fixé avec ce prospect : ${params.existingRdvSlot}. Un humain (Gabin) le rappellera à ce créneau.
+Réponds en UNE ou DEUX phrases MAX. Confirme simplement que Gabin le rappelle ${params.existingRdvSlot}${params.contactPhone ? ` au ${params.contactPhone}` : ''}. RIEN d'autre.
+NE propose PAS d'autre créneau, NE ré-explique PAS l'offre, NE dis PAS "je vous appelle maintenant/tout de suite", NE demande PAS s'il a répondu à un appel.
+Si le prospect dit juste "oui/ok/merci/d'accord", un mot de politesse suffit (ex: "Parfait, à ${params.existingRdvSlot}.").`
+    : ''
+
   const userPrompt = `Context :
 - Classification : ${params.classification}
 - Entreprise : ${params.contactCompany}, ${params.contactCity}
@@ -185,7 +202,7 @@ Sois bref (2-3 lignes), change d'angle, ne reformule pas ton argumentaire préc�
 - Prénom prospect : ${params.contactName}
 - Historique de conversation (du plus ancien au plus récent) :
 ${historyBlock}
-${antiRepeatBlock}${followUpBlock}
+${antiRepeatBlock}${followUpBlock}${existingRdvBlock}
 
 Email original envoyé :
 ${params.originalEmailBody}

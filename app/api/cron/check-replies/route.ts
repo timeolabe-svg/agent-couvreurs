@@ -729,12 +729,33 @@ export async function GET(request: NextRequest) {
         const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
         const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (resolvedContact?.phone ?? undefined)
 
+        // RDV DÉJÀ CALÉ ? (un seul par contact) → on ne recrée rien, on confirme juste l'existant.
+        const existingRdvRows = resolvedContact
+          ? await db.select({ id: rdvTable.id, scheduled_at: rdvTable.scheduled_at }).from(rdvTable)
+              .where(and(eq(rdvTable.contact_id, resolvedContact.id), eq(rdvTable.status, 'confirmed')))
+              .orderBy(sql`${rdvTable.scheduled_at} asc`).limit(1)
+          : []
+        const existingRdvAt = existingRdvRows[0]?.scheduled_at ? new Date(existingRdvRows[0].scheduled_at) : null
+        const existingRdvSlot = existingRdvAt
+          ? existingRdvAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + existingRdvAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+          : undefined
+
+        // Message trivial ("oui/ok/merci") alors qu'un RDV est déjà calé → rien à répondre
+        // (sinon l'agent relance en boucle et promet de faux appels).
+        const firstLine = (cleanBody.split('\n')[0] ?? '').trim()
+        const trivialAck = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|[çc]a marche|tr[èe]s bien|👍)\s*[.!]?$/i.test(firstLine)
+        if (existingRdvSlot && trivialAck) {
+          await db.insert(dashboard_events).values({ type: 'reply_received', data: { contactEmail: reply.from_address, classification: classification.classification, action: 'no_action_rdv_deja_cale', company: resolvedContact?.company ?? reply.from_address } })
+          await markReplyProcessed(reply.id)
+          continue
+        }
+
         let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
         let parsedDate: Date | null = null
         let scheduledDate: Date | null = null
         let proposedSlotStr: string | undefined
 
-        if (isRdv) {
+        if (isRdv && !existingRdvSlot) {
           try {
             const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
             availabilityCfg = await getAvailability()
@@ -777,20 +798,13 @@ export async function GET(request: NextRequest) {
           proposedSlot: proposedSlotStr,
           contactPhone: isRdv ? contactPhone : undefined,
           fromEmail: ownerBox,
+          existingRdvSlot,
         })
 
         // --- RDV auto-booking quand rdv_request (autonome, peu importe l'action) ---
-        let rdvHandled = false
-        // ANTI-DOUBLON RDV : si un RDV confirmé existe DÉJÀ pour ce contact, on ne le recrée PAS
-        // (et on ne refacture pas). Évite les RDV en double (cas GS Renove : 2 RDV même créneau).
-        const existingRdv = resolvedContact
-          ? await db.select({ id: rdvTable.id }).from(rdvTable)
-              .where(and(eq(rdvTable.contact_id, resolvedContact.id), eq(rdvTable.status, 'confirmed'))).limit(1)
-          : []
-        if (existingRdv.length > 0) {
-          rdvHandled = true // déjà calé → on garde la conversation mais on ne double pas le RDV
-        }
-        if (isRdv && scheduledDate && availabilityCfg && existingRdv.length === 0) {
+        // ANTI-DOUBLON : un RDV confirmé existe déjà (existingRdvRows) → on ne recrée/refacture PAS.
+        let rdvHandled = existingRdvRows.length > 0
+        if (isRdv && scheduledDate && availabilityCfg && existingRdvRows.length === 0) {
           const availability = availabilityCfg
           try {
             const { createCalendarEvent } = await import('@/lib/google-calendar')
