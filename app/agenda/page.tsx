@@ -567,13 +567,26 @@ export default function AgendaPage() {
                 </div>
 
                 {(detailsData.contact?.auditWeaknesses?.length ?? 0) > 0 && (
-                  <div>
-                    <p className="text-[11px] font-semibold mb-1" style={{ color: '#f59e0b' }}>PROBLÈMES DÉTECTÉS SUR SON SITE (angle de vente)</p>
-                    <ul className="text-[12px] pl-4 list-disc" style={{ color: 'var(--color-text)' }}>
-                      {detailsData.contact!.auditWeaknesses!.slice(0, 8).map((w, i) => (
-                        <li key={i} className="mb-0.5">{w}</li>
+                  <div className="rounded-lg p-3" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                    <div className="flex items-center flex-wrap gap-2 mb-2">
+                      <p className="text-[11px] font-semibold" style={{ color: '#f59e0b' }}>AUDIT DU SITE — LEVIERS À VENDRE</p>
+                      {typeof detailsData.contact?.auditScore === 'number' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>
+                          {detailsData.contact.auditScore}/100
+                        </span>
+                      )}
+                    </div>
+                    <ul className="flex flex-col gap-1.5">
+                      {detailsData.contact!.auditWeaknesses!.slice(0, 10).map((w, i) => (
+                        <li key={i} className="flex gap-2 text-[12px]" style={{ color: 'var(--color-text)' }}>
+                          <span style={{ color: '#f59e0b', flexShrink: 0 }}>•</span>
+                          <span>{w}</span>
+                        </li>
                       ))}
                     </ul>
+                    <p className="text-[11px] mt-2.5" style={{ color: 'var(--color-muted)' }}>
+                      Autant de leviers concrets que Hdigiweb peut activer pour lui apporter plus de devis.
+                    </p>
                   </div>
                 )}
 

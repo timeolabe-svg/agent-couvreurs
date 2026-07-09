@@ -109,6 +109,18 @@ function detectSeoIssues(html: string): string[] {
   return issues
 }
 
+// Manques "marketing/conversion" — angles de vente concrets pour un artisan, même si le site est propre.
+function detectMarketingGaps(html: string): string[] {
+  const issues: string[] = []
+  const h = html.toLowerCase()
+  if (!/href=["']tel:/i.test(html)) issues.push("pas de numéro cliquable (appel en 1 clic impossible depuis un mobile)")
+  if (!/<form/i.test(html) && !/href=["']mailto:/i.test(html)) issues.push("pas de formulaire ni d'email de contact (difficile de vous demander un devis en ligne)")
+  if (!/gtag|google-analytics|googletagmanager|gtm\.js|plausible|matomo/i.test(h)) issues.push("aucun suivi de fréquentation (impossible de savoir d'où viennent vos visiteurs)")
+  if (!/avis|témoignage|google review|★|étoile/i.test(h)) issues.push("pas d'avis clients mis en avant (rassure moins les prospects)")
+  if (!/devis|estimation gratuite/i.test(h)) issues.push('aucun appel à "devis gratuit" visible (les visiteurs ne passent pas à l\'action)')
+  return issues
+}
+
 function detectAbandoned(html: string, url: string): string[] {
   const issues: string[] = []
   const h = html.toLowerCase()
@@ -147,14 +159,16 @@ export async function auditWebsite(website: string | null | undefined, _sector?:
   const missingModern = detectMissingModern(html)
   const seoIssues = detectSeoIssues(html)
   const abandonedSigns = detectAbandoned(html, url)
+  const marketingGaps = detectMarketingGaps(html)
   const mobileOptimized = html.toLowerCase().includes('viewport')
 
   const weaknesses: string[] = [
-    ...obsoleteTags,
+    ...(!ssl ? ['pas de HTTPS (site affiché "non sécurisé" par Chrome)'] : []),
     ...missingModern,
     ...seoIssues,
+    ...marketingGaps,
+    ...obsoleteTags,
     ...abandonedSigns,
-    ...(!ssl ? ['pas de HTTPS (site non sécurisé)'] : []),
   ]
 
   const totalIssues = weaknesses.length
@@ -162,6 +176,7 @@ export async function auditWebsite(website: string | null | undefined, _sector?:
     - obsoleteTags.length * 4
     - missingModern.length * 5
     - seoIssues.length * 3
+    - marketingGaps.length * 3
     - abandonedSigns.length * 8
     - (!ssl ? 5 : 0)
   )
