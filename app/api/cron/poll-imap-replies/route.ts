@@ -361,9 +361,8 @@ async function processReply(params: {
   const existRdv = contact?.id ? (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }> : []
   const existRdvAt = existRdv[0]?.scheduled_at ? new Date(existRdv[0].scheduled_at) : null
   const existingRdvSlot = existRdvAt ? existRdvAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + existRdvAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : undefined
-  const firstLine = (cleanBody.split('\n')[0] ?? '').trim()
-  const trivialAck = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|[çc]a marche|tr[èe]s bien|👍)\s*[.!]?$/i.test(firstLine)
-  if (existingRdvSlot && trivialAck) {
+  // RDV DÉJÀ CALÉ = job terminé sur ce lead → l'agent n'envoie plus rien (l'humain gère).
+  if (existingRdvSlot) {
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'no_action_rdv_deja_cale', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
   }

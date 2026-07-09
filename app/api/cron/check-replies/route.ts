@@ -749,11 +749,9 @@ export async function GET(request: NextRequest) {
           ? existingRdvAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + existingRdvAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
           : undefined
 
-        // Message trivial ("oui/ok/merci") alors qu'un RDV est déjà calé → rien à répondre
-        // (sinon l'agent relance en boucle et promet de faux appels).
-        const firstLine = (cleanBody.split('\n')[0] ?? '').trim()
-        const trivialAck = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|[çc]a marche|tr[èe]s bien|👍)\s*[.!]?$/i.test(firstLine)
-        if (existingRdvSlot && trivialAck) {
+        // RDV DÉJÀ CALÉ = job terminé sur ce lead. L'agent n'envoie PLUS aucun mail
+        // (l'humain gère l'appel et la suite). On garde juste la trace pour la visibilité.
+        if (existingRdvSlot) {
           await db.insert(dashboard_events).values({ type: 'reply_received', data: { contactEmail: reply.from_address, classification: classification.classification, action: 'no_action_rdv_deja_cale', company: resolvedContact?.company ?? reply.from_address } })
           await markReplyProcessed(reply.id)
           continue
