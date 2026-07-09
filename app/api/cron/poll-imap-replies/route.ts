@@ -378,6 +378,13 @@ async function processReply(params: {
 
   const history = contact?.id ? await buildHistory(contact.id) : undefined
 
+  // Boîte qui suit la conversation (from_email du dernier envoi) → signature cohérente.
+  let ownerBox: string | undefined
+  if (contact?.id) {
+    const ob = (await sql`SELECT from_email FROM email_queue WHERE contact_id = ${contact.id} AND status = 'sent' AND from_email IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ from_email: string }>
+    ownerBox = ob[0]?.from_email
+  }
+
   const draftBody = await generateReplyResponse({
     classification: classification.classification,
     originalEmailBody,
@@ -389,11 +396,17 @@ async function processReply(params: {
     conversationHistory: history,
     proposedSlot: proposedSlotStr,
     contactPhone: isRdv ? contactPhone : undefined,
+    fromEmail: ownerBox,
   })
 
   // ── RDV auto-booking (Google Calendar + facturation Stripe) ──
   let rdvHandled = false
-  if (isRdv && scheduledDate && availabilityCfg) {
+  // ANTI-DOUBLON RDV : un seul RDV confirmé par contact (jamais 2 pour le même prospect).
+  const existingRdv = contact?.id
+    ? (await sql`SELECT id FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' LIMIT 1`) as Array<{ id: string }>
+    : []
+  if (existingRdv.length > 0) rdvHandled = true
+  if (isRdv && scheduledDate && availabilityCfg && existingRdv.length === 0) {
     const availability = availabilityCfg
     try {
       const { createCalendarEvent } = await import('@/lib/google-calendar')

@@ -117,7 +117,12 @@ export async function generateReplyResponse(params: {
   proposedSlot?: string   // créneau déjà réservé à confirmer (ex: "mardi 24 juin à 17h00")
   contactPhone?: string   // numéro donné par le prospect pour le rappel
   isFollowUp?: boolean    // true = relance (le prospect n'a pas répondu à notre dernière réponse)
+  fromEmail?: string      // boîte gabin@ qui a DÉJÀ contacté ce prospect → signature COHÉRENTE (même adresse suit la conversation)
 }): Promise<string> {
+  // Force la signature sur la boîte qui suit la conversation (jamais une autre adresse).
+  const fixSig = (b: string) => params.fromEmail
+    ? b.replace(/gabin[a-z.]*@hdigiweb-[a-z]+\.[a-z]+/gi, params.fromEmail)
+    : b
   const historyBlock =
     params.conversationHistory && params.conversationHistory.length > 0
       ? params.conversationHistory
@@ -195,8 +200,12 @@ ${buildStrategyGuidance(params.classification)}
 Rédige la réponse. JSON uniquement :
 {"body": "..."}`
 
+  // Signature dynamique : la boîte qui suit la conversation (pas l'adresse hardcodée).
+  const system = params.fromEmail
+    ? SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, params.fromEmail)
+    : SYSTEM_PROMPT
   const text = await generateText({
-    system: SYSTEM_PROMPT,
+    system,
     prompt: userPrompt,
     maxTokens: 1000,
     temperature: 0.8,
@@ -216,5 +225,5 @@ Rédige la réponse. JSON uniquement :
     console.error('[generator] Gemini a retourné un body vide ou trop court. Raw:', text.slice(0, 300))
     throw new Error('Gemini reply body empty')
   }
-  return cleanEmailText(parsed.body)
+  return fixSig(cleanEmailText(parsed.body))
 }

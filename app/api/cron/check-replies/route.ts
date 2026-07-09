@@ -768,6 +768,17 @@ export async function GET(request: NextRequest) {
         // → l'IA voit ce qu'elle a déjà dit et ne se répète plus.
         const history = resolvedContact ? await buildHistory(resolvedContact.id) : undefined
 
+        // BOÎTE QUI SUIT LA CONVERSATION : celle qui a contacté ce prospect (from_email du
+        // dernier envoi). La réponse est signée AVEC cette adresse → jamais une autre boîte.
+        let ownerBox: string | undefined
+        if (resolvedContact) {
+          const [lastFrom] = await db.select({ from_email: email_queue.from_email })
+            .from(email_queue)
+            .where(and(eq(email_queue.contact_id, resolvedContact.id), eq(email_queue.status, 'sent')))
+            .orderBy(sql`${email_queue.sent_at} desc`).limit(1)
+          ownerBox = lastFrom?.from_email ?? undefined
+        }
+
         // auto_reply or draft_for_validation — generate draft (confirme le créneau si RDV)
         const draftBody = await generateReplyResponse({
           classification: classification.classification,
@@ -780,11 +791,21 @@ export async function GET(request: NextRequest) {
           conversationHistory: history,
           proposedSlot: proposedSlotStr,
           contactPhone: isRdv ? contactPhone : undefined,
+          fromEmail: ownerBox,
         })
 
         // --- RDV auto-booking quand rdv_request (autonome, peu importe l'action) ---
         let rdvHandled = false
-        if (isRdv && scheduledDate && availabilityCfg) {
+        // ANTI-DOUBLON RDV : si un RDV confirmé existe DÉJÀ pour ce contact, on ne le recrée PAS
+        // (et on ne refacture pas). Évite les RDV en double (cas GS Renove : 2 RDV même créneau).
+        const existingRdv = resolvedContact
+          ? await db.select({ id: rdvTable.id }).from(rdvTable)
+              .where(and(eq(rdvTable.contact_id, resolvedContact.id), eq(rdvTable.status, 'confirmed'))).limit(1)
+          : []
+        if (existingRdv.length > 0) {
+          rdvHandled = true // déjà calé → on garde la conversation mais on ne double pas le RDV
+        }
+        if (isRdv && scheduledDate && availabilityCfg && existingRdv.length === 0) {
           const availability = availabilityCfg
           try {
             const { createCalendarEvent } = await import('@/lib/google-calendar')

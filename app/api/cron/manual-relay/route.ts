@@ -87,6 +87,7 @@ export async function GET(request: NextRequest) {
     contactCity: contact.city ?? '',
     contactSector: contact.sector ?? undefined,
     conversationHistory: histItems,
+    fromEmail: eaccount, // signature = boîte qui a contacté ce prospect
   })
 
   // ANTI-MAIL-VIDE : jamais d'envoi si la génération est vide/trop courte.

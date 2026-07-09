@@ -165,8 +165,9 @@ export async function GET() {
         if (!lastReceived) return false
         const txt = (lastReceived.body || '').trim()
         if (txt.length < 3) return false
-        // 3) Réponses automatiques (absence 'oof') / spam → hors messagerie (rien à faire).
-        if (lastReceived.classification === 'oof' || lastReceived.classification === 'spam') return false
+        // 3) Spam uniquement → masqué. Les ABSENCES ('oof') restent VISIBLES : c'est un vrai
+        //    prospect à relancer à son retour, il ne faut surtout pas les perdre.
+        if (lastReceived.classification === 'spam') return false
         // 4) Filtre RÉTROACTIF : vieux leads mal classés (plaintes "mail vide / rien reçu").
         if (isEmptyEmailComplaint(lastReceived.body, '')) return false
         return true
