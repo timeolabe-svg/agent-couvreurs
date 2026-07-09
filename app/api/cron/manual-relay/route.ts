@@ -54,7 +54,30 @@ export async function GET(request: NextRequest) {
 
   const eaccount = orig?.from_email
 
-  // 4. Generate a targeted follow-up with rdv_request strategy
+  // 3b. HISTORIQUE COMPLET (nos envois + réponses reçues + réponses agent déjà envoyées)
+  //     → l'IA LIT toute la conversation et ne RÉPÈTE pas ce qui a déjà été dit.
+  const sentEmails = await db.select({ body: email_queue.body, sentAt: email_queue.sent_at })
+    .from(email_queue).where(and(eq(email_queue.contact_id, contact.id), eq(email_queue.status, 'sent')))
+  const received = await db.select({ body: incoming_replies.body, createdAt: incoming_replies.created_at })
+    .from(incoming_replies).where(eq(incoming_replies.contact_id, contact.id))
+  const agentDrafts = await db.select({ body: reply_drafts.body, sentAt: reply_drafts.sent_at, createdAt: reply_drafts.created_at, status: reply_drafts.status })
+    .from(reply_drafts).innerJoin(incoming_replies, eq(reply_drafts.incoming_reply_id, incoming_replies.id))
+    .where(eq(incoming_replies.contact_id, contact.id))
+
+  // ANTI-DOUBLON : si l'agent a déjà envoyé une relance dans les 2 derniers jours → on stoppe.
+  const recentSend = agentDrafts.some(a => a.status === 'sent' && a.sentAt && (Date.now() - new Date(a.sentAt).getTime()) < 2 * 24 * 3600 * 1000)
+  if (recentSend) {
+    return NextResponse.json({ skipped: true, reason: 'relance déjà envoyée récemment (anti-doublon)', company: contact.company })
+  }
+
+  const histItems = [
+    ...sentEmails.filter(e => e.body).map(e => ({ role: 'sent' as const, body: e.body, ts: e.sentAt ? new Date(e.sentAt).getTime() : 0 })),
+    ...received.filter(r => r.body).map(r => ({ role: 'received' as const, body: r.body, ts: r.createdAt ? new Date(r.createdAt).getTime() : 0 })),
+    ...agentDrafts.filter(a => a.body).map(a => ({ role: 'sent' as const, body: a.body, ts: (a.sentAt ?? a.createdAt) ? new Date((a.sentAt ?? a.createdAt) as Date).getTime() : 0 })),
+  ].sort((x, y) => x.ts - y.ts)
+    .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+
+  // 4. Génère une relance (stratégie rdv_request) EN LISANT l'historique.
   const replyBody = await generateReplyResponse({
     classification: 'rdv_request',
     originalEmailBody: '',
@@ -63,7 +86,13 @@ export async function GET(request: NextRequest) {
     contactCompany: contact.company,
     contactCity: contact.city ?? '',
     contactSector: contact.sector ?? undefined,
+    conversationHistory: histItems,
   })
+
+  // ANTI-MAIL-VIDE : jamais d'envoi si la génération est vide/trop courte.
+  if (!replyBody || replyBody.trim().length < 20) {
+    return NextResponse.json({ error: 'génération vide — envoi annulé (anti-mail-vide)', company: contact.company }, { status: 500 })
+  }
 
   // 5. Send via Instantly
   await sendReply({
