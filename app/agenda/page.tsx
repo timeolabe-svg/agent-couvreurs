@@ -35,6 +35,14 @@ interface RdvItem {
   detectedFrom?: string
 }
 
+interface RdvDetails {
+  contact?: { company: string; name: string | null; city: string | null; phone: string | null; email: string; website: string | null; sector: string | null; googleRating: number | null; googleReviews: number | null }
+  conversation?: Array<{ role: 'nous' | 'prospect'; body: string; date: string }>
+  summary?: string
+  companyDescription?: string
+  error?: string
+}
+
 function getCurrentWeekDays() {
   const now = new Date()
   const day = now.getDay()
@@ -78,6 +86,23 @@ export default function AgendaPage() {
   const [selectedContact, setSelectedContact] = useState<{ id: string; name: string | null; company: string } | null>(null)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const contactInputRef = useRef<HTMLInputElement>(null)
+
+  // Détails RDV enrichis (conversation + résumé IA + fiche entreprise)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [detailsData, setDetailsData] = useState<RdvDetails | null>(null)
+  const [detailsLoading, setDetailsLoading] = useState(false)
+  const [detailsCompany, setDetailsCompany] = useState('')
+  const [detailsContactId, setDetailsContactId] = useState('')
+
+  const openDetails = useCallback(async (contactId: string, company: string) => {
+    setDetailsOpen(true); setDetailsData(null); setDetailsLoading(true); setDetailsCompany(company); setDetailsContactId(contactId)
+    try {
+      const res = await fetch(`/api/agenda/details?contactId=${encodeURIComponent(contactId)}`)
+      setDetailsData(await res.json() as RdvDetails)
+    } catch { /* ignore */ } finally {
+      setDetailsLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
     setWeekDays(getCurrentWeekDays())
@@ -475,6 +500,15 @@ export default function AgendaPage() {
                         Meet →
                       </a>
                     )}
+                    {r.contact_id && (
+                      <button
+                        onClick={() => void openDetails(r.contact_id!, company)}
+                        className="flex items-center gap-1 text-[10px] font-medium"
+                        style={{ color: '#a855f7' }}
+                      >
+                        Conversation + fiche →
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
@@ -495,6 +529,76 @@ export default function AgendaPage() {
           )}
         </div>
       </div>
+
+      {/* Détails RDV enrichis : fiche entreprise + résumé IA + conversation */}
+      {detailsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.7)' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setDetailsOpen(false) }}
+        >
+          <div className="rounded-xl w-full max-w-2xl max-h-[85vh] overflow-auto p-6" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>{detailsCompany}</h2>
+              <div className="flex items-center gap-3">
+                <Link href={`/conversations?contact=${detailsContactId}`} className="text-[11px]" style={{ color: '#3b82f6' }}>Ouvrir la conversation →</Link>
+                <button onClick={() => setDetailsOpen(false)}><X size={16} style={{ color: 'var(--color-muted)' }} /></button>
+              </div>
+            </div>
+
+            {detailsLoading && (
+              <div className="flex items-center gap-2 py-4">
+                <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#a855f7' }} />
+                <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement (résumé IA en cours)…</span>
+              </div>
+            )}
+
+            {!detailsLoading && detailsData && (
+              <div className="flex flex-col gap-5">
+                <div>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#a855f7' }}>QUI EST CETTE ENTREPRISE</p>
+                  <p className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{detailsData.companyDescription || '—'}</p>
+                  <div className="flex flex-wrap gap-3 mt-2 text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                    {detailsData.contact?.phone && <span>📞 {detailsData.contact.phone}</span>}
+                    {detailsData.contact?.city && <span>📍 {detailsData.contact.city}</span>}
+                    {detailsData.contact?.website && <a href={detailsData.contact.website} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>🌐 site</a>}
+                    {detailsData.contact?.googleRating != null && <span>⭐ {detailsData.contact.googleRating} ({detailsData.contact.googleReviews ?? 0} avis)</span>}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#22c55e' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
+                  <p className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{detailsData.summary || '—'}</p>
+                </div>
+
+                <div>
+                  <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--color-muted)' }}>CONVERSATION</p>
+                  <div className="flex flex-col gap-2">
+                    {(detailsData.conversation ?? []).map((m, i) => (
+                      <div
+                        key={i}
+                        className="rounded-lg p-2.5 text-[12px]"
+                        style={{
+                          background: m.role === 'nous' ? '#3b82f610' : 'var(--color-surface-2)',
+                          border: `1px solid ${m.role === 'nous' ? '#3b82f630' : 'var(--color-border)'}`,
+                          alignSelf: m.role === 'nous' ? 'flex-end' : 'flex-start',
+                          maxWidth: '88%',
+                        }}
+                      >
+                        <p className="text-[10px] mb-1" style={{ color: 'var(--color-muted-2)' }}>{m.role === 'nous' ? 'Nous' : detailsCompany} · {m.date}</p>
+                        <p className="whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{m.body}</p>
+                      </div>
+                    ))}
+                    {(detailsData.conversation ?? []).length === 0 && (
+                      <p className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Aucun message enregistré.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
