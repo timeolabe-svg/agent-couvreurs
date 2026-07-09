@@ -37,7 +37,39 @@ Le projet a migré de **Instantly (envoi)** vers un **moteur d'envoi + réponses
 + Côté Google Cloud (seul plafond vraiment dur) : **APIs → Places API → Quotas → "Requests per day" (ou "SearchTextRequest per day") bas** + alerte de budget. NB : Places API **classique** (`maps/api/place/textsearch`) et **New** (`places:searchText`) ont des lignes de quota DIFFÉRENTES — vérifier laquelle le code utilise.
 
 **Nouvelles variables d'env :** `IMAP_ACCOUNTS` (obligatoire pour envoyer), `SEND_PAUSED`, `SCRAPING_PAUSED` (kill-switches). `INSTANTLY_INBOXES`/`INSTANTLY_INBOX_NAMES` restent (servent au nom d'expéditeur / signature).
-**Nouveaux crons cron-job.org :** `send-campaign` + `poll-imap-replies` (5-10 min). **Supprimer** l'ancien cron `check-replies`.
+**Crons cron-job.org :** quand `IMAP_ACCOUNTS` est fourni → activer `send-campaign` + `poll-imap-replies`, désactiver `check-replies`. TANT QUE `IMAP_ACCOUNTS` n'est pas fourni → garder `check-replies` (bridge Instantly, voir ci-dessous).
+
+---
+
+## ⚠️ MISE À JOUR 2026-07-09 (correctifs après une vague de bugs réels — À LIRE)
+
+**0. Bridge Instantly / transition.** `check-replies` (lecteur de réponses Instantly) a d'abord été supprimé PUIS **restauré** : tant que `IMAP_ACCOUNTS` n'est pas fourni, l'envoi SMTP ET `poll-imap` sont inactifs → il faut garder `check-replies` (Instantly) pour ne PAS laisser l'agent aveugle aux réponses. Règle : **ne jamais supprimer l'ancien lecteur avant que le nouveau soit réellement actif** (sinon zéro réponse détectée pendant la transition = leads perdus). `check-replies` et `poll-imap` sont **mutuellement exclusifs** (les faire tourner ensemble = double traitement).
+
+**1. Poll IMAP — JAMAIS `search({seen:false})`.** Dès qu'un mail est OUVERT dans Gmail il devient "lu" → une recherche non-lus le rate définitivement (= réponses de prospects manquées). Lire **tous** les messages récents (`search({since})`, fenêtre ~50), **dédup par Message-ID** (stocké `imap:<mid>` dans `incoming_replies.instantly_reply_id`), **filtre "vrai contact"** (ne traiter que les adresses en base → ignore le warmup sans coût IA). Enveloppe récupérée d'abord, corps seulement si nécessaire.
+
+**2. Affinité boîte (une seule adresse suit une conversation).** La signature des réponses NE doit PAS être hardcodée : elle doit être la boîte qui a DÉJÀ contacté ce prospect (`from_email` du dernier envoi). Passer `fromEmail` au générateur + post-traiter le corps pour forcer la cohérence. Un lead = une boîte, les autres ne le recontactent jamais.
+
+**3. Logique RDV / réponses (l'agent bugait : "je vous contacte maintenant", "avez-vous répondu à mon appel", boucle sur "oui").**
+- L'agent écrit des EMAILS, il ne passe PAS d'appels. Interdit dans le prompt : "je vous appelle/contacte maintenant/tout de suite", "avez-vous répondu à mon appel", répéter/accuser réception du "oui"/"ok" du prospect ("j'ai bien noté votre oui").
+- **RDV déjà calé = job terminé** : l'agent n'envoie PLUS aucun mail à ce lead (l'humain gère l'appel). La réponse est juste enregistrée (visibilité).
+- **Anti-doublon RDV** : un seul RDV confirmé par contact (`dedupe-rdv` nettoie l'existant). Sinon double affichage + double facturation.
+- Ne pas laisser l'agent proposer un nouveau créneau si un RDV existe déjà (`existingRdvSlot` passé au générateur).
+
+**4. Google Calendar RETIRÉ.** Le refresh token OAuth expire (mode "Test" → 7 jours ; erreur `invalid_grant`), et le client ne l'avait pas demandé. Décision : **pas de synchro Google Calendar**. Le RDV vit dans l'agenda du logiciel + **notification email**. Ça suffit et supprime une dépendance fragile. (Si un jour on le remet : publier l'app OAuth en Production + `getRefreshToken()` lit le token en base via un bouton "Reconnecter", pas via l'env qui expire.)
+
+**5. Notifications (Resend).** Resend en **mode test** (domaine non vérifié, `RESEND_FROM_EMAIL=onboarding@resend.dev`) n'autorise l'envoi **qu'à l'owner du compte** → un envoi groupé aux 2 destinataires est rejeté (403) = personne notifié. Solutions : (a) envoyer **1 mail PAR destinataire** (`lib/notify.ts` `notifyPerRecipient`) → au moins l'owner reçoit ; (b) vérifier un domaine sur resend.com ; (c) **mieux** : envoyer la notif via le **moteur Gmail SMTP** (aucune limite, notifie le client sans vérifier de domaine). Le mail de notif RDV doit être **SOBRE** (zéro émoji), avec téléphone cliquable + problèmes du site (audit) + résumé.
+
+**6. Audit site — plus complet + HONNÊTE.** `lib/website-audit.ts` détecte aussi les "manques marketing" (numéro cliquable, formulaire de devis, suivi de fréquentation, avis clients, CTA "devis gratuit"). Un bon site a peu de défauts → NE PAS inventer de faux problèmes ; afficher le **score /100** pour donner le contexte. Endpoint `reaudit?email=` pour re-auditer un contact.
+
+**7. Affichage conversation (agenda/messagerie) = la VRAIE conversation.** NE PAS maquiller/réécrire les messages affichés (ça crée un décalage dangereux entre ce qu'on voit et ce que le prospect a réellement reçu). On corrige l'agent À LA SOURCE (bugs de logique) ; l'affichage ne fait que dédupliquer + retirer les vides + enlever les citations (`stripQuotedReply`).
+
+**8. Agenda enrichi.** Modal par RDV (`/api/agenda/details`) : conversation + résumé IA + **fiche entreprise** (description IA) + **problèmes du site (audit)** → le client a tout le contexte pour l'appel.
+
+**9. Design.** Responsive mobile OBLIGATOIRE : sidebar en **tiroir** (`fixed`/off-canvas < md, `static` desktop) + header mobile hamburger + `<main>` en `flex-1 min-w-0 pt-12 md:pt-0` ; grilles fixes → `repeat(auto-fit, minmax(...))` ; barres d'onglets → `overflow-x-auto`. Sobriété : émojis "gamin" (🎯🔥✉️💬📅…) → **icônes lucide** + pastilles colorées discrètes.
+
+**10. Accès sans login.** Interrupteur `AUTH_DISABLED=1` (env) dans `proxy.ts` (middleware Next 16 = `proxy.ts`, pas `middleware.ts`) → dashboard accessible sans connexion (temporaire ; réversible en supprimant la variable). ⚠️ expose les données à qui a le lien.
+
+**11. Endpoints de diagnostic utiles (protégés cron-auth) :** `test-notify` (Resend), `test-calendar` (OAuth Google), `debug-contact?email=` (dump brut d'un contact), `interested-report` (prospects chauds oubliés), `reaudit?email=`, `dedupe-rdv`.
 
 ---
 
