@@ -303,7 +303,7 @@ export default function DashboardPage() {
             { Icon: Mail, iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
             { Icon: MessageSquare, iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
             { Icon: Calendar, iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
-            { Icon: User, iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
+            { Icon: User, iconColor: '#8b5cf6', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
           ].map(card => (
             <a
               key={card.label}
@@ -320,13 +320,6 @@ export default function DashboardPage() {
                 overflow: 'hidden',
               }}
             >
-              {/* glow bottom-right */}
-              <div style={{
-                position: 'absolute', bottom: 0, right: 0,
-                width: 80, height: 80,
-                background: `radial-gradient(circle at bottom right, ${card.iconColor}26, transparent 70%)`,
-                pointerEvents: 'none',
-              }} />
               <card.Icon size={20} style={{ color: card.iconColor, marginBottom: 12 }} />
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 4 }}>
                 {card.label}

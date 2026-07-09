@@ -23,7 +23,7 @@ const STAGE_COLOR: Record<LeadStage, { bg: string; text: string }> = {
   follow_up_1:    { bg: '#8b5cf615', text: '#8b5cf6' },
   follow_up_2:    { bg: '#f59e0b15', text: '#d97706' },
   replied:        { bg: '#f9731618', text: '#f97316' },
-  rdv_booked:     { bg: '#22c55e15', text: '#22c55e' },
+  rdv_booked:     { bg: '#10b98115', text: '#10b981' },
   not_interested: { bg: '#ef444415', text: '#ef4444' },
 }
 
@@ -97,7 +97,7 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
             {[
               { label: 'Leads en cours',   value: String(active),    icon: <TrendingUp size={14} />,   color: '#3b82f6' },
               { label: 'Réponses reçues',  value: String(replied),   icon: <MessageSquare size={14} />,color: '#f97316' },
-              { label: 'RDV confirmés',    value: String(rdvs),      icon: <Calendar size={14} />,     color: '#22c55e' },
+              { label: 'RDV confirmés',    value: String(rdvs),      icon: <Calendar size={14} />,     color: '#10b981' },
               { label: 'Taux de réponse',  value: `${replyRate}%`,   icon: <Mail size={14} />,         color: '#8b5cf6' },
             ].map(s => (
               <div key={s.label} className="px-5 py-4" style={{ background: 'var(--color-surface)' }}>
@@ -131,7 +131,7 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
             title="Conclus / Fermés"
             subtitle={`${closed.length} lead${closed.length > 1 ? 's' : ''} ce mois`}
             leads={closed}
-            accent="#22c55e"
+            accent="#10b981"
           />
 
         </div>
@@ -212,7 +212,7 @@ function LeadRow({ lead, accent, isLast }: { lead: Lead; accent: string; isLast:
         </span>
 
         {lead.rdvDate && lead.stage === 'rdv_booked' ? (
-          <span className="text-[11px] flex-shrink-0" style={{ color: '#22c55e' }}>
+          <span className="text-[11px] flex-shrink-0" style={{ color: '#10b981' }}>
             RDV {new Date(lead.rdvDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
           </span>
         ) : lead.nextScheduledAt ? (

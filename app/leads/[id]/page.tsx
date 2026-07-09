@@ -25,7 +25,7 @@ const STAGE_COLOR: Record<LeadStage, string> = {
   follow_up_1: '#3b82f6',
   follow_up_2: '#8b5cf6',
   replied: '#f59e0b',
-  rdv_booked: '#22c55e',
+  rdv_booked: '#10b981',
   not_interested: '#ef4444',
 }
 
@@ -119,11 +119,11 @@ export default function LeadDetailPage() {
           {lead.rdvDate && (
             <div
               className="rounded-lg p-4 flex items-start gap-3"
-              style={{ background: '#22c55e08', border: '1px solid #22c55e30' }}
+              style={{ background: '#10b98108', border: '1px solid #10b98130' }}
             >
-              <Calendar size={15} style={{ color: '#22c55e', marginTop: 1, flexShrink: 0 }} />
+              <Calendar size={15} style={{ color: '#10b981', marginTop: 1, flexShrink: 0 }} />
               <div>
-                <p className="text-[12px] font-medium mb-0.5" style={{ color: '#22c55e' }}>
+                <p className="text-[12px] font-medium mb-0.5" style={{ color: '#10b981' }}>
                   RDV detecte et confirme automatiquement
                 </p>
                 <p className="text-[12px]" style={{ color: 'var(--color-muted)' }}>
@@ -207,12 +207,12 @@ export default function LeadDetailPage() {
               className="mt-4 pt-4"
               style={{ borderTop: '1px solid var(--color-border)' }}
             >
-              <p className="text-[11px] font-medium mb-2" style={{ color: '#22c55e' }}>RDV CONFIRME</p>
+              <p className="text-[11px] font-medium mb-2" style={{ color: '#10b981' }}>RDV CONFIRME</p>
               <div
                 className="rounded-lg p-3"
-                style={{ background: '#22c55e08', border: '1px solid #22c55e30' }}
+                style={{ background: '#10b98108', border: '1px solid #10b98130' }}
               >
-                <p className="text-[12px] font-medium" style={{ color: '#22c55e' }}>
+                <p className="text-[12px] font-medium" style={{ color: '#10b981' }}>
                   {new Date(lead.rdvDate).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
                 </p>
                 <p className="text-[12px] mt-0.5" style={{ color: 'var(--color-muted)' }}>14h00 · 20 min</p>
@@ -278,7 +278,7 @@ function MessageBubble({ msg, firstName, isLast }: { msg: EmailMessage; firstNam
           {new Date(msg.sentAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} {formatTime(msg.sentAt)}
         </span>
         {msg.openedAt && isAgent && (
-          <span className="text-[10px]" style={{ color: '#22c55e' }}>Lu</span>
+          <span className="text-[10px]" style={{ color: '#10b981' }}>Lu</span>
         )}
       </div>
 

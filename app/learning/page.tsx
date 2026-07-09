@@ -85,7 +85,7 @@ function ReportCard({
             <span style={{ color: '#3b82f6' }}>
               {report.emails_sent ?? 0} emails
             </span>
-            <span style={{ color: report.reply_rate && report.reply_rate >= 5 ? '#22c55e' : '#f59e0b' }}>
+            <span style={{ color: report.reply_rate && report.reply_rate >= 5 ? '#10b981' : '#f59e0b' }}>
               {report.reply_rate?.toFixed(1) ?? 0}% réponse
             </span>
             <span style={{ color: '#8b5cf6' }}>
@@ -95,7 +95,7 @@ function ReportCard({
           {report.applied ? (
             <span
               className="text-[10px] px-2 py-0.5 rounded flex items-center gap-1"
-              style={{ background: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e30' }}
+              style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
             >
               <CheckCircle2 size={10} />
               Appliqué
@@ -122,7 +122,7 @@ function ReportCard({
             >
               {[
                 { label: 'Taux réponse', value: `${metrics.reply_rate?.toFixed(1) ?? 0}%`, color: '#3b82f6' },
-                { label: 'Taux RDV', value: `${metrics.rdv_rate?.toFixed(1) ?? 0}%`, color: '#22c55e' },
+                { label: 'Taux RDV', value: `${metrics.rdv_rate?.toFixed(1) ?? 0}%`, color: '#10b981' },
                 { label: 'Meilleur secteur', value: metrics.best_sector ?? '—', color: '#8b5cf6' },
                 { label: 'Moins bon secteur', value: metrics.worst_sector ?? '—', color: '#ef4444' },
               ].map((m) => (
@@ -315,7 +315,7 @@ export default function LearningPage() {
                     {trend !== null && (
                       <span
                         className="flex items-center gap-0.5 text-[12px]"
-                        style={{ color: trend >= 0 ? '#22c55e' : '#ef4444' }}
+                        style={{ color: trend >= 0 ? '#10b981' : '#ef4444' }}
                       >
                         {trend >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                         {trend >= 0 ? '+' : ''}{trend.toFixed(1)}%
@@ -326,7 +326,7 @@ export default function LearningPage() {
                     taux de réponse moyen
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px]" style={{ color: '#22c55e' }}>
+                <div className="flex items-center gap-1.5 text-[11px]" style={{ color: '#10b981' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
                   Agent actif
                 </div>

@@ -238,7 +238,7 @@ Génère un rapport JSON structuré avec :
             <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Emails envoyés</p>
           </td>
           <td width="25%" style="padding:12px;background:#161b22;border-top:1px solid #30363d;border-bottom:1px solid #30363d;text-align:center">
-            <p style="margin:0;font-size:22px;font-weight:700;color:${replyRate >= 5 ? '#22c55e' : replyRate >= 2 ? '#f59e0b' : '#ef4444'}">${replyRate}%</p>
+            <p style="margin:0;font-size:22px;font-weight:700;color:${replyRate >= 5 ? '#10b981' : replyRate >= 2 ? '#f59e0b' : '#ef4444'}">${replyRate}%</p>
             <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Taux de réponse</p>
           </td>
           <td width="25%" style="padding:12px;background:#161b22;border-top:1px solid #30363d;border-bottom:1px solid #30363d;text-align:center">
@@ -246,7 +246,7 @@ Génère un rapport JSON structuré avec :
             <p style="margin:4px 0 0;font-size:10px;color:#8b949e">Réponses reçues</p>
           </td>
           <td width="25%" style="padding:12px;background:#161b22;border:1px solid #30363d;border-radius:0 6px 6px 0;text-align:center">
-            <p style="margin:0;font-size:22px;font-weight:700;color:#22c55e">${rdvCount}</p>
+            <p style="margin:0;font-size:22px;font-weight:700;color:#10b981">${rdvCount}</p>
             <p style="margin:4px 0 0;font-size:10px;color:#8b949e">RDV obtenus</p>
           </td>
         </tr>
@@ -262,7 +262,7 @@ Génère un rapport JSON structuré avec :
 
       <!-- Ajustements IA -->
       <p style="margin:0 0 12px;font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.08em">AJUSTEMENTS APPLIQUÉS PAR L'IA</p>
-      <div style="background:#161b22;border-left:3px solid #22c55e;border-radius:0 6px 6px 0;padding:14px 16px;margin-bottom:24px">
+      <div style="background:#161b22;border-left:3px solid #10b981;border-radius:0 6px 6px 0;padding:14px 16px;margin-bottom:24px">
         <p style="margin:0;font-size:13px;color:#c9d1d9;line-height:1.6;font-style:italic">${report.recommendations.prompt_adjustments}</p>
       </div>
 

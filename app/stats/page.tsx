@@ -156,7 +156,7 @@ export default function StatsPage() {
             />
             <KpiCard
               icon={Calendar}
-              iconColor="#ec4899"
+              iconColor="#8b5cf6"
               label="RDV GÉNÉRÉS"
               value={String(d?.rdvCount ?? 0)}
               sub={`${d?.conversionRate ?? 0}% taux de conversion`}

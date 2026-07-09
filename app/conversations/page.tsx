@@ -25,8 +25,8 @@ interface Conversation {
 }
 
 const CLASS_LABEL: Record<string, { label: string; color: string }> = {
-  interest: { label: 'Intéressé', color: '#22c55e' },
-  rdv_request: { label: 'RDV', color: '#22c55e' },
+  interest: { label: 'Intéressé', color: '#10b981' },
+  rdv_request: { label: 'RDV', color: '#10b981' },
   question: { label: 'Question', color: '#3b82f6' },
   objection: { label: 'Objection', color: '#f59e0b' },
   desinterest: { label: 'Pas intéressé', color: '#ef4444' },
@@ -51,7 +51,7 @@ function bucketOf(cls: string | null): Tab {
 }
 
 const TABS: { key: Tab; label: string; color: string }[] = [
-  { key: 'positive', label: 'Positives', color: '#22c55e' },
+  { key: 'positive', label: 'Positives', color: '#10b981' },
   { key: 'negative', label: 'Négatives', color: '#ef4444' },
   { key: 'pending', label: 'En attente', color: '#f59e0b' },
 ]
@@ -187,7 +187,7 @@ export default function ConversationsPage() {
                 <span className="flex items-center gap-1"><Mail size={12} />{current.email}</span>
                 {current.city && <span className="flex items-center gap-1"><MapPin size={12} />{current.city}</span>}
                 {current.phone && (
-                  <a href={`tel:${current.phone}`} className="flex items-center gap-1 font-medium" style={{ color: '#22c55e' }}>
+                  <a href={`tel:${current.phone}`} className="flex items-center gap-1 font-medium" style={{ color: '#10b981' }}>
                     <Phone size={12} />{current.phone}
                   </a>
                 )}

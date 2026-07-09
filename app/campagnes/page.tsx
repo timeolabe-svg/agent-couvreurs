@@ -222,7 +222,7 @@ export default function CampagnesPage() {
             </p>
             <div className="grid grid-cols-4 gap-4 mb-4">
               <Stat label="Capacité / jour" value={String(DAILY_CAPACITY)} sub="emails maximum" color="#3b82f6" icon={<Activity size={14} />} />
-              <Stat label="Capacité / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#22c55e" icon={<Flame size={14} />} />
+              <Stat label="Capacité / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#10b981" icon={<Flame size={14} />} />
               <Stat label="Allocation utilisée" value={`${totalAllocated}%`} sub={`${Math.round(DAILY_CAPACITY * totalAllocated / 100)} emails/jour`} color="#f97316" icon={<TrendingUp size={14} />} />
               <Stat label="Disponible" value={`${available}%`} sub={`${Math.round(DAILY_CAPACITY * available / 100)} emails/jour`} color="#8b5cf6" icon={<Mail size={14} />} />
             </div>
@@ -484,7 +484,7 @@ function Stat({ label, value, sub, color, icon }: { label: string; value: string
 }
 
 function AllocationBar({ campaigns, available }: { campaigns: Campaign[]; available: number }) {
-  const COLORS = ['#3b82f6', '#22c55e', '#f97316', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16']
+  const COLORS = ['#3b82f6', '#10b981', '#f97316', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#84cc16']
   const active = campaigns.filter(c => c.status === 'active')
   return (
     <div>
@@ -539,8 +539,8 @@ function CampaignRow({ campaign, onUpdate, onToggle, onRemove }: { campaign: Cam
             <span
               className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1 flex-shrink-0"
               style={{
-                background: campaign.status === 'active' ? '#22c55e15' : '#52525215',
-                color: campaign.status === 'active' ? '#22c55e' : '#737373',
+                background: campaign.status === 'active' ? '#10b98115' : '#52525215',
+                color: campaign.status === 'active' ? '#10b981' : '#737373',
               }}
             >
               <span className={`w-1 h-1 rounded-full ${campaign.status === 'active' ? 'bg-green-500 animate-pulse' : 'bg-zinc-500'}`} />

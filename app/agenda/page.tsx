@@ -199,7 +199,7 @@ export default function AgendaPage() {
           <h1 className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>Agenda</h1>
           <span
             className="text-[11px] px-2 py-0.5 rounded"
-            style={{ background: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e30' }}
+            style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
           >
             {loading ? '…' : rdvs.length} RDV ce mois
           </span>
@@ -209,7 +209,7 @@ export default function AgendaPage() {
           <button
             onClick={() => setShowNewRdv(true)}
             className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md font-medium"
-            style={{ background: '#22c55e20', color: '#22c55e', border: '1px solid #22c55e40' }}
+            style={{ background: '#10b98120', color: '#10b981', border: '1px solid #10b98140' }}
           >
             <Plus size={12} />
             Nouveau RDV
@@ -249,7 +249,7 @@ export default function AgendaPage() {
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                   placeholder="Rechercher par nom ou entreprise…"
                   className="w-full text-[12px] px-3 py-2 rounded-md"
-                  style={{ background: 'var(--color-surface-2)', border: `1px solid ${form.contactId ? '#22c55e60' : 'var(--color-border)'}`, color: 'var(--color-text)', outline: 'none' }}
+                  style={{ background: 'var(--color-surface-2)', border: `1px solid ${form.contactId ? '#10b98160' : 'var(--color-border)'}`, color: 'var(--color-text)', outline: 'none' }}
                 />
                 {showSuggestions && contactSuggestions.length > 0 && (
                   <div
@@ -320,7 +320,7 @@ export default function AgendaPage() {
                   onClick={() => void handleCreate()}
                   disabled={creating}
                   className="flex-1 py-2 rounded-md text-[13px] font-semibold"
-                  style={{ background: '#22c55e', color: '#fff', opacity: creating ? 0.6 : 1 }}
+                  style={{ background: '#10b981', color: '#fff', opacity: creating ? 0.6 : 1 }}
                 >
                   {creating ? 'Création…' : 'Créer le RDV'}
                 </button>
@@ -355,7 +355,7 @@ export default function AgendaPage() {
                     {d.getDate()}
                   </p>
                   {hasRdv && (
-                    <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: '#22c55e' }} />
+                    <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: '#10b981' }} />
                   )}
                 </div>
               )
@@ -410,11 +410,11 @@ export default function AgendaPage() {
                           style={{
                             top: topOffset,
                             height: Math.max(heightPx, 44),
-                            background: '#22c55e15',
-                            border: '1px solid #22c55e40',
+                            background: '#10b98115',
+                            border: '1px solid #10b98140',
                           }}
                         >
-                          <p className="text-[11px] font-medium leading-tight" style={{ color: '#22c55e' }}>
+                          <p className="text-[11px] font-medium leading-tight" style={{ color: '#10b981' }}>
                             {company}
                           </p>
                           <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
@@ -441,7 +441,7 @@ export default function AgendaPage() {
         </p>
         {loading && (
           <div className="flex items-center gap-2 py-2">
-            <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#22c55e' }} />
+            <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#10b981' }} />
             <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement…</span>
           </div>
         )}
@@ -460,9 +460,9 @@ export default function AgendaPage() {
               >
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: '#22c55e15', border: '1px solid #22c55e30' }}
+                  style={{ background: '#10b98115', border: '1px solid #10b98130' }}
                 >
-                  <Calendar size={13} style={{ color: '#22c55e' }} />
+                  <Calendar size={13} style={{ color: '#10b981' }} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -470,7 +470,7 @@ export default function AgendaPage() {
                       {company}
                     </p>
                     <span className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
-                      style={{ background: '#22c55e15', color: '#22c55e' }}>
+                      style={{ background: '#10b98115', color: '#10b981' }}>
                       <CheckCircle size={9} />
                       Confirmé
                     </span>
@@ -485,7 +485,7 @@ export default function AgendaPage() {
                         {phone}
                       </span>
                     )}
-                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#22c55e' }}>
+                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#10b981' }}>
                       <Mail size={10} />
                       Client notifié
                     </span>
@@ -591,7 +591,7 @@ export default function AgendaPage() {
                 )}
 
                 <div>
-                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#22c55e' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#10b981' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
                   <p className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{detailsData.summary || '—'}</p>
                 </div>
 

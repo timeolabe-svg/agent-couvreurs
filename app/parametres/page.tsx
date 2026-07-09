@@ -76,7 +76,7 @@ export default function ParametresPage() {
         <button
           onClick={handleSave}
           className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: saved ? '#22c55e' : 'var(--color-accent)', color: '#fff' }}
+          style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
         >
           {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
         </button>
@@ -316,7 +316,7 @@ function EmailTab() {
           <Stat label="Boîtes connectées" value={String(inboxes.length)} sub={`${inboxes.filter(i => i.status === 'active').length} actives`} color="#3b82f6" icon={<Mail size={14} />} />
           <Stat label="Domaines" value={String(domains.length)} sub={`${domains.filter(d => d.spf && d.dkim && d.dmarc).length} bien configurés`} color="#8b5cf6" icon={<Globe size={14} />} />
           <Stat label="Volume / jour" value={String(totalDaily)} sub="emails maximum" color="#f97316" icon={<Activity size={14} />} />
-          <Stat label="Volume / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#22c55e" icon={<Flame size={14} />} />
+          <Stat label="Volume / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#10b981" icon={<Flame size={14} />} />
         </div>
       </div>
 
@@ -390,7 +390,7 @@ function EmailTab() {
                   className="w-1.5 h-1.5 rounded-full"
                   style={{
                     background:
-                      inbox.health >= 90 ? '#22c55e' :
+                      inbox.health >= 90 ? '#10b981' :
                       inbox.health >= 75 ? '#f59e0b' :
                       '#ef4444',
                   }}
@@ -498,7 +498,7 @@ function Stat({ label, value, sub, color, icon }: { label: string; value: string
 
 function StatusBadge({ status, warmupDay }: { status: Inbox['status']; warmupDay?: number }) {
   const config = {
-    active:  { label: 'Actif',                      bg: '#22c55e15', color: '#22c55e' },
+    active:  { label: 'Actif',                      bg: '#10b98115', color: '#10b981' },
     warmup:  { label: `Warmup J${warmupDay ?? ''}`, bg: '#f59e0b15', color: '#f59e0b' },
     paused:  { label: 'Pause',                      bg: '#52525215', color: '#737373' },
   }[status]
@@ -520,8 +520,8 @@ function DnsBadge({ label, ok }: { label: string; ok: boolean }) {
     <span
       className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
       style={{
-        background: ok ? '#22c55e15' : '#ef444415',
-        color: ok ? '#22c55e' : '#ef4444',
+        background: ok ? '#10b98115' : '#ef444415',
+        color: ok ? '#10b981' : '#ef4444',
       }}
     >
       {ok ? <ShieldCheck size={9} /> : <ShieldAlert size={9} />}
@@ -878,9 +878,9 @@ function SequenceTab() {
                     checked={step.actif}
                     onChange={e => updateStep(step.id, { actif: e.target.checked })}
                     className="w-3.5 h-3.5 cursor-pointer"
-                    style={{ accentColor: '#22c55e' }}
+                    style={{ accentColor: '#10b981' }}
                   />
-                  <span className="text-[11px]" style={{ color: step.actif ? '#22c55e' : 'var(--color-muted-2)' }}>
+                  <span className="text-[11px]" style={{ color: step.actif ? '#10b981' : 'var(--color-muted-2)' }}>
                     {step.actif ? 'Actif' : 'Inactif'}
                   </span>
                 </label>
@@ -1005,9 +1005,9 @@ function RdvTab() {
             checked={rdv.enabled}
             onChange={e => setRdv({ ...rdv, enabled: e.target.checked })}
             className="w-4 h-4 cursor-pointer"
-            style={{ accentColor: '#22c55e' }}
+            style={{ accentColor: '#10b981' }}
           />
-          <span className="text-[11px]" style={{ color: rdv.enabled ? '#22c55e' : 'var(--color-muted)' }}>
+          <span className="text-[11px]" style={{ color: rdv.enabled ? '#10b981' : 'var(--color-muted)' }}>
             {rdv.enabled ? 'Activé' : 'Désactivé'}
           </span>
         </label>
@@ -1118,11 +1118,11 @@ function RdvTab() {
       {rdv.enabled && (
         <div
           className="rounded-lg p-3 flex items-center gap-2"
-          style={{ background: '#22c55e15', border: '1px solid #22c55e30' }}
+          style={{ background: '#10b98115', border: '1px solid #10b98130' }}
         >
-          <Check size={13} style={{ color: '#22c55e' }} />
+          <Check size={13} style={{ color: '#10b981' }} />
           <p className="text-[11px]" style={{ color: 'var(--color-text)' }}>
-            Page publique : <span style={{ color: '#22c55e' }}>https://hdigiweb.app/booking/{rdv.slug}</span>
+            Page publique : <span style={{ color: '#10b981' }}>https://hdigiweb.app/booking/{rdv.slug}</span>
           </p>
         </div>
       )}
@@ -1222,7 +1222,7 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
                   <div className="absolute top-3 right-3">
                     <div
                       className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: '#22c55e' }}
+                      style={{ background: '#10b981' }}
                     >
                       <Check size={11} color="#fff" />
                     </div>
@@ -1261,7 +1261,7 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
                   <div className="absolute top-3 right-3">
                     <div
                       className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: '#22c55e' }}
+                      style={{ background: '#10b981' }}
                     >
                       <Check size={11} color="#fff" />
                     </div>
@@ -1392,7 +1392,7 @@ function DisponibilitesTab() {
         <button
           onClick={handleSave}
           className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: saved ? '#22c55e' : 'var(--color-accent)', color: '#fff' }}
+          style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
         >
           {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
         </button>
@@ -1434,7 +1434,7 @@ function DisponibilitesTab() {
                   checked={schedule.enabled}
                   onChange={e => updateDay(day, { enabled: e.target.checked })}
                   className="w-4 h-4 cursor-pointer"
-                  style={{ accentColor: '#22c55e' }}
+                  style={{ accentColor: '#10b981' }}
                 />
               </label>
 
@@ -1488,9 +1488,9 @@ function DisponibilitesTab() {
               checked={avail.lunchBreak.enabled}
               onChange={e => setAvail(prev => ({ ...prev, lunchBreak: { ...prev.lunchBreak, enabled: e.target.checked } }))}
               className="w-4 h-4 cursor-pointer"
-              style={{ accentColor: '#22c55e' }}
+              style={{ accentColor: '#10b981' }}
             />
-            <span className="text-[11px]" style={{ color: avail.lunchBreak.enabled ? '#22c55e' : 'var(--color-muted)' }}>
+            <span className="text-[11px]" style={{ color: avail.lunchBreak.enabled ? '#10b981' : 'var(--color-muted)' }}>
               {avail.lunchBreak.enabled ? 'Activée' : 'Désactivée'}
             </span>
           </label>

@@ -78,7 +78,7 @@ export default function AgentPage() {
           <h1 className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>Agent IA — Configuration</h1>
           <div
             className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px]"
-            style={{ background: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e30' }}
+            style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
             Actif 24h/7j
@@ -90,7 +90,7 @@ export default function AgentPage() {
           <button
             onClick={handleSave}
             className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-            style={{ background: saved ? '#22c55e' : 'var(--color-accent)', color: '#fff' }}
+            style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
           >
             {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
           </button>
@@ -206,7 +206,7 @@ export default function AgentPage() {
                 <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted-2)' }}>L&apos;agent répond aux emails reçus sous 30 min</p>
               </div>
               <div key="auto-rdv" className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
-                <div className="flex items-center gap-2 mb-2" style={{ color: '#22c55e' }}><Bell size={13} /></div>
+                <div className="flex items-center gap-2 mb-2" style={{ color: '#10b981' }}><Bell size={13} /></div>
                 <p className="text-[11px] mb-0.5" style={{ color: 'var(--color-muted)' }}>Détection RDV auto</p>
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
@@ -214,7 +214,7 @@ export default function AgentPage() {
                     checked={config.autoRdvEnabled}
                     onChange={e => setConfig(c => ({ ...c, autoRdvEnabled: e.target.checked }))}
                     className="w-4 h-4 cursor-pointer"
-                    style={{ accentColor: '#22c55e' }}
+                    style={{ accentColor: '#10b981' }}
                   />
                   <span className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>
                     {config.autoRdvEnabled ? 'Activée' : 'Désactivée'}
@@ -231,7 +231,7 @@ export default function AgentPage() {
               style={{ background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}>
               <Flame size={13} style={{ color: '#f59e0b' }} />
               <p className="text-[12px] font-medium" style={{ color: 'var(--color-text)' }}>Warmup & deliverability</p>
-              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#22c55e15', color: '#22c55e' }}>
+              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#10b98115', color: '#10b981' }}>
                 Activé
               </span>
             </div>
@@ -247,7 +247,7 @@ export default function AgentPage() {
                   { week: 'Semaine 1', vol: '5 / jour',  pct: 14,  color: '#ef4444' },
                   { week: 'Semaine 2', vol: '15 / jour', pct: 43, color: '#f59e0b' },
                   { week: 'Semaine 3', vol: '25 / jour', pct: 71, color: '#3b82f6' },
-                  { week: 'Semaine 4+', vol: '35 / jour', pct: 100, color: '#22c55e' },
+                  { week: 'Semaine 4+', vol: '35 / jour', pct: 100, color: '#10b981' },
                 ].map(s => (
                   <div key={s.week} className="px-3 py-3" style={{ background: 'var(--color-surface-2)' }}>
                     <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{s.week}</p>
@@ -297,7 +297,7 @@ export default function AgentPage() {
                 </p>
               </div>
               <span className="text-[11px] px-2 py-1 rounded flex-shrink-0"
-                style={{ background: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e30' }}>
+                style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}>
                 Actif
               </span>
             </div>

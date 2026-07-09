@@ -66,7 +66,7 @@ function StatusMessage({ result, error }: { result: ImportResult | null; error: 
     return (
       <div
         className="flex items-center gap-2 p-3 rounded text-[12px]"
-        style={{ background: '#22c55e15', color: '#22c55e', border: '1px solid #22c55e30' }}
+        style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
       >
         <CheckCircle2 size={13} />
         <span>

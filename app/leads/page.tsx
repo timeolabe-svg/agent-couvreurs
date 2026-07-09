@@ -23,7 +23,7 @@ const STAGE_COLOR: Record<LeadStage, { bg: string; text: string }> = {
   follow_up_1:   { bg: '#3b82f615', text: '#3b82f6' },
   follow_up_2:   { bg: '#8b5cf615', text: '#8b5cf6' },
   replied:       { bg: '#f59e0b15', text: '#f59e0b' },
-  rdv_booked:    { bg: '#22c55e15', text: '#22c55e' },
+  rdv_booked:    { bg: '#10b98115', text: '#10b981' },
   not_interested:{ bg: '#ef444415', text: '#ef4444' },
 }
 
