@@ -745,7 +745,7 @@ async function sendRdvNotificationEmail(params: {
       to: CLIENT_NOTIFY_EMAIL,
       subject: `🎯 RDV automatiquement calé — ${params.contactCompany}`,
       html: `
-        <h2 style="color:#10b981">🎯 RDV calé automatiquement !</h2>
+        <h2 style="color:#5c9b82">🎯 RDV calé automatiquement !</h2>
         <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
         <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
         ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}

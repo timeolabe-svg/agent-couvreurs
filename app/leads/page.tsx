@@ -20,10 +20,10 @@ const STAGE_LABEL: Record<LeadStage, string> = {
 const STAGE_COLOR: Record<LeadStage, { bg: string; text: string }> = {
   prospected:    { bg: '#52525215', text: '#737373' },
   contacted:     { bg: '#52525215', text: '#737373' },
-  follow_up_1:   { bg: '#3b82f615', text: '#3b82f6' },
-  follow_up_2:   { bg: '#8b5cf615', text: '#8b5cf6' },
-  replied:       { bg: '#f59e0b15', text: '#f59e0b' },
-  rdv_booked:    { bg: '#10b98115', text: '#10b981' },
+  follow_up_1:   { bg: '#5f83ac15', text: '#5f83ac' },
+  follow_up_2:   { bg: '#7d6fb015', text: '#7d6fb0' },
+  replied:       { bg: '#c1965315', text: '#c19653' },
+  rdv_booked:    { bg: '#5c9b8215', text: '#5c9b82' },
   not_interested:{ bg: '#ef444415', text: '#ef4444' },
 }
 

@@ -199,7 +199,7 @@ export default function AgendaPage() {
           <h1 className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>Agenda</h1>
           <span
             className="text-[11px] px-2 py-0.5 rounded"
-            style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
+            style={{ background: '#5c9b8215', color: '#5c9b82', border: '1px solid #5c9b8230' }}
           >
             {loading ? '…' : rdvs.length} RDV ce mois
           </span>
@@ -209,7 +209,7 @@ export default function AgendaPage() {
           <button
             onClick={() => setShowNewRdv(true)}
             className="flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-md font-medium"
-            style={{ background: '#10b98120', color: '#10b981', border: '1px solid #10b98140' }}
+            style={{ background: '#5c9b8220', color: '#5c9b82', border: '1px solid #5c9b8240' }}
           >
             <Plus size={12} />
             Nouveau RDV
@@ -249,7 +249,7 @@ export default function AgendaPage() {
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                   placeholder="Rechercher par nom ou entreprise…"
                   className="w-full text-[12px] px-3 py-2 rounded-md"
-                  style={{ background: 'var(--color-surface-2)', border: `1px solid ${form.contactId ? '#10b98160' : 'var(--color-border)'}`, color: 'var(--color-text)', outline: 'none' }}
+                  style={{ background: 'var(--color-surface-2)', border: `1px solid ${form.contactId ? '#5c9b8260' : 'var(--color-border)'}`, color: 'var(--color-text)', outline: 'none' }}
                 />
                 {showSuggestions && contactSuggestions.length > 0 && (
                   <div
@@ -320,7 +320,7 @@ export default function AgendaPage() {
                   onClick={() => void handleCreate()}
                   disabled={creating}
                   className="flex-1 py-2 rounded-md text-[13px] font-semibold"
-                  style={{ background: '#10b981', color: '#fff', opacity: creating ? 0.6 : 1 }}
+                  style={{ background: '#5c9b82', color: '#fff', opacity: creating ? 0.6 : 1 }}
                 >
                   {creating ? 'Création…' : 'Créer le RDV'}
                 </button>
@@ -355,7 +355,7 @@ export default function AgendaPage() {
                     {d.getDate()}
                   </p>
                   {hasRdv && (
-                    <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: '#10b981' }} />
+                    <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: '#5c9b82' }} />
                   )}
                 </div>
               )
@@ -410,11 +410,11 @@ export default function AgendaPage() {
                           style={{
                             top: topOffset,
                             height: Math.max(heightPx, 44),
-                            background: '#10b98115',
-                            border: '1px solid #10b98140',
+                            background: '#5c9b8215',
+                            border: '1px solid #5c9b8240',
                           }}
                         >
-                          <p className="text-[11px] font-medium leading-tight" style={{ color: '#10b981' }}>
+                          <p className="text-[11px] font-medium leading-tight" style={{ color: '#5c9b82' }}>
                             {company}
                           </p>
                           <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
@@ -441,7 +441,7 @@ export default function AgendaPage() {
         </p>
         {loading && (
           <div className="flex items-center gap-2 py-2">
-            <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#10b981' }} />
+            <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#5c9b82' }} />
             <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement…</span>
           </div>
         )}
@@ -460,9 +460,9 @@ export default function AgendaPage() {
               >
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: '#10b98115', border: '1px solid #10b98130' }}
+                  style={{ background: '#5c9b8215', border: '1px solid #5c9b8230' }}
                 >
-                  <Calendar size={13} style={{ color: '#10b981' }} />
+                  <Calendar size={13} style={{ color: '#5c9b82' }} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -470,7 +470,7 @@ export default function AgendaPage() {
                       {company}
                     </p>
                     <span className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1"
-                      style={{ background: '#10b98115', color: '#10b981' }}>
+                      style={{ background: '#5c9b8215', color: '#5c9b82' }}>
                       <CheckCircle size={9} />
                       Confirmé
                     </span>
@@ -485,7 +485,7 @@ export default function AgendaPage() {
                         {phone}
                       </span>
                     )}
-                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#10b981' }}>
+                    <span className="flex items-center gap-1 text-[10px]" style={{ color: '#5c9b82' }}>
                       <Mail size={10} />
                       Client notifié
                     </span>
@@ -495,7 +495,7 @@ export default function AgendaPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-1 text-[10px]"
-                        style={{ color: '#3b82f6' }}
+                        style={{ color: '#5f83ac' }}
                       >
                         Meet →
                       </a>
@@ -504,7 +504,7 @@ export default function AgendaPage() {
                       <button
                         onClick={() => void openDetails(r.contact_id!, company)}
                         className="flex items-center gap-1 text-[10px] font-medium"
-                        style={{ color: '#a855f7' }}
+                        style={{ color: '#8f7bb5' }}
                       >
                         Conversation + fiche →
                       </button>
@@ -541,14 +541,14 @@ export default function AgendaPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>{detailsCompany}</h2>
               <div className="flex items-center gap-3">
-                <Link href={`/conversations?contact=${detailsContactId}`} className="text-[11px]" style={{ color: '#3b82f6' }}>Ouvrir la conversation →</Link>
+                <Link href={`/conversations?contact=${detailsContactId}`} className="text-[11px]" style={{ color: '#5f83ac' }}>Ouvrir la conversation →</Link>
                 <button onClick={() => setDetailsOpen(false)}><X size={16} style={{ color: 'var(--color-muted)' }} /></button>
               </div>
             </div>
 
             {detailsLoading && (
               <div className="flex items-center gap-2 py-4">
-                <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#a855f7' }} />
+                <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#8f7bb5' }} />
                 <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement (résumé IA en cours)…</span>
               </div>
             )}
@@ -556,12 +556,12 @@ export default function AgendaPage() {
             {!detailsLoading && detailsData && (
               <div className="flex flex-col gap-5">
                 <div>
-                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#a855f7' }}>QUI EST CETTE ENTREPRISE</p>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#8f7bb5' }}>QUI EST CETTE ENTREPRISE</p>
                   <p className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{detailsData.companyDescription || '—'}</p>
                   <div className="flex flex-wrap gap-3 mt-2 text-[11px]" style={{ color: 'var(--color-muted)' }}>
                     {detailsData.contact?.phone && <span>📞 {detailsData.contact.phone}</span>}
                     {detailsData.contact?.city && <span>📍 {detailsData.contact.city}</span>}
-                    {detailsData.contact?.website && <a href={detailsData.contact.website} target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6' }}>🌐 site</a>}
+                    {detailsData.contact?.website && <a href={detailsData.contact.website} target="_blank" rel="noopener noreferrer" style={{ color: '#5f83ac' }}>🌐 site</a>}
                     {detailsData.contact?.googleRating != null && <span>⭐ {detailsData.contact.googleRating} ({detailsData.contact.googleReviews ?? 0} avis)</span>}
                   </div>
                 </div>
@@ -569,9 +569,9 @@ export default function AgendaPage() {
                 {(detailsData.contact?.auditWeaknesses?.length ?? 0) > 0 && (
                   <div className="rounded-lg p-3" style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)' }}>
                     <div className="flex items-center flex-wrap gap-2 mb-2">
-                      <p className="text-[11px] font-semibold" style={{ color: '#f59e0b' }}>AUDIT DU SITE — LEVIERS À VENDRE</p>
+                      <p className="text-[11px] font-semibold" style={{ color: '#c19653' }}>AUDIT DU SITE — LEVIERS À VENDRE</p>
                       {typeof detailsData.contact?.auditScore === 'number' && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: 'rgba(245,158,11,0.15)', color: '#c19653' }}>
                           {detailsData.contact.auditScore}/100
                         </span>
                       )}
@@ -579,7 +579,7 @@ export default function AgendaPage() {
                     <ul className="flex flex-col gap-1.5">
                       {detailsData.contact!.auditWeaknesses!.slice(0, 10).map((w, i) => (
                         <li key={i} className="flex gap-2 text-[12px]" style={{ color: 'var(--color-text)' }}>
-                          <span style={{ color: '#f59e0b', flexShrink: 0 }}>•</span>
+                          <span style={{ color: '#c19653', flexShrink: 0 }}>•</span>
                           <span>{w}</span>
                         </li>
                       ))}
@@ -591,7 +591,7 @@ export default function AgendaPage() {
                 )}
 
                 <div>
-                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#10b981' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
+                  <p className="text-[11px] font-semibold mb-1" style={{ color: '#5c9b82' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
                   <p className="text-[12px] whitespace-pre-wrap" style={{ color: 'var(--color-text)' }}>{detailsData.summary || '—'}</p>
                 </div>
 
@@ -603,8 +603,8 @@ export default function AgendaPage() {
                         key={i}
                         className="rounded-lg p-2.5 text-[12px]"
                         style={{
-                          background: m.role === 'nous' ? '#3b82f610' : 'var(--color-surface-2)',
-                          border: `1px solid ${m.role === 'nous' ? '#3b82f630' : 'var(--color-border)'}`,
+                          background: m.role === 'nous' ? '#5f83ac10' : 'var(--color-surface-2)',
+                          border: `1px solid ${m.role === 'nous' ? '#5f83ac30' : 'var(--color-border)'}`,
                           alignSelf: m.role === 'nous' ? 'flex-end' : 'flex-start',
                           maxWidth: '88%',
                         }}

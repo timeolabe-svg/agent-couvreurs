@@ -36,19 +36,19 @@ const PERIODS: { id: Period; label: string }[] = [
 ]
 
 const PIPELINE_ITEMS: { key: keyof AnalyticsData['pipeline']; label: string; color: string }[] = [
-  { key: 'prospects', label: 'Prospects', color: '#3b82f6' },
-  { key: 'contacted', label: 'Contactés', color: '#3b82f6' },
-  { key: 'replied', label: 'Réponses', color: '#f59e0b' },
-  { key: 'rdv', label: 'RDV', color: '#10b981' },
+  { key: 'prospects', label: 'Prospects', color: '#5f83ac' },
+  { key: 'contacted', label: 'Contactés', color: '#5f83ac' },
+  { key: 'replied', label: 'Réponses', color: '#c19653' },
+  { key: 'rdv', label: 'RDV', color: '#5c9b82' },
 ]
 
 const CLASSIFICATION_COLORS: Record<string, string> = {
-  interest: '#10b981',
-  question: '#3b82f6',
-  objection: '#f59e0b',
-  rdv_request: '#7c3aed',
+  interest: '#5c9b82',
+  question: '#5f83ac',
+  objection: '#c19653',
+  rdv_request: '#7d6fb0',
   desinterest: '#6b6b80',
-  oof: '#a78bfa',
+  oof: '#a99cc9',
   spam: '#ef4444',
 }
 
@@ -111,7 +111,7 @@ export default function StatsPage() {
               onClick={() => setPeriod(p.id)}
               className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
               style={{
-                background: period === p.id ? '#7c3aed' : '#111118',
+                background: period === p.id ? '#7d6fb0' : '#111118',
                 color: period === p.id ? '#ffffff' : '#6b6b80',
                 border: period === p.id ? 'none' : '1px solid #1e1e2e',
               }}
@@ -132,15 +132,15 @@ export default function StatsPage() {
           <div className="grid grid-cols-4 gap-3">
             <KpiCard
               icon={Mail}
-              iconColor="#7c3aed"
+              iconColor="#7d6fb0"
               label="EMAILS ENVOYÉS"
               value={(d?.emailsSent ?? 0).toLocaleString('fr-FR')}
               sub="+0% vs période préc."
-              subColor="#10b981"
+              subColor="#5c9b82"
             />
             <KpiCard
               icon={MessageSquare}
-              iconColor="#10b981"
+              iconColor="#5c9b82"
               label="RÉPONSES"
               value={String(d?.replies ?? 0)}
               sub={`${d?.replyRate ?? 0}% taux de réponse`}
@@ -148,7 +148,7 @@ export default function StatsPage() {
             />
             <KpiCard
               icon={AlertTriangle}
-              iconColor="#f59e0b"
+              iconColor="#c19653"
               label="OPT-OUT & BOUNCES"
               value={String((d?.optouts ?? 0) + (d?.bounces ?? 0))}
               sub={`${d?.emailsSent ? (((d.optouts + d.bounces) / d.emailsSent) * 100).toFixed(1) : 0}% du total`}
@@ -156,7 +156,7 @@ export default function StatsPage() {
             />
             <KpiCard
               icon={Calendar}
-              iconColor="#8b5cf6"
+              iconColor="#7d6fb0"
               label="RDV GÉNÉRÉS"
               value={String(d?.rdvCount ?? 0)}
               sub={`${d?.conversionRate ?? 0}% taux de conversion`}
@@ -177,9 +177,9 @@ export default function StatsPage() {
             {d?.bestCity ? (
               <span style={{ color: '#e8e8f0' }}>
                 🎯 Meilleure ville ce mois :{' '}
-                <strong style={{ color: '#10b981' }}>{d.bestCity.city}</strong> avec{' '}
-                <strong style={{ color: '#10b981' }}>{d.bestCity.replyRate}%</strong> de taux de réponse et{' '}
-                <strong style={{ color: '#10b981' }}>{d.bestCity.rdv} RDV</strong> générés
+                <strong style={{ color: '#5c9b82' }}>{d.bestCity.city}</strong> avec{' '}
+                <strong style={{ color: '#5c9b82' }}>{d.bestCity.replyRate}%</strong> de taux de réponse et{' '}
+                <strong style={{ color: '#5c9b82' }}>{d.bestCity.rdv} RDV</strong> générés
               </span>
             ) : (
               <span style={{ color: '#6b6b80' }}>Pas encore assez de données pour générer un insight.</span>
@@ -194,7 +194,7 @@ export default function StatsPage() {
                 className="px-4 py-3 flex items-center gap-2"
                 style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
               >
-                <BarChart2 size={14} style={{ color: '#7c3aed' }} />
+                <BarChart2 size={14} style={{ color: '#7d6fb0' }} />
                 <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Performance par ville</p>
               </div>
               <div style={{ background: '#111118' }}>
@@ -245,13 +245,13 @@ export default function StatsPage() {
                         <div
                           className="text-right text-[12px] font-medium"
                           style={{
-                            color: city.replyRate > 5 ? '#10b981' : city.replyRate > 2 ? '#f59e0b' : '#6b6b80',
+                            color: city.replyRate > 5 ? '#5c9b82' : city.replyRate > 2 ? '#c19653' : '#6b6b80',
                           }}
                         >
                           {city.replyRate}%
                         </div>
-                        <div className="text-right text-[12px]" style={{ color: '#10b981' }}>{city.rdv}</div>
-                        <div className="text-right text-[12px] font-bold" style={{ color: '#a78bfa' }}>
+                        <div className="text-right text-[12px]" style={{ color: '#5c9b82' }}>{city.rdv}</div>
+                        <div className="text-right text-[12px] font-bold" style={{ color: '#a99cc9' }}>
                           {city.rdv * 50} €
                         </div>
                       </div>
@@ -298,7 +298,7 @@ export default function StatsPage() {
                     <span className="text-[12px]" style={{ color: '#6b6b80' }}>0 · 0%</span>
                   </div>
                   <div className="w-full rounded-sm" style={{ height: '6px', background: '#1a1a24' }}>
-                    <div className="h-full rounded-sm" style={{ width: '0%', background: '#7c3aed' }} />
+                    <div className="h-full rounded-sm" style={{ width: '0%', background: '#7d6fb0' }} />
                   </div>
                 </div>
               </div>
@@ -311,7 +311,7 @@ export default function StatsPage() {
               className="px-4 py-3 flex items-center gap-2"
               style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
             >
-              <BarChart3 size={14} style={{ color: '#7c3aed' }} />
+              <BarChart3 size={14} style={{ color: '#7d6fb0' }} />
               <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>
                 Activité — 30 derniers jours
               </p>
@@ -327,7 +327,7 @@ export default function StatsPage() {
               className="px-4 py-3 flex items-center gap-2"
               style={{ background: '#111118', borderBottom: '1px solid #1e1e2e' }}
             >
-              <MessageSquare size={14} style={{ color: '#7c3aed' }} />
+              <MessageSquare size={14} style={{ color: '#7d6fb0' }} />
               <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Détail des réponses</p>
             </div>
             <div
@@ -436,7 +436,7 @@ function StatRow({ label, value, highlight }: { label: string; value: string; hi
       <span className="text-[12px]" style={{ color: '#6b6b80' }}>{label}</span>
       <span
         className="text-[13px] font-semibold"
-        style={{ color: highlight ? '#7c3aed' : '#e8e8f0' }}
+        style={{ color: highlight ? '#7d6fb0' : '#e8e8f0' }}
       >
         {value}
       </span>
@@ -466,7 +466,7 @@ function DailyActivityChart({ data }: { data: Array<{ date: string; sent: number
                 style={{
                   width: '100%',
                   height: `${heightPct}%`,
-                  background: isToday ? '#7c3aed' : '#1a1a24',
+                  background: isToday ? '#7d6fb0' : '#1a1a24',
                   borderRadius: '3px 3px 0 0',
                 }}
                 title={`${formatDate(d.date)}: ${d.sent} envoyés, ${d.replies} réponses`}

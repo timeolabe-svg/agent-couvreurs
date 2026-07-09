@@ -22,10 +22,10 @@ const STAGE_LABEL: Record<LeadStage, string> = {
 const STAGE_COLOR: Record<LeadStage, string> = {
   prospected: '#737373',
   contacted: '#737373',
-  follow_up_1: '#3b82f6',
-  follow_up_2: '#8b5cf6',
-  replied: '#f59e0b',
-  rdv_booked: '#10b981',
+  follow_up_1: '#5f83ac',
+  follow_up_2: '#7d6fb0',
+  replied: '#c19653',
+  rdv_booked: '#5c9b82',
   not_interested: '#ef4444',
 }
 
@@ -119,11 +119,11 @@ export default function LeadDetailPage() {
           {lead.rdvDate && (
             <div
               className="rounded-lg p-4 flex items-start gap-3"
-              style={{ background: '#10b98108', border: '1px solid #10b98130' }}
+              style={{ background: '#5c9b8208', border: '1px solid #5c9b8230' }}
             >
-              <Calendar size={15} style={{ color: '#10b981', marginTop: 1, flexShrink: 0 }} />
+              <Calendar size={15} style={{ color: '#5c9b82', marginTop: 1, flexShrink: 0 }} />
               <div>
-                <p className="text-[12px] font-medium mb-0.5" style={{ color: '#10b981' }}>
+                <p className="text-[12px] font-medium mb-0.5" style={{ color: '#5c9b82' }}>
                   RDV detecte et confirme automatiquement
                 </p>
                 <p className="text-[12px]" style={{ color: 'var(--color-muted)' }}>
@@ -207,12 +207,12 @@ export default function LeadDetailPage() {
               className="mt-4 pt-4"
               style={{ borderTop: '1px solid var(--color-border)' }}
             >
-              <p className="text-[11px] font-medium mb-2" style={{ color: '#10b981' }}>RDV CONFIRME</p>
+              <p className="text-[11px] font-medium mb-2" style={{ color: '#5c9b82' }}>RDV CONFIRME</p>
               <div
                 className="rounded-lg p-3"
-                style={{ background: '#10b98108', border: '1px solid #10b98130' }}
+                style={{ background: '#5c9b8208', border: '1px solid #5c9b8230' }}
               >
-                <p className="text-[12px] font-medium" style={{ color: '#10b981' }}>
+                <p className="text-[12px] font-medium" style={{ color: '#5c9b82' }}>
                   {new Date(lead.rdvDate).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
                 </p>
                 <p className="text-[12px] mt-0.5" style={{ color: 'var(--color-muted)' }}>14h00 · 20 min</p>
@@ -262,7 +262,7 @@ function MessageBubble({ msg, firstName, isLast }: { msg: EmailMessage; firstNam
             {msg.isAiGenerated && msg.sequenceStep && (
               <span
                 className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: '#3b82f615', color: '#3b82f6', border: '1px solid #3b82f630' }}
+                style={{ background: '#5f83ac15', color: '#5f83ac', border: '1px solid #5f83ac30' }}
               >
                 {STEP_LABEL[msg.sequenceStep] || msg.sequenceStep}
               </span>
@@ -278,7 +278,7 @@ function MessageBubble({ msg, firstName, isLast }: { msg: EmailMessage; firstNam
           {new Date(msg.sentAt).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} {formatTime(msg.sentAt)}
         </span>
         {msg.openedAt && isAgent && (
-          <span className="text-[10px]" style={{ color: '#10b981' }}>Lu</span>
+          <span className="text-[10px]" style={{ color: '#5c9b82' }}>Lu</span>
         )}
       </div>
 

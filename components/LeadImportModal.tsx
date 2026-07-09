@@ -41,7 +41,7 @@ function TabButton({
       className="px-4 py-2 text-[12px] font-medium transition-colors"
       style={{
         color: active ? 'var(--color-text)' : 'var(--color-muted)',
-        borderBottom: active ? '2px solid var(--color-accent, #3b82f6)' : '2px solid transparent',
+        borderBottom: active ? '2px solid var(--color-accent, #5f83ac)' : '2px solid transparent',
         background: 'transparent',
       }}
     >
@@ -66,7 +66,7 @@ function StatusMessage({ result, error }: { result: ImportResult | null; error: 
     return (
       <div
         className="flex items-center gap-2 p-3 rounded text-[12px]"
-        style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
+        style={{ background: '#5c9b8215', color: '#5c9b82', border: '1px solid #5c9b8230' }}
       >
         <CheckCircle2 size={13} />
         <span>
@@ -162,7 +162,7 @@ function ScrapingTab({ onImported }: { onImported?: (count: number) => void }) {
           value={radius}
           onChange={e => setRadius(Number(e.target.value))}
           className="w-full"
-          style={{ accentColor: '#3b82f6' }}
+          style={{ accentColor: '#5f83ac' }}
         />
         <div className="flex justify-between text-[10px]" style={{ color: 'var(--color-muted-2)' }}>
           <span>5 km</span>
@@ -176,7 +176,7 @@ function ScrapingTab({ onImported }: { onImported?: (count: number) => void }) {
         onClick={handleScrape}
         disabled={loading || !city.trim()}
         className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-[13px] font-medium transition-opacity disabled:opacity-50"
-        style={{ background: '#3b82f6', color: '#fff' }}
+        style={{ background: '#5f83ac', color: '#fff' }}
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
         {loading ? 'Scraping en cours…' : 'Scraper'}
@@ -251,8 +251,8 @@ function CsvTab({ onImported }: { onImported?: (count: number) => void }) {
         onClick={() => inputRef.current?.click()}
         className="flex flex-col items-center justify-center gap-2 p-8 rounded cursor-pointer transition-colors"
         style={{
-          border: `2px dashed ${dragging ? '#3b82f6' : 'var(--color-border)'}`,
-          background: dragging ? '#3b82f610' : 'var(--color-surface-2)',
+          border: `2px dashed ${dragging ? '#5f83ac' : 'var(--color-border)'}`,
+          background: dragging ? '#5f83ac10' : 'var(--color-surface-2)',
         }}
       >
         <Upload size={20} style={{ color: 'var(--color-muted)' }} />
@@ -300,7 +300,7 @@ function CsvTab({ onImported }: { onImported?: (count: number) => void }) {
         onClick={handleImport}
         disabled={loading || !file}
         className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-[13px] font-medium transition-opacity disabled:opacity-50"
-        style={{ background: '#3b82f6', color: '#fff' }}
+        style={{ background: '#5f83ac', color: '#fff' }}
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
         {loading ? 'Importation…' : 'Importer'}
@@ -401,7 +401,7 @@ function ManualTab({ onImported }: { onImported?: (count: number) => void }) {
         onClick={handleAdd}
         disabled={loading || !form.email.trim()}
         className="flex items-center justify-center gap-2 px-4 py-2.5 rounded text-[13px] font-medium transition-opacity disabled:opacity-50"
-        style={{ background: '#3b82f6', color: '#fff' }}
+        style={{ background: '#5f83ac', color: '#fff' }}
       >
         {loading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
         {loading ? 'Ajout en cours…' : 'Ajouter'}

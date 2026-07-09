@@ -105,9 +105,9 @@ function daysAgoText(created_at: string): string {
 }
 
 function ActivityIcon({ type }: { type: string }) {
-  if (type === 'rdv_created') return <Calendar size={14} style={{ color: '#7c3aed' }} />
-  if (type === 'email_sent') return <Mail size={14} style={{ color: '#3b82f6' }} />
-  if (type === 'reply_received') return <MessageSquare size={14} style={{ color: '#10b981' }} />
+  if (type === 'rdv_created') return <Calendar size={14} style={{ color: '#7d6fb0' }} />
+  if (type === 'email_sent') return <Mail size={14} style={{ color: '#5f83ac' }} />
+  if (type === 'reply_received') return <MessageSquare size={14} style={{ color: '#5c9b82' }} />
   return <Bell size={14} style={{ color: '#6b6b80' }} />
 }
 
@@ -115,7 +115,7 @@ const DAY_NAMES = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM']
 
 // ─── Blink dot ────────────────────────────────────────────────────────────────
 
-function BlinkDot({ color = '#10b981' }: { color?: string }) {
+function BlinkDot({ color = '#5c9b82' }: { color?: string }) {
   return (
     <span
       style={{
@@ -288,7 +288,7 @@ export default function DashboardPage() {
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 padding: '8px 14px', borderRadius: 8, fontSize: 13,
-                background: '#7c3aed', color: '#fff', textDecoration: 'none', fontWeight: 500,
+                background: '#7d6fb0', color: '#fff', textDecoration: 'none', fontWeight: 500,
               }}
             >
               <Zap size={13} />
@@ -300,10 +300,10 @@ export default function DashboardPage() {
         {/* ── SECTION 2: 4 KPI Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
           {[
-            { Icon: Mail, iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
-            { Icon: MessageSquare, iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
-            { Icon: Calendar, iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
-            { Icon: User, iconColor: '#8b5cf6', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
+            { Icon: Mail, iconColor: '#5f83ac', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
+            { Icon: MessageSquare, iconColor: '#5c9b82', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
+            { Icon: Calendar, iconColor: '#7d6fb0', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
+            { Icon: User, iconColor: '#7d6fb0', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
           ].map(card => (
             <a
               key={card.label}
@@ -343,12 +343,12 @@ export default function DashboardPage() {
             {/* RDV count */}
             <div style={{ background: '#1a1a24', border: '1px solid #1e1e2e', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Rendez-vous ce mois</div>
-              <div style={{ fontSize: 40, fontWeight: 700, color: '#7c3aed', letterSpacing: '-0.03em' }}>{rdvCount}</div>
+              <div style={{ fontSize: 40, fontWeight: 700, color: '#e8e8f0', letterSpacing: '-0.03em' }}>{rdvCount}</div>
             </div>
             {/* Revenue */}
             <div style={{ background: '#1a1a24', border: '1px solid #1e1e2e', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Valeur ce mois</div>
-              <div style={{ fontSize: 40, fontWeight: 700, color: '#10b981', letterSpacing: '-0.03em' }}>{revenue.toLocaleString('fr-FR')} €</div>
+              <div style={{ fontSize: 40, fontWeight: 700, color: '#e8e8f0', letterSpacing: '-0.03em' }}>{revenue.toLocaleString('fr-FR')} €</div>
             </div>
           </div>
 
@@ -360,8 +360,8 @@ export default function DashboardPage() {
                 {summary.monthlyHistory.map((m: { month: string; rdv: number; revenue: number }) => (
                   <div key={m.month} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', background: '#0a0a0f', borderRadius: 6, fontSize: 12 }}>
                     <span style={{ color: '#6b6b80' }}>{m.month}</span>
-                    <span style={{ color: '#a78bfa' }}>{m.rdv} RDV</span>
-                    <span style={{ color: '#10b981', fontWeight: 600 }}>{m.revenue} €</span>
+                    <span style={{ color: '#a99cc9' }}>{m.rdv} RDV</span>
+                    <span style={{ color: '#e8e8f0', fontWeight: 600 }}>{m.revenue} €</span>
                   </div>
                 ))}
               </div>
@@ -381,7 +381,7 @@ export default function DashboardPage() {
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Bot size={16} style={{ color: '#7c3aed' }} />
+              <Bot size={16} style={{ color: '#7d6fb0' }} />
               <span style={{ fontWeight: 700, fontSize: 14, color: '#e8e8f0' }}>Ce que ton agent a appris cette semaine</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -389,7 +389,7 @@ export default function DashboardPage() {
                 <span style={{ fontSize: 12, color: '#6b6b80' }}>Rapport généré le {learningDate}</span>
               )}
               <button style={{
-                fontSize: 12, color: '#a78bfa', background: 'rgba(124,58,237,0.15)',
+                fontSize: 12, color: '#a99cc9', background: 'rgba(124,58,237,0.15)',
                 border: '1px solid rgba(124,58,237,0.3)', borderRadius: 6,
                 padding: '4px 10px', cursor: 'pointer',
               }}>
@@ -407,7 +407,7 @@ export default function DashboardPage() {
               {/* Top actions */}
               {(learning.top_subject_patterns ?? []).length > 0 && (
                 <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderLeft: '2px solid #10b981', paddingLeft: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#5c9b82', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8, borderLeft: '2px solid #5c9b82', paddingLeft: 8 }}>
                     TOP 5 ACTIONS CETTE SEMAINE
                   </div>
                   {(learning.top_subject_patterns ?? []).slice(0, 5).map((p, i) => (
@@ -420,9 +420,9 @@ export default function DashboardPage() {
 
               {/* Collapsible rows */}
               {[
-                { key: 'winning', dot: '#10b981', label: 'Segments gagnants', content: (learning.top_sectors ?? []).join(', ') || 'Aucun segment identifié' },
+                { key: 'winning', dot: '#5c9b82', label: 'Segments gagnants', content: (learning.top_sectors ?? []).join(', ') || 'Aucun segment identifié' },
                 { key: 'avoid', dot: '#ef4444', label: 'Segments à éviter', content: 'Données insuffisantes' },
-                { key: 'alerts', dot: '#f59e0b', label: 'Alertes', content: 'Aucune alerte' },
+                { key: 'alerts', dot: '#c19653', label: 'Alertes', content: 'Aucune alerte' },
               ].map(row => (
                 <div key={row.key} style={{ borderTop: '1px solid rgba(124,58,237,0.15)', paddingTop: 8, marginTop: 8 }}>
                   <button
@@ -445,7 +445,7 @@ export default function DashboardPage() {
               ))}
 
               <div style={{ marginTop: 16, textAlign: 'right' }}>
-                <Link href="/stats" style={{ fontSize: 12, color: '#a78bfa', textDecoration: 'none' }}>
+                <Link href="/stats" style={{ fontSize: 12, color: '#a99cc9', textDecoration: 'none' }}>
                   Voir tous les rapports →
                 </Link>
               </div>
@@ -520,7 +520,7 @@ export default function DashboardPage() {
               <Mail size={15} style={{ color: '#e8e8f0' }} />
               <span style={{ fontWeight: 700, fontSize: 14, color: '#e8e8f0' }}>Email</span>
             </div>
-            <Link href="/stats" style={{ fontSize: 12, color: '#7c3aed', textDecoration: 'none' }}>
+            <Link href="/stats" style={{ fontSize: 12, color: '#7d6fb0', textDecoration: 'none' }}>
               Détail →
             </Link>
           </div>
@@ -604,11 +604,11 @@ export default function DashboardPage() {
               <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Pipeline de conversion</span>
             </div>
             {[
-              { label: 'Prospects identifiés', value: pipeline.prospects, color: '#3b82f6', pct: null },
-              { label: 'Contactés', value: pipeline.contacted, color: '#3b82f6', pct: pTotal > 0 ? +((pipeline.contacted / pTotal) * 100).toFixed(1) : 0 },
-              { label: 'Réponses', value: pipeline.replied, color: '#f59e0b', pct: pTotal > 0 ? +((pipeline.replied / pTotal) * 100).toFixed(1) : 0 },
-              { label: 'RDV pris', value: pipeline.rdv, color: '#10b981', pct: pTotal > 0 ? +((pipeline.rdv / pTotal) * 100).toFixed(1) : 0 },
-              { label: 'Clients signés', value: pipeline.signed, color: '#a78bfa', pct: pTotal > 0 ? +((pipeline.signed / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'Prospects identifiés', value: pipeline.prospects, color: '#5f83ac', pct: null },
+              { label: 'Contactés', value: pipeline.contacted, color: '#5f83ac', pct: pTotal > 0 ? +((pipeline.contacted / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'Réponses', value: pipeline.replied, color: '#c19653', pct: pTotal > 0 ? +((pipeline.replied / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'RDV pris', value: pipeline.rdv, color: '#5c9b82', pct: pTotal > 0 ? +((pipeline.rdv / pTotal) * 100).toFixed(1) : 0 },
+              { label: 'Clients signés', value: pipeline.signed, color: '#a99cc9', pct: pTotal > 0 ? +((pipeline.signed / pTotal) * 100).toFixed(1) : 0 },
             ].map(row => (
               <div key={row.label} style={{ marginBottom: 14 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -648,10 +648,10 @@ export default function DashboardPage() {
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Trophy size={15} style={{ color: '#f59e0b' }} />
+              <Trophy size={15} style={{ color: '#c19653' }} />
               <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Top campagnes ce mois</span>
             </div>
-            <Link href="/campagnes" style={{ fontSize: 12, color: '#7c3aed', textDecoration: 'none' }}>
+            <Link href="/campagnes" style={{ fontSize: 12, color: '#7d6fb0', textDecoration: 'none' }}>
               Tout voir →
             </Link>
           </div>
@@ -679,21 +679,21 @@ export default function DashboardPage() {
                   <td style={{ padding: '12px 16px', fontSize: 13, color: '#e8e8f0' }}>{c.name}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{
-                      background: 'rgba(59,130,246,0.15)', color: '#60a5fa',
+                      background: 'rgba(59,130,246,0.15)', color: '#7d9cc4',
                       padding: '2px 8px', borderRadius: 4, fontSize: 12,
                     }}>
                       email
                     </span>
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: 13, color: '#e8e8f0' }}>{c.sentThisMonth}</td>
-                  <td style={{ padding: '12px 16px', fontSize: 13, color: c.replyRate > 5 ? '#10b981' : c.replyRate > 2 ? '#f59e0b' : '#6b6b80' }}>
+                  <td style={{ padding: '12px 16px', fontSize: 13, color: c.replyRate > 5 ? '#5c9b82' : c.replyRate > 2 ? '#c19653' : '#6b6b80' }}>
                     {c.replyRate}%
                   </td>
-                  <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 700, color: '#a78bfa' }}>{c.rdvCount}</td>
+                  <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 700, color: '#a99cc9' }}>{c.rdvCount}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <span style={{
                       background: c.status === 'active' ? 'rgba(16,185,129,0.15)' : 'rgba(107,107,128,0.15)',
-                      color: c.status === 'active' ? '#10b981' : '#6b6b80',
+                      color: c.status === 'active' ? '#5c9b82' : '#6b6b80',
                       padding: '2px 8px', borderRadius: 4, fontSize: 12,
                     }}>
                       {c.status === 'active' ? 'Actif' : 'Pausé'}
@@ -730,7 +730,7 @@ export default function DashboardPage() {
                     borderRadius: 8,
                     textAlign: 'center',
                     background: isToday ? 'rgba(124,58,237,0.15)' : '#111118',
-                    border: isToday ? '2px solid #7c3aed' : '1px solid #1e1e2e',
+                    border: isToday ? '2px solid #7d6fb0' : '1px solid #1e1e2e',
                   }}
                 >
                   <div style={{ fontSize: 10, textTransform: 'uppercase', color: '#6b6b80', marginBottom: 4 }}>
@@ -739,7 +739,7 @@ export default function DashboardPage() {
                   <div style={{ fontSize: 20, fontWeight: 700, color: isToday ? '#fff' : '#6b6b80' }}>
                     {new Date(day.date + 'T12:00:00').getDate()}
                   </div>
-                  <div style={{ fontSize: 11, color: isToday ? '#a78bfa' : '#4a4a5a', marginTop: 4 }}>
+                  <div style={{ fontSize: 11, color: isToday ? '#a99cc9' : '#4a4a5a', marginTop: 4 }}>
                     {day.rdvCount > 0 ? `${day.rdvCount} RDV` : '—'}
                   </div>
                 </div>
@@ -753,19 +753,19 @@ export default function DashboardPage() {
           {[
             {
               href: '/campagnes',
-              icon: <Zap size={18} style={{ color: '#3b82f6' }} />,
+              icon: <Zap size={18} style={{ color: '#5f83ac' }} />,
               iconBg: 'rgba(59,130,246,0.15)',
               label: '+ Nouvelle campagne',
             },
             {
               href: '/stats',
-              icon: <Sparkles size={18} style={{ color: '#7c3aed' }} />,
+              icon: <Sparkles size={18} style={{ color: '#7d6fb0' }} />,
               iconBg: 'rgba(124,58,237,0.15)',
               label: 'Lancer une analyse',
             },
             {
               href: '/stats',
-              icon: <BarChart2 size={18} style={{ color: '#f59e0b' }} />,
+              icon: <BarChart2 size={18} style={{ color: '#c19653' }} />,
               iconBg: 'rgba(245,158,11,0.15)',
               label: 'Stats détaillées',
             },

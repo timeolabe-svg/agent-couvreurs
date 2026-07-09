@@ -78,7 +78,7 @@ export default function AgentPage() {
           <h1 className="text-[13px] font-semibold" style={{ color: 'var(--color-text)' }}>Agent IA — Configuration</h1>
           <div
             className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px]"
-            style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
+            style={{ background: '#5c9b8215', color: '#5c9b82', border: '1px solid #5c9b8230' }}
           >
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
             Actif 24h/7j
@@ -90,7 +90,7 @@ export default function AgentPage() {
           <button
             onClick={handleSave}
             className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-            style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
+            style={{ background: saved ? '#5c9b82' : 'var(--color-accent)', color: '#fff' }}
           >
             {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
           </button>
@@ -160,7 +160,7 @@ export default function AgentPage() {
             <div className="grid grid-cols-2 gap-px"
               style={{ background: 'var(--color-border)' }}>
               <div key="max-emails" className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
-                <div className="flex items-center gap-2 mb-2" style={{ color: '#3b82f6' }}><Mail size={13} /></div>
+                <div className="flex items-center gap-2 mb-2" style={{ color: '#5f83ac' }}><Mail size={13} /></div>
                 <p className="text-[11px] mb-0.5" style={{ color: 'var(--color-muted)' }}>Max emails / jour</p>
                 <input
                   type="number"
@@ -172,7 +172,7 @@ export default function AgentPage() {
                 <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted-2)' }}>Limite quotidienne pour éviter le spam</p>
               </div>
               <div key="warmup" className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
-                <div className="flex items-center gap-2 mb-2" style={{ color: '#8b5cf6' }}><Clock size={13} /></div>
+                <div className="flex items-center gap-2 mb-2" style={{ color: '#7d6fb0' }}><Clock size={13} /></div>
                 <p className="text-[11px] mb-0.5" style={{ color: 'var(--color-muted)' }}>Warmup domaine</p>
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
@@ -180,7 +180,7 @@ export default function AgentPage() {
                     checked={config.warmupEnabled}
                     onChange={e => setConfig(c => ({ ...c, warmupEnabled: e.target.checked }))}
                     className="w-4 h-4 cursor-pointer"
-                    style={{ accentColor: '#8b5cf6' }}
+                    style={{ accentColor: '#7d6fb0' }}
                   />
                   <span className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>
                     {config.warmupEnabled ? 'Activé' : 'Désactivé'}
@@ -189,7 +189,7 @@ export default function AgentPage() {
                 <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted-2)' }}>Montée en charge progressive sur 4 semaines</p>
               </div>
               <div key="auto-reply" className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
-                <div className="flex items-center gap-2 mb-2" style={{ color: '#f59e0b' }}><Bot size={13} /></div>
+                <div className="flex items-center gap-2 mb-2" style={{ color: '#c19653' }}><Bot size={13} /></div>
                 <p className="text-[11px] mb-0.5" style={{ color: 'var(--color-muted)' }}>Réponse automatique</p>
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
@@ -197,7 +197,7 @@ export default function AgentPage() {
                     checked={config.autoReplyEnabled}
                     onChange={e => setConfig(c => ({ ...c, autoReplyEnabled: e.target.checked }))}
                     className="w-4 h-4 cursor-pointer"
-                    style={{ accentColor: '#f59e0b' }}
+                    style={{ accentColor: '#c19653' }}
                   />
                   <span className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>
                     {config.autoReplyEnabled ? 'Activée' : 'Désactivée'}
@@ -206,7 +206,7 @@ export default function AgentPage() {
                 <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted-2)' }}>L&apos;agent répond aux emails reçus sous 30 min</p>
               </div>
               <div key="auto-rdv" className="px-4 py-4" style={{ background: 'var(--color-surface)' }}>
-                <div className="flex items-center gap-2 mb-2" style={{ color: '#10b981' }}><Bell size={13} /></div>
+                <div className="flex items-center gap-2 mb-2" style={{ color: '#5c9b82' }}><Bell size={13} /></div>
                 <p className="text-[11px] mb-0.5" style={{ color: 'var(--color-muted)' }}>Détection RDV auto</p>
                 <label className="flex items-center gap-2 cursor-pointer mt-1">
                   <input
@@ -214,7 +214,7 @@ export default function AgentPage() {
                     checked={config.autoRdvEnabled}
                     onChange={e => setConfig(c => ({ ...c, autoRdvEnabled: e.target.checked }))}
                     className="w-4 h-4 cursor-pointer"
-                    style={{ accentColor: '#10b981' }}
+                    style={{ accentColor: '#5c9b82' }}
                   />
                   <span className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>
                     {config.autoRdvEnabled ? 'Activée' : 'Désactivée'}
@@ -229,9 +229,9 @@ export default function AgentPage() {
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--color-border)' }}>
             <div className="px-4 py-3 flex items-center gap-2"
               style={{ background: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)' }}>
-              <Flame size={13} style={{ color: '#f59e0b' }} />
+              <Flame size={13} style={{ color: '#c19653' }} />
               <p className="text-[12px] font-medium" style={{ color: 'var(--color-text)' }}>Warmup & deliverability</p>
-              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#10b98115', color: '#10b981' }}>
+              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#5c9b8215', color: '#5c9b82' }}>
                 Activé
               </span>
             </div>
@@ -245,9 +245,9 @@ export default function AgentPage() {
                 style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}>
                 {[
                   { week: 'Semaine 1', vol: '5 / jour',  pct: 14,  color: '#ef4444' },
-                  { week: 'Semaine 2', vol: '15 / jour', pct: 43, color: '#f59e0b' },
-                  { week: 'Semaine 3', vol: '25 / jour', pct: 71, color: '#3b82f6' },
-                  { week: 'Semaine 4+', vol: '35 / jour', pct: 100, color: '#10b981' },
+                  { week: 'Semaine 2', vol: '15 / jour', pct: 43, color: '#c19653' },
+                  { week: 'Semaine 3', vol: '25 / jour', pct: 71, color: '#5f83ac' },
+                  { week: 'Semaine 4+', vol: '35 / jour', pct: 100, color: '#5c9b82' },
                 ].map(s => (
                   <div key={s.week} className="px-3 py-3" style={{ background: 'var(--color-surface-2)' }}>
                     <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{s.week}</p>
@@ -261,9 +261,9 @@ export default function AgentPage() {
 
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { icon: <CalendarRange size={12} />, label: 'Plage horaire', value: '9h00 → 17h30', desc: 'Lun-Ven uniquement', color: '#3b82f6' },
-                  { icon: <TrendingUp size={12} />,    label: 'Incrément quotidien', value: '+2 emails/jour', desc: "Jusqu'à 35 emails/jour", color: '#8b5cf6' },
-                  { icon: <Clock size={12} />,         label: 'Espacement', value: '8 à 25 min', desc: 'Aléatoire entre chaque envoi', color: '#f59e0b' },
+                  { icon: <CalendarRange size={12} />, label: 'Plage horaire', value: '9h00 → 17h30', desc: 'Lun-Ven uniquement', color: '#5f83ac' },
+                  { icon: <TrendingUp size={12} />,    label: 'Incrément quotidien', value: '+2 emails/jour', desc: "Jusqu'à 35 emails/jour", color: '#7d6fb0' },
+                  { icon: <Clock size={12} />,         label: 'Espacement', value: '8 à 25 min', desc: 'Aléatoire entre chaque envoi', color: '#c19653' },
                 ].map(p => (
                   <div key={p.label} className="rounded-lg px-3 py-3" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
                     <div className="mb-2" style={{ color: p.color }}>{p.icon}</div>
@@ -297,7 +297,7 @@ export default function AgentPage() {
                 </p>
               </div>
               <span className="text-[11px] px-2 py-1 rounded flex-shrink-0"
-                style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}>
+                style={{ background: '#5c9b8215', color: '#5c9b82', border: '1px solid #5c9b8230' }}>
                 Actif
               </span>
             </div>

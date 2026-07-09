@@ -82,20 +82,20 @@ function ReportCard({
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
           <div className="flex gap-3 text-[11px]">
-            <span style={{ color: '#3b82f6' }}>
+            <span style={{ color: '#5f83ac' }}>
               {report.emails_sent ?? 0} emails
             </span>
-            <span style={{ color: report.reply_rate && report.reply_rate >= 5 ? '#10b981' : '#f59e0b' }}>
+            <span style={{ color: report.reply_rate && report.reply_rate >= 5 ? '#5c9b82' : '#c19653' }}>
               {report.reply_rate?.toFixed(1) ?? 0}% réponse
             </span>
-            <span style={{ color: '#8b5cf6' }}>
+            <span style={{ color: '#7d6fb0' }}>
               {report.rdv_count ?? 0} RDV
             </span>
           </div>
           {report.applied ? (
             <span
               className="text-[10px] px-2 py-0.5 rounded flex items-center gap-1"
-              style={{ background: '#10b98115', color: '#10b981', border: '1px solid #10b98130' }}
+              style={{ background: '#5c9b8215', color: '#5c9b82', border: '1px solid #5c9b8230' }}
             >
               <CheckCircle2 size={10} />
               Appliqué
@@ -121,9 +121,9 @@ function ReportCard({
               style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}
             >
               {[
-                { label: 'Taux réponse', value: `${metrics.reply_rate?.toFixed(1) ?? 0}%`, color: '#3b82f6' },
-                { label: 'Taux RDV', value: `${metrics.rdv_rate?.toFixed(1) ?? 0}%`, color: '#10b981' },
-                { label: 'Meilleur secteur', value: metrics.best_sector ?? '—', color: '#8b5cf6' },
+                { label: 'Taux réponse', value: `${metrics.reply_rate?.toFixed(1) ?? 0}%`, color: '#5f83ac' },
+                { label: 'Taux RDV', value: `${metrics.rdv_rate?.toFixed(1) ?? 0}%`, color: '#5c9b82' },
+                { label: 'Meilleur secteur', value: metrics.best_sector ?? '—', color: '#7d6fb0' },
                 { label: 'Moins bon secteur', value: metrics.worst_sector ?? '—', color: '#ef4444' },
               ].map((m) => (
                 <div key={m.label} className="px-3 py-3" style={{ background: 'var(--color-surface-2)' }}>
@@ -145,7 +145,7 @@ function ReportCard({
               <ul className="space-y-1">
                 {insights.map((insight, i) => (
                   <li key={i} className="flex items-start gap-2 text-[12px]" style={{ color: 'var(--color-text)' }}>
-                    <span style={{ color: '#f59e0b' }}>→</span>
+                    <span style={{ color: '#c19653' }}>→</span>
                     {insight}
                   </li>
                 ))}
@@ -184,9 +184,9 @@ function ReportCard({
                 {inner.prompt_adjustments ? (
                   <div
                     className="rounded p-2 mt-2 text-[11px]"
-                    style={{ background: '#3b82f608', border: '1px solid #3b82f620', color: 'var(--color-text)' }}
+                    style={{ background: '#5f83ac08', border: '1px solid #5f83ac20', color: 'var(--color-text)' }}
                   >
-                    <span style={{ color: '#3b82f6', fontWeight: 500 }}>Ajustement prompt : </span>
+                    <span style={{ color: '#5f83ac', fontWeight: 500 }}>Ajustement prompt : </span>
                     {inner.prompt_adjustments}
                   </div>
                 ) : null}
@@ -200,7 +200,7 @@ function ReportCard({
               onClick={() => onApply(report.id)}
               disabled={applying}
               className="flex items-center gap-2 px-4 py-2 rounded text-[12px] font-medium transition-opacity hover:opacity-80 disabled:opacity-50"
-              style={{ background: '#3b82f6', color: '#fff' }}
+              style={{ background: '#5f83ac', color: '#fff' }}
             >
               {applying ? <RefreshCw size={12} className="animate-spin" /> : null}
               Appliquer les recommandations
@@ -280,7 +280,7 @@ export default function LearningPage() {
           {isDemo && (
             <span
               className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{ background: '#f59e0b15', color: '#d97706', border: '1px solid #f59e0b30' }}
+              style={{ background: '#c1965315', color: '#d97706', border: '1px solid #c1965330' }}
             >
               Démo
             </span>
@@ -303,19 +303,19 @@ export default function LearningPage() {
               style={{ border: '1px solid var(--color-border)' }}
             >
               <div className="px-4 py-4 flex items-center gap-4" style={{ background: 'var(--color-surface)' }}>
-                <Brain size={16} style={{ color: '#3b82f6', flexShrink: 0 }} />
+                <Brain size={16} style={{ color: '#5f83ac', flexShrink: 0 }} />
                 <div className="flex-1">
                   <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
                     PERFORMANCE AGENT (MOYENNE {reports.length} SEMAINE{reports.length > 1 ? 'S' : ''})
                   </p>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <p className="text-[24px] font-semibold" style={{ color: '#3b82f6' }}>
+                    <p className="text-[24px] font-semibold" style={{ color: '#5f83ac' }}>
                       {avgReplyRate.toFixed(1)}%
                     </p>
                     {trend !== null && (
                       <span
                         className="flex items-center gap-0.5 text-[12px]"
-                        style={{ color: trend >= 0 ? '#10b981' : '#ef4444' }}
+                        style={{ color: trend >= 0 ? '#5c9b82' : '#ef4444' }}
                       >
                         {trend >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                         {trend >= 0 ? '+' : ''}{trend.toFixed(1)}%
@@ -326,7 +326,7 @@ export default function LearningPage() {
                     taux de réponse moyen
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px]" style={{ color: '#10b981' }}>
+                <div className="flex items-center gap-1.5 text-[11px]" style={{ color: '#5c9b82' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
                   Agent actif
                 </div>

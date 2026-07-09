@@ -76,7 +76,7 @@ export default function ParametresPage() {
         <button
           onClick={handleSave}
           className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
+          style={{ background: saved ? '#5c9b82' : 'var(--color-accent)', color: '#fff' }}
         >
           {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
         </button>
@@ -313,10 +313,10 @@ function EmailTab() {
           Capacité d&apos;envoi globale
         </p>
         <div className="grid grid-cols-4 gap-4">
-          <Stat label="Boîtes connectées" value={String(inboxes.length)} sub={`${inboxes.filter(i => i.status === 'active').length} actives`} color="#3b82f6" icon={<Mail size={14} />} />
-          <Stat label="Domaines" value={String(domains.length)} sub={`${domains.filter(d => d.spf && d.dkim && d.dmarc).length} bien configurés`} color="#8b5cf6" icon={<Globe size={14} />} />
+          <Stat label="Boîtes connectées" value={String(inboxes.length)} sub={`${inboxes.filter(i => i.status === 'active').length} actives`} color="#5f83ac" icon={<Mail size={14} />} />
+          <Stat label="Domaines" value={String(domains.length)} sub={`${domains.filter(d => d.spf && d.dkim && d.dmarc).length} bien configurés`} color="#7d6fb0" icon={<Globe size={14} />} />
           <Stat label="Volume / jour" value={String(totalDaily)} sub="emails maximum" color="#f97316" icon={<Activity size={14} />} />
-          <Stat label="Volume / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#10b981" icon={<Flame size={14} />} />
+          <Stat label="Volume / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#5c9b82" icon={<Flame size={14} />} />
         </div>
       </div>
 
@@ -376,7 +376,7 @@ function EmailTab() {
                     className="h-full rounded-full"
                     style={{
                       width: `${(inbox.dailySent / inbox.dailyLimit) * 100}%`,
-                      background: inbox.dailySent / inbox.dailyLimit > 0.9 ? '#f97316' : '#3b82f6',
+                      background: inbox.dailySent / inbox.dailyLimit > 0.9 ? '#f97316' : '#5f83ac',
                     }}
                   />
                 </div>
@@ -390,8 +390,8 @@ function EmailTab() {
                   className="w-1.5 h-1.5 rounded-full"
                   style={{
                     background:
-                      inbox.health >= 90 ? '#10b981' :
-                      inbox.health >= 75 ? '#f59e0b' :
+                      inbox.health >= 90 ? '#5c9b82' :
+                      inbox.health >= 75 ? '#c19653' :
                       '#ef4444',
                   }}
                 />
@@ -464,9 +464,9 @@ function EmailTab() {
       {/* Conseils */}
       <div
         className="rounded-lg p-4 flex gap-3"
-        style={{ background: '#3b82f608', border: '1px solid #3b82f630' }}
+        style={{ background: '#5f83ac08', border: '1px solid #5f83ac30' }}
       >
-        <AlertCircle size={16} style={{ color: '#3b82f6', flexShrink: 0, marginTop: 2 }} />
+        <AlertCircle size={16} style={{ color: '#5f83ac', flexShrink: 0, marginTop: 2 }} />
         <div className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text)' }}>
           <p className="font-semibold mb-1">Pour envoyer 10 000 emails/mois sans finir en spam :</p>
           <p style={{ color: 'var(--color-muted)' }}>
@@ -498,8 +498,8 @@ function Stat({ label, value, sub, color, icon }: { label: string; value: string
 
 function StatusBadge({ status, warmupDay }: { status: Inbox['status']; warmupDay?: number }) {
   const config = {
-    active:  { label: 'Actif',                      bg: '#10b98115', color: '#10b981' },
-    warmup:  { label: `Warmup J${warmupDay ?? ''}`, bg: '#f59e0b15', color: '#f59e0b' },
+    active:  { label: 'Actif',                      bg: '#5c9b8215', color: '#5c9b82' },
+    warmup:  { label: `Warmup J${warmupDay ?? ''}`, bg: '#c1965315', color: '#c19653' },
     paused:  { label: 'Pause',                      bg: '#52525215', color: '#737373' },
   }[status]
   return (
@@ -520,8 +520,8 @@ function DnsBadge({ label, ok }: { label: string; ok: boolean }) {
     <span
       className="text-[10px] px-1.5 py-0.5 rounded inline-flex items-center gap-1"
       style={{
-        background: ok ? '#10b98115' : '#ef444415',
-        color: ok ? '#10b981' : '#ef4444',
+        background: ok ? '#5c9b8215' : '#ef444415',
+        color: ok ? '#5c9b82' : '#ef4444',
       }}
     >
       {ok ? <ShieldCheck size={9} /> : <ShieldAlert size={9} />}
@@ -641,9 +641,9 @@ function AddInboxModal({ onClose, onAdd }: { onClose: () => void; onAdd: (i: Omi
 
           <div
             className="rounded-lg p-3"
-            style={{ background: '#f59e0b08', border: '1px solid #f59e0b30' }}
+            style={{ background: '#c1965308', border: '1px solid #c1965330' }}
           >
-            <p className="text-[11px] font-semibold mb-1" style={{ color: '#f59e0b' }}>
+            <p className="text-[11px] font-semibold mb-1" style={{ color: '#c19653' }}>
               Warmup automatique activé
             </p>
             <p className="text-[10px] leading-relaxed" style={{ color: 'var(--color-muted)' }}>
@@ -878,9 +878,9 @@ function SequenceTab() {
                     checked={step.actif}
                     onChange={e => updateStep(step.id, { actif: e.target.checked })}
                     className="w-3.5 h-3.5 cursor-pointer"
-                    style={{ accentColor: '#10b981' }}
+                    style={{ accentColor: '#5c9b82' }}
                   />
-                  <span className="text-[11px]" style={{ color: step.actif ? '#10b981' : 'var(--color-muted-2)' }}>
+                  <span className="text-[11px]" style={{ color: step.actif ? '#5c9b82' : 'var(--color-muted-2)' }}>
                     {step.actif ? 'Actif' : 'Inactif'}
                   </span>
                 </label>
@@ -1005,9 +1005,9 @@ function RdvTab() {
             checked={rdv.enabled}
             onChange={e => setRdv({ ...rdv, enabled: e.target.checked })}
             className="w-4 h-4 cursor-pointer"
-            style={{ accentColor: '#10b981' }}
+            style={{ accentColor: '#5c9b82' }}
           />
-          <span className="text-[11px]" style={{ color: rdv.enabled ? '#10b981' : 'var(--color-muted)' }}>
+          <span className="text-[11px]" style={{ color: rdv.enabled ? '#5c9b82' : 'var(--color-muted)' }}>
             {rdv.enabled ? 'Activé' : 'Désactivé'}
           </span>
         </label>
@@ -1118,11 +1118,11 @@ function RdvTab() {
       {rdv.enabled && (
         <div
           className="rounded-lg p-3 flex items-center gap-2"
-          style={{ background: '#10b98115', border: '1px solid #10b98130' }}
+          style={{ background: '#5c9b8215', border: '1px solid #5c9b8230' }}
         >
-          <Check size={13} style={{ color: '#10b981' }} />
+          <Check size={13} style={{ color: '#5c9b82' }} />
           <p className="text-[11px]" style={{ color: 'var(--color-text)' }}>
-            Page publique : <span style={{ color: '#10b981' }}>https://hdigiweb.app/booking/{rdv.slug}</span>
+            Page publique : <span style={{ color: '#5c9b82' }}>https://hdigiweb.app/booking/{rdv.slug}</span>
           </p>
         </div>
       )}
@@ -1222,7 +1222,7 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
                   <div className="absolute top-3 right-3">
                     <div
                       className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: '#10b981' }}
+                      style={{ background: '#5c9b82' }}
                     >
                       <Check size={11} color="#fff" />
                     </div>
@@ -1261,7 +1261,7 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
                   <div className="absolute top-3 right-3">
                     <div
                       className="w-5 h-5 rounded-full flex items-center justify-center"
-                      style={{ background: '#10b981' }}
+                      style={{ background: '#5c9b82' }}
                     >
                       <Check size={11} color="#fff" />
                     </div>
@@ -1392,7 +1392,7 @@ function DisponibilitesTab() {
         <button
           onClick={handleSave}
           className="flex items-center gap-2 px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-90"
-          style={{ background: saved ? '#10b981' : 'var(--color-accent)', color: '#fff' }}
+          style={{ background: saved ? '#5c9b82' : 'var(--color-accent)', color: '#fff' }}
         >
           {saved ? <><Check size={13} /> Enregistré</> : <><Save size={13} /> Sauvegarder</>}
         </button>
@@ -1434,7 +1434,7 @@ function DisponibilitesTab() {
                   checked={schedule.enabled}
                   onChange={e => updateDay(day, { enabled: e.target.checked })}
                   className="w-4 h-4 cursor-pointer"
-                  style={{ accentColor: '#10b981' }}
+                  style={{ accentColor: '#5c9b82' }}
                 />
               </label>
 
@@ -1488,9 +1488,9 @@ function DisponibilitesTab() {
               checked={avail.lunchBreak.enabled}
               onChange={e => setAvail(prev => ({ ...prev, lunchBreak: { ...prev.lunchBreak, enabled: e.target.checked } }))}
               className="w-4 h-4 cursor-pointer"
-              style={{ accentColor: '#10b981' }}
+              style={{ accentColor: '#5c9b82' }}
             />
-            <span className="text-[11px]" style={{ color: avail.lunchBreak.enabled ? '#10b981' : 'var(--color-muted)' }}>
+            <span className="text-[11px]" style={{ color: avail.lunchBreak.enabled ? '#5c9b82' : 'var(--color-muted)' }}>
               {avail.lunchBreak.enabled ? 'Activée' : 'Désactivée'}
             </span>
           </label>
@@ -1576,9 +1576,9 @@ function DisponibilitesTab() {
       {/* Résumé */}
       <div
         className="rounded-lg p-3 flex gap-3"
-        style={{ background: '#3b82f608', border: '1px solid #3b82f630' }}
+        style={{ background: '#5f83ac08', border: '1px solid #5f83ac30' }}
       >
-        <Clock size={14} style={{ color: '#3b82f6', flexShrink: 0, marginTop: 1 }} />
+        <Clock size={14} style={{ color: '#5f83ac', flexShrink: 0, marginTop: 1 }} />
         <p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-muted)' }}>
           L&apos;IA utilisera ces horaires pour trouver le prochain créneau disponible lors d&apos;une demande de RDV par email.
           Si le prospect propose une date hors plage horaire, le système cherchera automatiquement le créneau le plus proche.
@@ -1668,7 +1668,7 @@ function FacturationTab() {
             <p className="text-[11px] mt-1" style={{ color: 'var(--color-muted)' }}>Vous payez uniquement pour les RDV générés par l&apos;agent.</p>
           </div>
           <div className="text-right">
-            <p className="text-[28px] font-bold" style={{ color: '#7c3aed', letterSpacing: '-0.03em' }}>50€</p>
+            <p className="text-[28px] font-bold" style={{ color: '#7d6fb0', letterSpacing: '-0.03em' }}>50€</p>
             <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>par RDV confirmé</p>
           </div>
         </div>
@@ -1706,7 +1706,7 @@ function FacturationTab() {
             <div className="flex items-center gap-2">
               <span
                 className="text-[11px] px-2 py-0.5 rounded flex items-center gap-1"
-                style={{ background: '#10b98122', color: '#10b981' }}
+                style={{ background: '#5c9b8222', color: '#5c9b82' }}
               >
                 <Check size={10} />
                 Actif
@@ -1742,13 +1742,13 @@ function FacturationTab() {
       {/* Info box */}
       <div
         className="rounded-lg p-4 flex gap-3"
-        style={{ background: '#7c3aed08', border: '1px solid #7c3aed30' }}
+        style={{ background: '#7d6fb008', border: '1px solid #7d6fb030' }}
       >
-        <AlertCircle size={15} style={{ color: '#a78bfa', flexShrink: 0, marginTop: 1 }} />
+        <AlertCircle size={15} style={{ color: '#a99cc9', flexShrink: 0, marginTop: 1 }} />
         <div className="text-[11px] leading-relaxed" style={{ color: 'var(--color-muted)' }}>
           <p className="font-semibold mb-1" style={{ color: 'var(--color-text)' }}>Comment ça marche ?</p>
           <p>À chaque fois que l&apos;agent IA confirme un RDV (automatiquement via email ou manuellement), 50€ sont prélevés sur la carte enregistrée. Vous recevez une facture Stripe par email.</p>
-          <p className="mt-1">Variables d&apos;environnement nécessaires : <code style={{ color: '#a78bfa' }}>STRIPE_SECRET_KEY</code>, <code style={{ color: '#a78bfa' }}>STRIPE_PUBLISHABLE_KEY</code>, <code style={{ color: '#a78bfa' }}>STRIPE_WEBHOOK_SECRET</code></p>
+          <p className="mt-1">Variables d&apos;environnement nécessaires : <code style={{ color: '#a99cc9' }}>STRIPE_SECRET_KEY</code>, <code style={{ color: '#a99cc9' }}>STRIPE_PUBLISHABLE_KEY</code>, <code style={{ color: '#a99cc9' }}>STRIPE_WEBHOOK_SECRET</code></p>
         </div>
       </div>
     </div>

@@ -6,12 +6,12 @@
   --color-surface-2: #1a1a24;
   --color-border:    #1e1e2e;
   --color-border-2:  #2a2a3a;
-  --color-accent:    #7c3aed;
-  --color-accent-2:  #a78bfa;
+  --color-accent:    #7d6fb0;
+  --color-accent-2:  #a99cc9;
   --color-text:      #e8e8f0;
   --color-muted:     #6b6b80;
   --color-muted-2:   #4a4a5a;
-  --color-success:   #10b981;
+  --color-success:   #5c9b82;
   --color-danger:    #ef4444;
   --font-sans: var(--font-geist-sans);
 }
@@ -24,7 +24,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
+  background: #5c9b82;
   animation: blink 2s infinite;
   display: inline-block;
 }
@@ -38,7 +38,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-::selection { background: #3b82f620; }
+::selection { background: #5f83ac20; }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

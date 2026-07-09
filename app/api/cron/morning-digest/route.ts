@@ -117,12 +117,12 @@ export async function GET(req: Request) {
 
     const actionsHtml =
       pendingDrafts > 0
-        ? `<p>📝 <strong>${pendingDrafts} draft${pendingDrafts > 1 ? 's' : ''} en attente</strong> de validation → <a href="${process.env.NEXT_PUBLIC_BASE_URL ?? 'https://agent.hdigiweb.fr'}/reponses-a-valider" style="color:#3b82f6">Valider maintenant</a></p>`
-        : `<p style="color:#10b981;font-weight:bold">Tout roule ✓ — Aucune action requise</p>`
+        ? `<p>📝 <strong>${pendingDrafts} draft${pendingDrafts > 1 ? 's' : ''} en attente</strong> de validation → <a href="${process.env.NEXT_PUBLIC_BASE_URL ?? 'https://agent.hdigiweb.fr'}/reponses-a-valider" style="color:#5f83ac">Valider maintenant</a></p>`
+        : `<p style="color:#5c9b82;font-weight:bold">Tout roule ✓ — Aucune action requise</p>`
 
     const warmupHtml =
       warmupIssues.length > 0
-        ? `<h3 style="color:#f59e0b">⚠️ Alertes deliverability</h3><ul>${warmupIssues.map((i) => `<li>${i}</li>`).join('')}</ul>`
+        ? `<h3 style="color:#c19653">⚠️ Alertes deliverability</h3><ul>${warmupIssues.map((i) => `<li>${i}</li>`).join('')}</ul>`
         : ''
 
     // Alerte critique : aucun email envoyé depuis 20h un jour de semaine → problème pipeline

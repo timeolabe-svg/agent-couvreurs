@@ -30,10 +30,10 @@ interface DraftItem {
 const CLASSIFICATION_STYLES: Record<string, { bg: string; color: string; label: string }> = {
   objection:   { bg: '#f9731610', color: '#f97316', label: 'Objection' },
   question:    { bg: '#eab30810', color: '#eab308', label: 'Question' },
-  interest:    { bg: '#3b82f610', color: '#3b82f6', label: 'Intérêt' },
-  rdv_request: { bg: '#10b98115', color: '#10b981', label: 'Demande RDV' },
+  interest:    { bg: '#5f83ac10', color: '#5f83ac', label: 'Intérêt' },
+  rdv_request: { bg: '#5c9b8215', color: '#5c9b82', label: 'Demande RDV' },
   desinterest: { bg: '#6b728010', color: '#6b7280', label: 'Désintérêt' },
-  other:       { bg: '#8b5cf610', color: '#8b5cf6', label: 'Autre' },
+  other:       { bg: '#7d6fb010', color: '#7d6fb0', label: 'Autre' },
 }
 
 export default function ReponsesAValiderPage() {
@@ -169,7 +169,7 @@ export default function ReponsesAValiderPage() {
             className="flex flex-col items-center justify-center py-20 gap-3"
             style={{ color: 'var(--color-muted)' }}
           >
-            <CheckCircle size={32} style={{ color: '#10b981', opacity: 0.6 }} />
+            <CheckCircle size={32} style={{ color: '#5c9b82', opacity: 0.6 }} />
             <p className="text-[14px] font-medium" style={{ color: 'var(--color-text)' }}>
               Aucune réponse en attente ✓
             </p>
@@ -181,7 +181,7 @@ export default function ReponsesAValiderPage() {
           <div className="flex items-center justify-center py-20">
             <div
               className="w-6 h-6 rounded-full border-2 animate-spin"
-              style={{ borderColor: 'var(--color-border)', borderTopColor: '#10b981' }}
+              style={{ borderColor: 'var(--color-border)', borderTopColor: '#5c9b82' }}
             />
           </div>
         )}
@@ -287,7 +287,7 @@ export default function ReponsesAValiderPage() {
                       className="w-full text-[12px] rounded-lg p-3 resize-y leading-relaxed"
                       style={{
                         background: 'var(--color-surface-2)',
-                        border: '1px solid #3b82f660',
+                        border: '1px solid #5f83ac60',
                         color: 'var(--color-text)',
                         outline: 'none',
                         fontFamily: 'inherit',
@@ -298,7 +298,7 @@ export default function ReponsesAValiderPage() {
                       className="rounded-lg p-3 text-[12px] leading-relaxed whitespace-pre-wrap"
                       style={{
                         background: 'var(--color-surface-2)',
-                        border: '1px solid #10b98130',
+                        border: '1px solid #5c9b8230',
                         color: 'var(--color-text)',
                       }}
                     >
@@ -315,7 +315,7 @@ export default function ReponsesAValiderPage() {
                   <button
                     onClick={() => handleSend(item.id, item.body)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
-                    style={{ background: '#10b98120', color: '#10b981', border: '1px solid #10b98140' }}
+                    style={{ background: '#5c9b8220', color: '#5c9b82', border: '1px solid #5c9b8240' }}
                   >
                     <CheckCircle size={12} />
                     Envoyer
@@ -324,9 +324,9 @@ export default function ReponsesAValiderPage() {
                     onClick={() => handleEdit(item.id, item.body)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
                     style={{
-                      background: isEditing ? '#3b82f620' : 'transparent',
-                      color: '#3b82f6',
-                      border: '1px solid #3b82f640',
+                      background: isEditing ? '#5f83ac20' : 'transparent',
+                      color: '#5f83ac',
+                      border: '1px solid #5f83ac40',
                     }}
                   >
                     <Edit2 size={12} />

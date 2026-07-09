@@ -25,14 +25,14 @@ interface Conversation {
 }
 
 const CLASS_LABEL: Record<string, { label: string; color: string }> = {
-  interest: { label: 'Intéressé', color: '#10b981' },
-  rdv_request: { label: 'RDV', color: '#10b981' },
-  question: { label: 'Question', color: '#3b82f6' },
-  objection: { label: 'Objection', color: '#f59e0b' },
+  interest: { label: 'Intéressé', color: '#5c9b82' },
+  rdv_request: { label: 'RDV', color: '#5c9b82' },
+  question: { label: 'Question', color: '#5f83ac' },
+  objection: { label: 'Objection', color: '#c19653' },
   desinterest: { label: 'Pas intéressé', color: '#ef4444' },
   oof: { label: 'Auto/Absence', color: '#6b7280' },
   spam: { label: 'Spam', color: '#6b7280' },
-  other: { label: 'Autre', color: '#8b5cf6' },
+  other: { label: 'Autre', color: '#7d6fb0' },
 }
 
 function fmt(d: string): string {
@@ -51,9 +51,9 @@ function bucketOf(cls: string | null): Tab {
 }
 
 const TABS: { key: Tab; label: string; color: string }[] = [
-  { key: 'positive', label: 'Positives', color: '#10b981' },
+  { key: 'positive', label: 'Positives', color: '#5c9b82' },
   { key: 'negative', label: 'Négatives', color: '#ef4444' },
-  { key: 'pending', label: 'En attente', color: '#f59e0b' },
+  { key: 'pending', label: 'En attente', color: '#c19653' },
 ]
 
 export default function ConversationsPage() {
@@ -187,7 +187,7 @@ export default function ConversationsPage() {
                 <span className="flex items-center gap-1"><Mail size={12} />{current.email}</span>
                 {current.city && <span className="flex items-center gap-1"><MapPin size={12} />{current.city}</span>}
                 {current.phone && (
-                  <a href={`tel:${current.phone}`} className="flex items-center gap-1 font-medium" style={{ color: '#10b981' }}>
+                  <a href={`tel:${current.phone}`} className="flex items-center gap-1 font-medium" style={{ color: '#5c9b82' }}>
                     <Phone size={12} />{current.phone}
                   </a>
                 )}

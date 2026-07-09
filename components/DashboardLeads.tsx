@@ -19,11 +19,11 @@ const STAGE_LABEL: Record<LeadStage, string> = {
 
 const STAGE_COLOR: Record<LeadStage, { bg: string; text: string }> = {
   prospected:     { bg: '#52525215', text: '#737373' },
-  contacted:      { bg: '#3b82f615', text: '#3b82f6' },
-  follow_up_1:    { bg: '#8b5cf615', text: '#8b5cf6' },
-  follow_up_2:    { bg: '#f59e0b15', text: '#d97706' },
+  contacted:      { bg: '#5f83ac15', text: '#5f83ac' },
+  follow_up_1:    { bg: '#7d6fb015', text: '#7d6fb0' },
+  follow_up_2:    { bg: '#c1965315', text: '#d97706' },
   replied:        { bg: '#f9731618', text: '#f97316' },
-  rdv_booked:     { bg: '#10b98115', text: '#10b981' },
+  rdv_booked:     { bg: '#5c9b8215', text: '#5c9b82' },
   not_interested: { bg: '#ef444415', text: '#ef4444' },
 }
 
@@ -73,7 +73,7 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
           <button
             onClick={() => setShowImport(true)}
             className="px-3 py-1.5 rounded text-[12px] font-medium transition-opacity hover:opacity-80"
-            style={{ background: '#3b82f6', color: '#fff' }}
+            style={{ background: '#5f83ac', color: '#fff' }}
           >
             Importer des leads
           </button>
@@ -95,10 +95,10 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
             style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}
           >
             {[
-              { label: 'Leads en cours',   value: String(active),    icon: <TrendingUp size={14} />,   color: '#3b82f6' },
+              { label: 'Leads en cours',   value: String(active),    icon: <TrendingUp size={14} />,   color: '#5f83ac' },
               { label: 'Réponses reçues',  value: String(replied),   icon: <MessageSquare size={14} />,color: '#f97316' },
-              { label: 'RDV confirmés',    value: String(rdvs),      icon: <Calendar size={14} />,     color: '#10b981' },
-              { label: 'Taux de réponse',  value: `${replyRate}%`,   icon: <Mail size={14} />,         color: '#8b5cf6' },
+              { label: 'RDV confirmés',    value: String(rdvs),      icon: <Calendar size={14} />,     color: '#5c9b82' },
+              { label: 'Taux de réponse',  value: `${replyRate}%`,   icon: <Mail size={14} />,         color: '#7d6fb0' },
             ].map(s => (
               <div key={s.label} className="px-5 py-4" style={{ background: 'var(--color-surface)' }}>
                 <div className="mb-2" style={{ color: s.color }}>{s.icon}</div>
@@ -123,7 +123,7 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
             title="En séquence automatique"
             subtitle={`${inSequence.length} lead${inSequence.length > 1 ? 's' : ''} — l'agent envoie les relances`}
             leads={inSequence}
-            accent="#3b82f6"
+            accent="#5f83ac"
           />
 
           <Section
@@ -131,7 +131,7 @@ export function DashboardLeads({ leads, onLeadsRefresh }: { leads: Lead[]; onLea
             title="Conclus / Fermés"
             subtitle={`${closed.length} lead${closed.length > 1 ? 's' : ''} ce mois`}
             leads={closed}
-            accent="#10b981"
+            accent="#5c9b82"
           />
 
         </div>
@@ -212,7 +212,7 @@ function LeadRow({ lead, accent, isLast }: { lead: Lead; accent: string; isLast:
         </span>
 
         {lead.rdvDate && lead.stage === 'rdv_booked' ? (
-          <span className="text-[11px] flex-shrink-0" style={{ color: '#10b981' }}>
+          <span className="text-[11px] flex-shrink-0" style={{ color: '#5c9b82' }}>
             RDV {new Date(lead.rdvDate).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
           </span>
         ) : lead.nextScheduledAt ? (

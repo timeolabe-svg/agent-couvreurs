@@ -286,11 +286,11 @@ function buildRdvEmailHtml(params: {
         <p style="margin:0 0 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em">RDV</p>
         <p style="margin:0 0 2px;font-size:14px;color:#e1e4e8">📅 ${dateStr} à ${timeStr}</p>
         <p style="margin:0;font-size:13px;color:#8b949e">Durée : ${durationMin} min</p>
-        ${calendarEventUrl ? `<p style="margin:8px 0 0"><a href="${calendarEventUrl}" style="color:#10b981;font-size:13px">Voir dans Google Calendar →</a></p>` : ''}
-        ${meetLink ? `<p style="margin:4px 0 0"><a href="${meetLink}" style="color:#3b82f6;font-size:13px">Rejoindre Google Meet →</a></p>` : ''}
+        ${calendarEventUrl ? `<p style="margin:8px 0 0"><a href="${calendarEventUrl}" style="color:#5c9b82;font-size:13px">Voir dans Google Calendar →</a></p>` : ''}
+        ${meetLink ? `<p style="margin:4px 0 0"><a href="${meetLink}" style="color:#5f83ac;font-size:13px">Rejoindre Google Meet →</a></p>` : ''}
       </div>
       ${notes ? `<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:16px"><p style="margin:0 0 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em">NOTES</p><p style="margin:0;font-size:13px;color:#e1e4e8">${notes}</p></div>` : ''}
-      <a href="${baseUrl}" style="display:inline-block;background:#10b981;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Voir dans le dashboard →</a>
+      <a href="${baseUrl}" style="display:inline-block;background:#5c9b82;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Voir dans le dashboard →</a>
     </div>
   </div>
 </body>
