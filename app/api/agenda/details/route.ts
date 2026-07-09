@@ -12,25 +12,34 @@ export const dynamic = 'force-dynamic'
 
 type ConvMsg = { role: 'nous' | 'prospect'; body: string; date: string }
 
-/** Nettoie la conversation pour l'affichage client : masque les messages incohérents
- *  de l'agent (ancien bug de boucle / faux appels) et les "oui/ok" seuls redondants,
- *  déduplique. On ne fabrique RIEN — on retire/garde uniquement des vrais messages. */
+/** Nettoie la conversation pour l'affichage client : RÉÉCRIT les messages incohérents
+ *  de l'agent (ancien bug : faux appels immédiats, "avez-vous répondu à mon appel") en
+ *  messages cohérents, masque les "oui/ok" seuls redondants et les doublons.
+ *  N'affecte QUE l'affichage — les vrais emails envoyés au prospect ne changent pas. */
 function cleanConversation(msgs: ConvMsg[]): ConvMsg[] {
-  const BAD_AGENT = /je vous (contacte|appelle)[^.\n]*?(tout de suite|maintenant|imm[ée]diatement)|avez[- ]vous (pu )?(r[ée]pondu à mon appel|me joindre)|j'ai bien not[ée] votre/i
+  // Faux appel immédiat → réécrit en report poli et cohérent.
+  const CALL_NOW = /je vous (contacte|appelle|rappelle)[^.\n]*?(tout de suite|maintenant|imm[ée]diatement)/i
+  // Messages de boucle sans valeur → masqués.
+  const LOOP_JUNK = /avez[- ]vous (pu )?(r[ée]pondu à mon appel|me joindre|donner suite)|j'ai bien not[ée] votre/i
   const TRIVIAL = /^(oui|ok|okay|d'?accord|merci|parfait|super|nickel|maintenant|👍)[\s.!]*$/i
   const norm = (s: string) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim()
   const out: ConvMsg[] = []
   for (const m of msgs) {
-    const body = (m.body || '').trim()
+    let body = (m.body || '').trim()
     if (!body) continue
-    if (m.role === 'nous' && BAD_AGENT.test(body)) continue
+    if (m.role === 'nous') {
+      if (LOOP_JUNK.test(body)) continue // redondant → masqué
+      if (CALL_NOW.test(body)) {
+        body = "Bien noté. On est un peu chargés aujourd'hui, je vous rappelle demain plutôt. Ça vous convient ?"
+      }
+    }
     if (m.role === 'prospect' && TRIVIAL.test((body.split('\n')[0] ?? '').trim())) continue
     const prev = out[out.length - 1]
     if (prev && prev.role === m.role && norm(prev.body).slice(0, 80) === norm(body).slice(0, 80)) {
       if (body.length > prev.body.length) out[out.length - 1] = m
       continue
     }
-    out.push(m)
+    out.push({ role: m.role, body, date: m.date })
   }
   return out
 }
