@@ -172,35 +172,44 @@ async function sendRdvNotificationEmail(params: {
   exchangeSummary: string
   contactId?: string | null
   conversationUrl?: string
+  contactPhone?: string | null
+  auditWeaknesses?: string[] | null
 }) {
   if (!RESEND_API_KEY) return
+  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  await notifyPerRecipient(CLIENT_NOTIFY_EMAIL, `Nouveau rendez-vous — ${params.contactCompany}`, buildRdvEmailHtml({ ...params, dateStr, timeStr }))
+}
 
-  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  })
-  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
-  await notifyPerRecipient(
-    CLIENT_NOTIFY_EMAIL,
-    `🎯 RDV automatiquement calé — ${params.contactCompany}`,
-    `
-        <h2 style="color:#22c55e">🎯 RDV calé automatiquement !</h2>
-        <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
-        <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
-        ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}
-        ${params.calendarEventUrl ? `<p>📆 <a href="${params.calendarEventUrl}">Voir dans Google Calendar</a></p>` : ''}
-        ${params.conversationUrl ? `<p>💬 <a href="${params.conversationUrl}">Voir la conversation complète →</a></p>` : ''}
-        <hr/>
-        <h3>Résumé de l'échange</h3>
-        <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
-      `,
-  )
+// Email de notification RDV — SOBRE, lisible par un humain (pas d'émojis, pas de signes partout).
+function buildRdvEmailHtml(p: {
+  contactName: string; contactCompany: string; dateStr: string; timeStr: string
+  contactPhone?: string | null; googleMeetLink?: string | null; conversationUrl?: string
+  auditWeaknesses?: string[] | null; exchangeSummary: string
+}): string {
+  const row = (label: string, value: string) =>
+    `<tr><td style="padding:6px 20px 6px 0;color:#6b7280;font-size:13px;vertical-align:top">${label}</td><td style="padding:6px 0;color:#111827;font-size:14px">${value}</td></tr>`
+  const weaknesses = (p.auditWeaknesses ?? []).filter(Boolean)
+  return `
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;color:#111827;line-height:1.5">
+  <p style="font-size:15px;margin:0 0 4px"><strong>Un rendez-vous a été pris.</strong></p>
+  <p style="font-size:13px;color:#6b7280;margin:0 0 18px">L'agent a calé un rendez-vous avec un prospect intéressé.</p>
+  <table style="border-collapse:collapse;margin-bottom:18px">
+    ${row('Entreprise', `<strong>${p.contactCompany}</strong>`)}
+    ${p.contactName && p.contactName !== p.contactCompany ? row('Interlocuteur', p.contactName) : ''}
+    ${p.contactPhone ? row('Téléphone', `<a href="tel:${p.contactPhone.replace(/\s/g, '')}" style="color:#2563eb;text-decoration:none">${p.contactPhone}</a>`) : ''}
+    ${row('Rendez-vous', `<strong>${p.dateStr} à ${p.timeStr}</strong>`)}
+    ${p.googleMeetLink ? row('Visio', `<a href="${p.googleMeetLink}" style="color:#2563eb">Lien Google Meet</a>`) : ''}
+  </table>
+  ${weaknesses.length ? `
+  <p style="font-size:13px;font-weight:bold;color:#111827;margin:0 0 6px">Problèmes relevés sur son site (angle de vente)</p>
+  <ul style="margin:0 0 18px;padding-left:18px;color:#374151;font-size:13px">
+    ${weaknesses.slice(0, 6).map(w => `<li style="margin-bottom:3px">${w}</li>`).join('')}
+  </ul>` : ''}
+  <p style="font-size:13px;font-weight:bold;color:#111827;margin:0 0 6px">Résumé de l'échange</p>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:18px">${(p.exchangeSummary || '').trim()}</div>
+  ${p.conversationUrl ? `<p style="margin:0"><a href="${p.conversationUrl}" style="color:#2563eb;font-size:13px">Voir la conversation complète</a></p>` : ''}
+</div>`
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +908,8 @@ export async function GET(request: NextRequest) {
               exchangeSummary,
               contactId: resolvedContact?.id ?? null,
               conversationUrl: `${BASE_URL}/conversations?contact=${resolvedContact?.id ?? ''}`,
+              contactPhone: contactPhone ?? resolvedContact?.phone ?? null,
+              auditWeaknesses: (resolvedContact?.audit_weaknesses as string[] | null) ?? null,
             })
             rdvHandled = true
           } catch (rdvErr) {

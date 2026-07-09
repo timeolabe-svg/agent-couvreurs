@@ -69,6 +69,8 @@ export async function GET(req: NextRequest) {
         company: contact.company, name: contact.name, city: contact.city, phone: contact.phone,
         email: contact.email, website: contact.website, sector: contact.sector,
         googleRating: contact.google_rating, googleReviews: contact.google_reviews_count,
+        auditWeaknesses: (contact.audit_weaknesses as string[] | null) ?? [],
+        auditScore: contact.audit_score, auditLevel: contact.audit_level,
       },
       conversation: msgs,
       summary,

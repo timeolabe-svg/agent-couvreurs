@@ -36,7 +36,7 @@ interface RdvItem {
 }
 
 interface RdvDetails {
-  contact?: { company: string; name: string | null; city: string | null; phone: string | null; email: string; website: string | null; sector: string | null; googleRating: number | null; googleReviews: number | null }
+  contact?: { company: string; name: string | null; city: string | null; phone: string | null; email: string; website: string | null; sector: string | null; googleRating: number | null; googleReviews: number | null; auditWeaknesses?: string[]; auditScore?: number | null; auditLevel?: string | null }
   conversation?: Array<{ role: 'nous' | 'prospect'; body: string; date: string }>
   summary?: string
   companyDescription?: string
@@ -565,6 +565,17 @@ export default function AgendaPage() {
                     {detailsData.contact?.googleRating != null && <span>⭐ {detailsData.contact.googleRating} ({detailsData.contact.googleReviews ?? 0} avis)</span>}
                   </div>
                 </div>
+
+                {(detailsData.contact?.auditWeaknesses?.length ?? 0) > 0 && (
+                  <div>
+                    <p className="text-[11px] font-semibold mb-1" style={{ color: '#f59e0b' }}>PROBLÈMES DÉTECTÉS SUR SON SITE (angle de vente)</p>
+                    <ul className="text-[12px] pl-4 list-disc" style={{ color: 'var(--color-text)' }}>
+                      {detailsData.contact!.auditWeaknesses!.slice(0, 8).map((w, i) => (
+                        <li key={i} className="mb-0.5">{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <div>
                   <p className="text-[11px] font-semibold mb-1" style={{ color: '#22c55e' }}>RÉSUMÉ DE L&apos;ÉCHANGE</p>
