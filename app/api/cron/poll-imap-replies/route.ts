@@ -15,7 +15,7 @@ import { checkCronAuth } from '@/lib/cron-auth'
 import { getGmailBoxes } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
-import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
+import { toParisWallClock } from '@/lib/availability'
 
 // Client SQL brut, assigné dynamiquement dans le handler (évite d'évaluer neon()
 // au build, où DATABASE_URL est absent — cause d'échec de "collect page data").
@@ -420,33 +420,15 @@ async function processReply(params: {
   if (isRdv && scheduledDate && availabilityCfg && existingRdv.length === 0) {
     const availability = availabilityCfg
     try {
-      const { createCalendarEvent } = await import('@/lib/google-calendar')
-      const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
       const exchangeSummary = buildExchangeSummary({
         originalEmailBody, replyBody: cleanBody, draftBody,
         contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
       })
 
-      let googleEventId: string | null = null
-      let googleMeetLink: string | null = null
-      let calendarEventUrl: string | null = null
-      try {
-        const event = await createCalendarEvent({
-          summary: `RDV - ${contact?.company ?? from}`,
-          description: exchangeSummary,
-          startTime: toNaiveParisISO(scheduledDate),
-          endTime: toNaiveParisISO(endTime),
-          attendeeEmail: from,
-          meetLink: true,
-        })
-        if (event.eventId && !event.eventId.startsWith('mock_')) {
-          googleEventId = event.eventId
-          googleMeetLink = event.meetLink
-          calendarEventUrl = event.eventUrl
-        }
-      } catch (calErr) {
-        results.push(`Google Calendar error: ${String(calErr).slice(0, 60)}`)
-      }
+      // Google Calendar retiré : le RDV vit dans l'agenda du logiciel + notif email.
+      const googleEventId: string | null = null
+      const googleMeetLink: string | null = null
+      const calendarEventUrl: string | null = null
 
       const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
         ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
@@ -454,7 +436,7 @@ async function processReply(params: {
 
       const insertedRdv = (await sql`
         INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, google_event_id, google_meet_link, notes)
-        VALUES (${contact?.id ?? null}, ${incomingReplyId}, ${scheduledDate.toISOString()}, ${availability.slotDurationMin || 30}, 'confirmed', ${googleEventId}, ${googleMeetLink}, ${`RDV demandé par le prospect. ${slotNote}${!googleEventId ? ' ⚠️ Sync Google Calendar échouée — à créer manuellement.' : ''}`})
+        VALUES (${contact?.id ?? null}, ${incomingReplyId}, ${scheduledDate.toISOString()}, ${availability.slotDurationMin || 30}, 'confirmed', ${googleEventId}, ${googleMeetLink}, ${`RDV demandé par le prospect. ${slotNote}`})
         RETURNING id
       `) as Array<{ id: string }>
 

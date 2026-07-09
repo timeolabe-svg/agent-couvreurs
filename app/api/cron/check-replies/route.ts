@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
-import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
+import { toParisWallClock } from '@/lib/availability'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
 import { notifyPerRecipient } from '@/lib/notify'
@@ -814,9 +814,6 @@ export async function GET(request: NextRequest) {
         if (isRdv && scheduledDate && availabilityCfg && existingRdvRows.length === 0) {
           const availability = availabilityCfg
           try {
-            const { createCalendarEvent } = await import('@/lib/google-calendar')
-            const endTime = new Date(scheduledDate.getTime() + (availability.slotDurationMin || 30) * 60 * 1000)
-
             const exchangeSummary = buildExchangeSummary({
               originalEmailBody,
               replyBody: cleanBody,
@@ -825,32 +822,11 @@ export async function GET(request: NextRequest) {
               contactCompany: resolvedContact?.company ?? reply.from_address,
             })
 
-            let googleEventId: string | null = null
-            let googleMeetLink: string | null = null
-            let calendarEventUrl: string | null = null
-
-            try {
-              const event = await createCalendarEvent({
-                summary: `RDV - ${resolvedContact?.company ?? reply.from_address}`,
-                description: exchangeSummary,
-                // ISO LOCAL Paris (sans Z) — scheduledDate porte déjà l'heure murale Paris.
-                startTime: toNaiveParisISO(scheduledDate),
-                endTime: toNaiveParisISO(endTime),
-                attendeeEmail: reply.from_address,
-                meetLink: true,
-              })
-              // Un event "mock_" = variables Google manquantes → PAS un vrai RDV.
-              // On ne le considère pas comme calé (sinon RDV fantôme + facturation à tort).
-              if (event.eventId && !event.eventId.startsWith('mock_')) {
-                googleEventId = event.eventId
-                googleMeetLink = event.meetLink
-                calendarEventUrl = event.eventUrl
-              } else {
-                console.warn('[check-replies] Google Calendar non configuré (mock) — RDV non calé, pas de facturation')
-              }
-            } catch (calErr) {
-              console.error('[check-replies] Google Calendar error:', calErr)
-            }
+            // Google Calendar retiré (le client ne l'a pas demandé) : le RDV vit dans
+            // l'agenda du logiciel + notification email. Pas de dépendance externe fragile.
+            const googleEventId: string | null = null
+            const googleMeetLink: string | null = null
+            const calendarEventUrl: string | null = null
 
             const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
               ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
@@ -866,7 +842,7 @@ export async function GET(request: NextRequest) {
               status: 'confirmed',
               google_event_id: googleEventId,
               google_meet_link: googleMeetLink,
-              notes: `RDV demandé par le prospect. ${slotNote}${!googleEventId ? ' ⚠️ Sync Google Calendar échouée — à créer manuellement.' : ''}`,
+              notes: `RDV demandé par le prospect. ${slotNote}`,
             }).returning()
 
             // Facturation : UNIQUEMENT si un VRAI RDV Google a été calé (pas un mock),

@@ -51,12 +51,6 @@ export default function ParametresPage() {
   const [tab, setTab] = useState<Tab>('agence')
   const [saved, setSaved] = useState(false)
   const [saveSignal, setSaveSignal] = useState(0)
-  const [calStatus, setCalStatus] = useState<string | null>(null)
-
-  useEffect(() => {
-    const s = new URLSearchParams(window.location.search).get('calendar')
-    if (s) setCalStatus(s)
-  }, [])
 
   const handleSave = () => {
     setSaveSignal(s => s + 1)
@@ -120,32 +114,6 @@ export default function ParametresPage() {
 
       <div className="flex-1 overflow-auto px-6 py-5">
         <div className="max-w-3xl">
-          {/* Google Calendar — reconnexion */}
-          <div className="rounded-lg p-4 mb-5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(124,58,237,0.15)' }}>
-                <CalendarClock size={15} style={{ color: 'var(--color-accent)' }} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[13px] font-medium" style={{ color: 'var(--color-text)' }}>Google Calendar</p>
-                <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
-                  {calStatus === 'ok' ? 'Reconnecté. Les RDV seront ajoutés à ton agenda Google.'
-                    : calStatus === 'notoken' ? 'Google n\'a pas renvoyé de jeton — révoque l\'accès de l\'app dans ton compte Google puis réessaie.'
-                    : calStatus === 'error' ? 'La reconnexion a échoué. Réessaie.'
-                    : 'Reconnecte pour que les RDV soient créés dans ton Google Agenda.'}
-                </p>
-              </div>
-            </div>
-            <a
-              href="/api/google-calendar/connect"
-              className="flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[12px] font-medium flex-shrink-0"
-              style={{ background: calStatus === 'ok' ? 'var(--color-surface-2)' : 'var(--color-accent)', color: calStatus === 'ok' ? 'var(--color-text)' : '#fff', border: '1px solid var(--color-border)' }}
-            >
-              <RotateCcw size={13} />
-              {calStatus === 'ok' ? 'Reconnecter à nouveau' : 'Reconnecter Google Calendar'}
-            </a>
-          </div>
-
           {tab === 'agence' && <AgenceTab saveSignal={saveSignal} />}
           {tab === 'email' && <EmailTab />}
           {tab === 'sequence' && <SequenceTab />}
