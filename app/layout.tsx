@@ -14,10 +14,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" className={geist.variable}>
-      <body style={{ display: 'flex', height: '100dvh', overflow: 'hidden' }}>
+      <body style={{ height: '100dvh', overflow: 'hidden' }} className="flex">
         <SessionProvider>
           <Sidebar />
-          <main style={{ flex: 1, overflowY: 'auto' }}>{children}</main>
+          {/* pt-12 sur mobile = place pour le header fixe ; 0 sur desktop */}
+          <main className="flex-1 overflow-y-auto min-w-0 pt-12 md:pt-0">{children}</main>
         </SessionProvider>
       </body>
     </html>

@@ -104,11 +104,11 @@ function daysAgoText(created_at: string): string {
   return `${days} j`
 }
 
-function activityIcon(type: string) {
-  if (type === 'rdv_created') return '📅'
-  if (type === 'email_sent') return '✉️'
-  if (type === 'reply_received') return '💬'
-  return '📌'
+function ActivityIcon({ type }: { type: string }) {
+  if (type === 'rdv_created') return <Calendar size={14} style={{ color: '#7c3aed' }} />
+  if (type === 'email_sent') return <Mail size={14} style={{ color: '#3b82f6' }} />
+  if (type === 'reply_received') return <MessageSquare size={14} style={{ color: '#10b981' }} />
+  return <Bell size={14} style={{ color: '#6b6b80' }} />
 }
 
 const DAY_NAMES = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM']
@@ -257,10 +257,10 @@ export default function DashboardPage() {
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 24px' }}>
 
         {/* ── SECTION 1: Header ── */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.03em', color: '#e8e8f0', margin: 0, lineHeight: 1.2 }}>
-              Bonjour, Haris 👋
+              Bonjour, Haris
             </h1>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
               <BlinkDot />
@@ -298,12 +298,12 @@ export default function DashboardPage() {
         </div>
 
         {/* ── SECTION 2: 4 KPI Cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
           {[
-            { icon: '✉️', iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
-            { icon: '💬', iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
-            { icon: '📅', iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
-            { icon: '👤', iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
+            { Icon: Mail, iconColor: '#3b82f6', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
+            { Icon: MessageSquare, iconColor: '#10b981', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
+            { Icon: Calendar, iconColor: '#7c3aed', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
+            { Icon: User, iconColor: '#ec4899', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
           ].map(card => (
             <a
               key={card.label}
@@ -327,7 +327,7 @@ export default function DashboardPage() {
                 background: `radial-gradient(circle at bottom right, ${card.iconColor}26, transparent 70%)`,
                 pointerEvents: 'none',
               }} />
-              <div style={{ fontSize: 22, marginBottom: 12 }}>{card.icon}</div>
+              <card.Icon size={20} style={{ color: card.iconColor, marginBottom: 12 }} />
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 4 }}>
                 {card.label}
               </div>
@@ -400,7 +400,7 @@ export default function DashboardPage() {
                 border: '1px solid rgba(124,58,237,0.3)', borderRadius: 6,
                 padding: '4px 10px', cursor: 'pointer',
               }}>
-                🔄 Analyser
+                Analyser
               </button>
             </div>
           </div>
@@ -427,9 +427,9 @@ export default function DashboardPage() {
 
               {/* Collapsible rows */}
               {[
-                { key: 'winning', emoji: '✅', label: 'Segments gagnants', content: (learning.top_sectors ?? []).join(', ') || 'Aucun segment identifié' },
-                { key: 'avoid', emoji: '🚫', label: 'Segments à éviter', content: 'Données insuffisantes' },
-                { key: 'alerts', emoji: '⚠️', label: 'Alertes', content: 'Aucune alerte' },
+                { key: 'winning', dot: '#10b981', label: 'Segments gagnants', content: (learning.top_sectors ?? []).join(', ') || 'Aucun segment identifié' },
+                { key: 'avoid', dot: '#ef4444', label: 'Segments à éviter', content: 'Données insuffisantes' },
+                { key: 'alerts', dot: '#f59e0b', label: 'Alertes', content: 'Aucune alerte' },
               ].map(row => (
                 <div key={row.key} style={{ borderTop: '1px solid rgba(124,58,237,0.15)', paddingTop: 8, marginTop: 8 }}>
                   <button
@@ -441,7 +441,7 @@ export default function DashboardPage() {
                     }}
                   >
                     {expandedSections[row.key] ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    {row.emoji} {row.label}
+                    <span style={{ color: row.dot, fontSize: 8 }}>●</span> {row.label}
                   </button>
                   {expandedSections[row.key] && (
                     <div style={{ paddingLeft: 20, paddingTop: 8, fontSize: 12, color: '#9ca3af', lineHeight: 1.6 }}>
@@ -541,7 +541,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Row 2: 4 stat boxes */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginBottom: 16 }}>
             {[
               { label: 'Envoyés', value: (s?.totalEmailsSent ?? 0).toLocaleString('fr-FR') },
               { label: 'Rép.', value: String(repliesReceived) },
@@ -591,7 +591,7 @@ export default function DashboardPage() {
                     padding: '10px 16px', borderBottom: '1px solid #1e1e2e',
                   }}
                 >
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>{activityIcon(ev.type)}</span>
+                  <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}><ActivityIcon type={ev.type} /></span>
                   <span style={{ fontSize: 12, color: '#6b6b80', flexShrink: 0, minWidth: 36 }}>{ev.time || formatTime(ev.created_at)}</span>
                   <span style={{ fontSize: 12, color: '#e8e8f0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {ev.text}
@@ -689,7 +689,7 @@ export default function DashboardPage() {
                       background: 'rgba(59,130,246,0.15)', color: '#60a5fa',
                       padding: '2px 8px', borderRadius: 4, fontSize: 12,
                     }}>
-                      📧 email
+                      email
                     </span>
                   </td>
                   <td style={{ padding: '12px 16px', fontSize: 13, color: '#e8e8f0' }}>{c.sentThisMonth}</td>
@@ -726,7 +726,7 @@ export default function DashboardPage() {
             <Calendar size={15} style={{ color: '#e8e8f0' }} />
             <span style={{ fontWeight: 700, fontSize: 13, color: '#e8e8f0' }}>Calendrier de la semaine</span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(88px, 1fr))', gap: 8 }}>
             {weekCalendar.map(day => {
               const isToday = day.date === todayStr
               return (
@@ -756,7 +756,7 @@ export default function DashboardPage() {
         </div>
 
         {/* ── SECTION 10: Quick actions ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
           {[
             {
               href: '/campagnes',
@@ -768,19 +768,19 @@ export default function DashboardPage() {
               href: '/stats',
               icon: <Sparkles size={18} style={{ color: '#7c3aed' }} />,
               iconBg: 'rgba(124,58,237,0.15)',
-              label: '✨ Lancer une analyse',
+              label: 'Lancer une analyse',
             },
             {
               href: '/stats',
               icon: <BarChart2 size={18} style={{ color: '#f59e0b' }} />,
               iconBg: 'rgba(245,158,11,0.15)',
-              label: '📊 Stats détaillées',
+              label: 'Stats détaillées',
             },
             {
               href: '/parametres',
               icon: <Settings size={18} style={{ color: '#6b6b80' }} />,
               iconBg: 'rgba(107,107,128,0.15)',
-              label: '⚙ Paramètres',
+              label: 'Paramètres',
             },
           ].map(action => (
             <Link
