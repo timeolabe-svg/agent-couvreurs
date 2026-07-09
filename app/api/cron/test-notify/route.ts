@@ -36,8 +36,8 @@ export async function GET(req: NextRequest) {
     <li style="margin-bottom:3px">Fiche Google non optimisée</li>
   </ul>
   <p style="font-size:13px;font-weight:bold;color:#111827;margin:0 0 6px">Résumé de l'échange</p>
-  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:18px">Le prospect a demandé le fonctionnement et les conditions. Intérêt clair, a donné son numéro et souhaite être rappelé. Prochaine étape : appel de Gabin au créneau convenu.</div>
-  <p style="margin:0"><a href="https://agent-couvreurs.vercel.app/agenda" style="color:#2563eb;font-size:13px">Voir la conversation complète</a></p>
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:8px">Le prospect a demandé le fonctionnement et les conditions. Intérêt clair, a donné son numéro et souhaite être rappelé. Prochaine étape : appel de Gabin au créneau convenu.</div>
+  <p style="font-size:12px;color:#9ca3af;margin:0">Retrouvez la conversation complète et la fiche du prospect dans votre espace Hdigiweb.</p>
 </div>`
 
   const res = await notifyPerRecipient(to, 'Nouveau rendez-vous — GS Rénove Couvreur (TEST)', html)

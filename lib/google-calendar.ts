@@ -1,13 +1,28 @@
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? ''
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? ''
-const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN ?? ''
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3'
 
 let cachedToken: string | null = null
 let tokenExpiry = 0
 
+/** Refresh token : lu D'ABORD en base (agent_config, mis à jour par la reconnexion),
+ *  sinon repli sur l'env. Ainsi le bouton "Reconnecter" suffit, sans toucher à Vercel. */
+export async function getRefreshToken(): Promise<string> {
+  try {
+    const { db } = await import('@/lib/db')
+    const { agent_config } = await import('@/lib/db/schema')
+    const { eq } = await import('drizzle-orm')
+    const [row] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'google_refresh_token')).limit(1)
+    if (row?.value) return row.value
+  } catch { /* base indispo → env */ }
+  return process.env.GOOGLE_REFRESH_TOKEN ?? ''
+}
+
 async function getAccessToken(): Promise<string> {
   if (cachedToken && Date.now() < tokenExpiry) return cachedToken
+
+  const refreshToken = await getRefreshToken()
+  if (!refreshToken) throw new Error('[google-calendar] Aucun refresh token (reconnecte Google Calendar)')
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -16,7 +31,7 @@ async function getAccessToken(): Promise<string> {
       grant_type: 'refresh_token',
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      refresh_token: GOOGLE_REFRESH_TOKEN,
+      refresh_token: refreshToken,
     }),
   })
 
@@ -49,7 +64,7 @@ export interface CalendarEventResult {
 export async function createCalendarEvent(
   params: CreateCalendarEventParams
 ): Promise<CalendarEventResult> {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     console.warn('[google-calendar] Missing env vars — returning mock event')
     return {
       eventId: `mock_${Date.now()}`,
@@ -124,7 +139,7 @@ export interface UpcomingEvent {
 }
 
 export async function getUpcomingEvents(days = 30): Promise<UpcomingEvent[]> {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     console.warn('[google-calendar] Missing env vars — returning empty list')
     return []
   }
@@ -174,7 +189,7 @@ export async function getUpcomingEvents(days = 30): Promise<UpcomingEvent[]> {
 }
 
 export async function cancelCalendarEvent(eventId: string): Promise<void> {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_REFRESH_TOKEN) {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
     console.warn('[google-calendar] Missing env vars — skipping cancel')
     return
   }

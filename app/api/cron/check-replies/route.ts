@@ -207,8 +207,8 @@ function buildRdvEmailHtml(p: {
     ${weaknesses.slice(0, 6).map(w => `<li style="margin-bottom:3px">${w}</li>`).join('')}
   </ul>` : ''}
   <p style="font-size:13px;font-weight:bold;color:#111827;margin:0 0 6px">Résumé de l'échange</p>
-  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:18px">${(p.exchangeSummary || '').trim()}</div>
-  ${p.conversationUrl ? `<p style="margin:0"><a href="${p.conversationUrl}" style="color:#2563eb;font-size:13px">Voir la conversation complète</a></p>` : ''}
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;color:#374151;white-space:pre-wrap;margin-bottom:8px">${(p.exchangeSummary || '').trim()}</div>
+  <p style="font-size:12px;color:#9ca3af;margin:0">Retrouvez la conversation complète et la fiche du prospect dans votre espace Hdigiweb.</p>
 </div>`
 }
 
