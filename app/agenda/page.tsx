@@ -4,7 +4,10 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Calendar, Phone, CheckCircle, Mail, Plus, X } from 'lucide-react'
 import Link from 'next/link'
 
-const HOURS = Array.from({ length: 11 }, (_, i) => i + 8)
+const START_HOUR = 8
+const END_HOUR = 19
+const ROW_H = 52 // px par heure
+const HOURS = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => i + START_HOUR)
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven']
 
 interface RdvContact {
@@ -337,39 +340,50 @@ export default function AgendaPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto flex flex-col">
-        <div className="flex flex-col flex-1">
+      <div className="flex-1 overflow-auto p-4">
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{ border: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
+        >
           {/* Day headers */}
           <div className="flex" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            <div className="w-14 flex-shrink-0" />
+            <div className="w-12 flex-shrink-0" />
             {weekDays.map((d, i) => {
               const hasRdv = thisWeekRdvs.some((r) => isSameDay(new Date(r.scheduled_at), d))
+              const today = isSameDay(d, new Date())
               return (
                 <div
                   key={i}
-                  className="flex-1 px-3 py-2 text-center"
-                  style={{ borderLeft: '1px solid var(--color-border)' }}
+                  className="flex-1 px-2 py-2.5 text-center"
+                  style={{ borderLeft: '1px solid var(--color-border)', background: today ? 'rgba(125,111,176,0.07)' : 'transparent' }}
                 >
-                  <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>{DAYS[i]}</p>
-                  <p className="text-[13px] font-medium" style={{ color: 'var(--color-text)' }}>
-                    {d.getDate()}
-                  </p>
-                  {hasRdv && (
-                    <div className="w-1.5 h-1.5 rounded-full mx-auto mt-0.5" style={{ background: '#5c9b82' }} />
-                  )}
+                  <p className="text-[10px] uppercase tracking-wide" style={{ color: today ? '#a99cc9' : 'var(--color-muted)' }}>{DAYS[i]}</p>
+                  <div className="flex items-center justify-center gap-1.5 mt-0.5">
+                    <span
+                      className="text-[13px] font-semibold inline-flex items-center justify-center"
+                      style={ today
+                        ? { color: '#fff', background: '#7d6fb0', width: 22, height: 22, borderRadius: '50%' }
+                        : { color: 'var(--color-text)' } }
+                    >
+                      {d.getDate()}
+                    </span>
+                    {hasRdv && !today && (
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#5c9b82' }} />
+                    )}
+                  </div>
                 </div>
               )
             })}
           </div>
 
           {/* Time slots */}
-          <div className="flex flex-1 overflow-auto">
-            <div className="w-14 flex-shrink-0">
+          <div className="flex">
+            <div className="w-12 flex-shrink-0">
               {HOURS.map(h => (
                 <div
                   key={h}
-                  className="h-14 flex items-start justify-end pr-2 pt-1"
-                  style={{ borderBottom: '1px solid var(--color-border)' }}
+                  className="flex items-start justify-end pr-2"
+                  style={{ height: ROW_H, transform: 'translateY(-6px)' }}
                 >
                   <span className="text-[10px]" style={{ color: 'var(--color-muted-2)' }}>{h}h</span>
                 </div>
@@ -378,27 +392,39 @@ export default function AgendaPage() {
 
             {weekDays.map((d, di) => {
               const dayRdvs = thisWeekRdvs.filter((r) => isSameDay(new Date(r.scheduled_at), d))
+              const today = isSameDay(d, new Date())
+              const now = new Date()
+              const nowOffset = today && now.getHours() >= START_HOUR && now.getHours() < END_HOUR
+                ? ((now.getHours() - START_HOUR) * ROW_H) + (now.getMinutes() / 60 * ROW_H)
+                : null
               return (
                 <div
                   key={di}
                   className="flex-1 relative"
-                  style={{ borderLeft: '1px solid var(--color-border)' }}
+                  style={{ borderLeft: '1px solid var(--color-border)', background: today ? 'rgba(125,111,176,0.04)' : 'transparent' }}
                 >
                   {HOURS.map(h => (
                     <div
                       key={h}
-                      className="h-14"
-                      style={{ borderBottom: '1px solid var(--color-border)' }}
+                      style={{ height: ROW_H, borderBottom: '1px solid var(--color-border)' }}
                     />
                   ))}
+
+                  {/* Ligne "maintenant" */}
+                  {nowOffset != null && (
+                    <div className="absolute left-0 right-0 flex items-center" style={{ top: nowOffset }}>
+                      <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#c07575', marginLeft: -3 }} />
+                      <div className="flex-1 h-px" style={{ background: '#c07575' }} />
+                    </div>
+                  )}
 
                   {dayRdvs.map(r => {
                     const dt = new Date(r.scheduled_at)
                     const hh = dt.getHours()
                     const mm = dt.getMinutes()
-                    const topOffset = ((hh - 8) * 56) + (mm / 60 * 56)
+                    const topOffset = ((hh - START_HOUR) * ROW_H) + (mm / 60 * ROW_H)
                     const dur = r.duration_min ?? 30
-                    const heightPx = (dur / 60) * 56
+                    const heightPx = (dur / 60) * ROW_H
                     const company = getRdvCompany(r)
                     const timeStr = dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
                     const contactName = r.contact?.name ?? r.contact_name ?? ''
@@ -406,18 +432,20 @@ export default function AgendaPage() {
                     return (
                       <Link key={r.id} href={r.contact_id ? `/leads/${r.contact_id}` : r.leadId ? `/leads/${r.leadId}` : '#'}>
                         <div
-                          className="absolute left-1 right-1 rounded-md px-2 py-1.5 cursor-pointer"
+                          className="absolute rounded-md px-2 py-1 cursor-pointer overflow-hidden transition-colors"
                           style={{
-                            top: topOffset,
-                            height: Math.max(heightPx, 44),
-                            background: '#5c9b8215',
-                            border: '1px solid #5c9b8240',
+                            top: topOffset + 1,
+                            left: 3,
+                            right: 3,
+                            minHeight: Math.max(heightPx, 40),
+                            background: 'rgba(92,155,130,0.14)',
+                            borderLeft: '3px solid #5c9b82',
                           }}
                         >
-                          <p className="text-[11px] font-medium leading-tight" style={{ color: '#5c9b82' }}>
+                          <p className="text-[11px] font-semibold leading-tight truncate" style={{ color: 'var(--color-text)' }}>
                             {company}
                           </p>
-                          <p className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
+                          <p className="text-[10px] leading-tight truncate" style={{ color: '#5c9b82' }}>
                             {timeStr}{contactName ? ` · ${contactName}` : ''}
                           </p>
                         </div>
