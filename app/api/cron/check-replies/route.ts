@@ -2,6 +2,7 @@
 import { toParisWallClock, toNaiveParisISO } from '@/lib/availability'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
+import { notifyPerRecipient } from '@/lib/notify'
 
 // Random delay: 4 to 12 minutes (feels human)
 function randomDelayMs(): number {
@@ -185,14 +186,10 @@ async function sendRdvNotificationEmail(params: {
     minute: '2-digit',
   })
 
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-      to: CLIENT_NOTIFY_EMAIL,
-      subject: `🎯 RDV automatiquement calé — ${params.contactCompany}`,
-      html: `
+  await notifyPerRecipient(
+    CLIENT_NOTIFY_EMAIL,
+    `🎯 RDV automatiquement calé — ${params.contactCompany}`,
+    `
         <h2 style="color:#22c55e">🎯 RDV calé automatiquement !</h2>
         <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
         <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
@@ -203,8 +200,7 @@ async function sendRdvNotificationEmail(params: {
         <h3>Résumé de l'échange</h3>
         <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
       `,
-    }),
-  })
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -221,20 +217,10 @@ async function sendNotificationEmail(params: {
     console.warn('[check-replies] RESEND_API_KEY not set — skipping notification email')
     return
   }
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${RESEND_API_KEY}`,
-    },
-    body: JSON.stringify({
-      // RESEND_FROM_EMAIL must be set to a verified Resend domain
-      // e.g. agent@hdigiweb.fr (requires DNS verification in resend.com)
-      // Falls back to onboarding@resend.dev for testing
-      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-      to: CLIENT_NOTIFY_EMAIL,
-      subject: `Réponse à valider — ${params.contactCompany}`,
-      html: `
+  await notifyPerRecipient(
+    CLIENT_NOTIFY_EMAIL,
+    `Réponse à valider — ${params.contactCompany}`,
+    `
         <h2>Nouvelle réponse à valider</h2>
         <p><strong>De :</strong> ${params.contactName} (${params.contactCompany})</p>
         <p><strong>Classification :</strong> ${params.classification}</p>
@@ -244,8 +230,7 @@ async function sendNotificationEmail(params: {
         <blockquote style="border-left:3px solid #2563eb;padding-left:12px;color:#333">${escapeHtml(params.draftBody).replace(/\n/g, '<br>')}</blockquote>
         <p><a href="${BASE_URL}/reponses-a-valider" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none">Valider / Modifier</a></p>
       `,
-    }),
-  })
+  )
 }
 
 // Normalise un corps de message pour comparer deux réponses (dédup contenu).
