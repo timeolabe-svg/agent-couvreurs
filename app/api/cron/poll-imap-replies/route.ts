@@ -26,8 +26,8 @@ export const maxDuration = 60
 
 const GLOBAL_DEADLINE_MS = 44_000 // + 13s/boîte max = 57s < 60s Vercel
 const PER_BOX_TIMEOUT_MS = 13_000
-const MAX_MSGS_PER_BOX = 50   // large : le warmup remplit la boîte, il faut voir au-delà des non-lus
-const LOOKBACK_HOURS = 24
+const MAX_MSGS_PER_BOX = 70   // large : le warmup remplit la boîte, il faut voir au-delà des non-lus (relevé avec la fenêtre 72h)
+const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
 const CLIENT_NOTIFY_EMAIL = (process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr')
   .split(',').map(s => s.trim()).filter(Boolean)
