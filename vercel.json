@@ -1,8 +1,6 @@
 {
   "crons": [
     { "path": "/api/cron/morning-digest", "schedule": "0 8 * * *" },
-    { "path": "/api/cron/weekly-learning", "schedule": "0 20 * * 0" },
-    { "path": "/api/cron/backfill-sequences", "schedule": "0 9 * * *" },
     { "path": "/api/cron/strategy-agent", "schedule": "0 7 * * *" }
   ]
 }

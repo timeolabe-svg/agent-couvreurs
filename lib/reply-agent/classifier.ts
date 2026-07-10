@@ -178,6 +178,29 @@ export function isEmptyEmailComplaint(body: string, subject = ''): boolean {
   return patterns.some(p => p.test(text))
 }
 
+// Détecte les anti-spam "challenge-response" (SpamEnMoins, etc.) : un bot qui répond
+// "confirmez l'envoi de votre mail en cliquant ici" pour débloquer le message. Ce n'est
+// PAS une vraie réponse humaine → ne jamais répondre, ne pas afficher (spam).
+export function isChallengeResponseSpam(body: string, subject = ''): boolean {
+  const text = (body + ' ' + subject).toLowerCase()
+  const patterns = [
+    /spamenmoins/,
+    /spam\s*en\s*moins/,
+    /confirme[rz]?\s+(l['’]envoi|votre\s+envoi|mon\s+envoi)/,
+    /confirmer\s+l['’]envoi\s+de\s+votre\s+(mail|message|e-?mail)/,
+    /pour\s+l['’]instant\s+bloqu[ée]/,
+    /votre\s+(mail|message|e-?mail|courriel)\s+(a\s+[ée]t[ée]|est|sera)\s+bloqu[ée]/,
+    /messagerie\s+(est\s+)?(maintenant\s+)?prot[ée]g[ée]e?\s+par/,
+    /liste\s+(de|des)\s+correspondants?\s+(de\s+)?confiance/,
+    /list\s+of\s+trusted\s+correspond/,
+    /added\s+to\s+my\s+list\s+of\s+trusted/,
+    /trusted\s+correspondants?/,
+    /anti-?spam,?\s*anti-?phishing/,
+    /cliqu(ez|ant)\s+(ici|sur\s+le\s+bouton).{0,60}(confirm|valid|d[ée]bloqu)/,
+  ]
+  return patterns.some(p => p.test(text))
+}
+
 // Detect opt-out without calling Claude (saves credits + faster)
 function isOptOut(body: string, subject: string): boolean {
   const text = (body + ' ' + subject).toLowerCase().trim()
@@ -213,6 +236,16 @@ export async function classifyReply(params: {
   // CRITIQUE : on n'analyse QUE le vrai texte du prospect, jamais la citation
   // de notre email (qui contient "répondez Stop" → sinon faux opt-out).
   const cleanBody = stripQuotedReply(params.replyBody)
+
+  // Défi anti-spam (SpamEnMoins & co) → jamais de réponse, jamais affiché (spam).
+  if (isChallengeResponseSpam(params.replyBody, params.replySubject)) {
+    return {
+      classification: 'spam',
+      action: 'no_action',
+      confidence: 98,
+      reasoning: 'Anti-spam challenge-response (type SpamEnMoins) détecté — ignoré, aucune réponse.',
+    }
+  }
 
   // Réponse automatique (accusé de réception, absence, bot) → ignorer totalement
   if (isAutoResponder(cleanBody, params.replySubject, params.fromEmail ?? '')) {

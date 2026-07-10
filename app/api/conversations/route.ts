@@ -20,8 +20,21 @@ export async function GET() {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
     const { inArray, desc, ne, isNull, or, and, eq } = await import('drizzle-orm')
-    const { stripQuotedReply, isEmptyEmailComplaint } = await import('@/lib/reply-agent/classifier')
+    const { stripQuotedReply, isEmptyEmailComplaint, isChallengeResponseSpam } = await import('@/lib/reply-agent/classifier')
     const { recoverBase64 } = await import('@/lib/decode-body')
+
+    // Nettoyage HTML/CSS à l'affichage : certains mails stockés contiennent encore du
+    // HTML brut (style/scripts/balises) qui fuit dans la messagerie du client.
+    const stripHtmlLite = (s: string): string => {
+      if (!s || !/[<&]/.test(s)) return s
+      return s
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&eacute;/gi, 'é')
+        .replace(/&egrave;/gi, 'è').replace(/&agrave;/gi, 'à').replace(/&ecirc;/gi, 'ê')
+        .replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+    }
 
     // 1. Réponses reçues — on EXCLUT le spam et les réponses automatiques (bots,
     //    accusés de réception) : on ne montre que les vraies conversations.
@@ -127,7 +140,7 @@ export async function GET() {
         })
       }
       const g = groups.get(key)!
-      const decodedBody = recoverBase64(r.body)
+      const decodedBody = stripHtmlLite(recoverBase64(r.body))
       g.messages.push({
         role: 'received',
         subject: r.subject ?? undefined,
@@ -180,6 +193,8 @@ export async function GET() {
         if (lastReceived.classification === 'spam') return false
         // 4) Filtre RÉTROACTIF : vieux leads mal classés (plaintes "mail vide / rien reçu").
         if (isEmptyEmailComplaint(lastReceived.body, '')) return false
+        // 5) Anti-spam challenge-response (SpamEnMoins…) déjà stocké → masqué (pas une vraie conv).
+        if (isChallengeResponseSpam(lastReceived.body, lastReceived.subject ?? '')) return false
         return true
       })
       .map(g => {
