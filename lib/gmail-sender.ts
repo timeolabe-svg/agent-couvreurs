@@ -28,8 +28,17 @@ function getPasswordOverrides(): Record<string, string> {
 
 /** Charge les boîtes Google depuis IMAP_ACCOUNTS (email + password + name), overrides appliqués. */
 export function getGmailBoxes(): GmailBox[] {
-  const raw = process.env.IMAP_ACCOUNTS
+  let raw = process.env.IMAP_ACCOUNTS
   if (!raw) return []
+  // Support base64 (contourne le massacre des guillemets JSON par les shells Windows) :
+  // si la valeur ne ressemble pas à du JSON, on tente un décodage base64.
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) {
+    try {
+      const decoded = Buffer.from(trimmed, 'base64').toString('utf8').trim()
+      if (decoded.startsWith('[') || decoded.startsWith('{')) raw = decoded
+    } catch { /* garde raw tel quel */ }
+  }
   const overrides = getPasswordOverrides()
   try {
     const arr = JSON.parse(raw) as Array<{ email?: string; user?: string; password: string; name?: string; host?: string }>
