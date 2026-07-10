@@ -15,11 +15,15 @@ export const maxDuration = 60
 const SCRAPE_MAX_RESULTS = 12
 const TIME_BUDGET_MS = 45000
 
-// ─── FREINS COÛT GOOGLE PLACES (API payante ~0,03-0,04 €/recherche) ───
+// ─── FREINS COÛT GOOGLE PLACES (API payante ~0,03-0,04 €/requête) ───
 // Ne JAMAIS payer pour scraper alors qu'on a déjà des leads en réserve.
 const SCRAPE_PIPELINE_THRESHOLD = 100 // ne scrape QUE s'il reste < 100 leads frais en attente
-const DAILY_PLACES_CAP = 30           // plafond DUR d'appels Places / jour (protège la facture)
 const SCRAPE_MIN_INTERVAL_MIN = 30    // throttle : au plus 1 scrape / 30 min
+// IMPORTANT : un run = 1 Text Search + jusqu'à SCRAPE_MAX_RESULTS Place Details = ~13 requêtes
+// FACTURÉES, pas 1. On réserve donc le VRAI volume de requêtes, et le plafond compte des REQUÊTES
+// (pas des runs) — sinon "30/jour" = en réalité ~390 requêtes/jour = facture qui grimpe.
+const PLACES_REQ_PER_RUN = SCRAPE_MAX_RESULTS + 1 // pire cas d'un run (conservateur = bon pour la facture)
+const DAILY_PLACES_REQ_CAP = 120                  // plafond DUR de REQUÊTES Places / jour (~9 runs). Large vu le stock de 2000+ leads
 
 export async function GET(req: Request) {
   const cronAuth = checkCronAuth(req)
@@ -67,20 +71,20 @@ export async function GET(req: Request) {
   //    PAS dépasser le plafond (contrairement à un lire-puis-écrire non atomique).
   const reserveRes = await db.execute(sql`
     INSERT INTO agent_config (key, value, updated_at)
-    VALUES ('places_calls_today', ${JSON.stringify({ date: todayKey, count: 1 })}, now())
+    VALUES ('places_calls_today', ${JSON.stringify({ date: todayKey, count: PLACES_REQ_PER_RUN })}, now())
     ON CONFLICT (key) DO UPDATE SET
       value = CASE
         WHEN (agent_config.value::jsonb->>'date') = ${todayKey}
-          THEN jsonb_build_object('date', ${todayKey}::text, 'count', ((agent_config.value::jsonb->>'count')::int + 1))::text
-        ELSE jsonb_build_object('date', ${todayKey}::text, 'count', 1)::text
+          THEN jsonb_build_object('date', ${todayKey}::text, 'count', ((agent_config.value::jsonb->>'count')::int + ${PLACES_REQ_PER_RUN}))::text
+        ELSE jsonb_build_object('date', ${todayKey}::text, 'count', ${PLACES_REQ_PER_RUN})::text
       END,
       updated_at = now()
     RETURNING (value::jsonb->>'count')::int AS count
   `)
   const rrows = (Array.isArray(reserveRes) ? reserveRes : (reserveRes as unknown as { rows?: Array<{ count?: number }> }).rows) ?? []
   const placesToday = Number(rrows[0]?.count ?? 999)
-  if (placesToday > DAILY_PLACES_CAP) {
-    return NextResponse.json({ ok: true, skipped: true, reason: `plafond Places atteint (${placesToday}/${DAILY_PLACES_CAP})` })
+  if (placesToday > DAILY_PLACES_REQ_CAP) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `plafond requêtes Places atteint (${placesToday}/${DAILY_PLACES_REQ_CAP})` })
   }
 
   // SÉLECTION PONDÉRÉE (auto-apprentissage) : l'agent scrape davantage les secteurs

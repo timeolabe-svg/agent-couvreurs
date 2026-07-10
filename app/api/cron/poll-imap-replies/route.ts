@@ -58,16 +58,21 @@ export async function POST(req: NextRequest) {
   const stats = { processed: 0, replies: 0, bounces: 0, cancelled: 0, sentReplies: 0 }
 
   // ── Partie A : envoyer les auto-réponses programmées et prêtes (délai humain écoulé) ──
+  // BORNÉE EN TEMPS : cron-job.org (gratuit) coupe à 30s. Sans limite, 10 envois SMTP
+  // séquentiels pouvaient à eux seuls dépasser 30s et tronquer tout le run. On plafonne
+  // la Partie A (deadline + timeout par envoi) ; le reste part au run suivant (toutes les 10 min).
+  const PARTIE_A_DEADLINE_MS = 12_000
   try {
     const ready = (await sql`
       SELECT rd.id AS draft_id, rd.body, rd.incoming_reply_id
       FROM reply_drafts rd
       WHERE rd.status = 'scheduled' AND rd.send_after <= NOW()
-      LIMIT 10
+      LIMIT 6
     `) as Array<{ draft_id: string; body: string; incoming_reply_id: string }>
     for (const d of ready) {
+      if (Date.now() - started > PARTIE_A_DEADLINE_MS) { results.push('⏱ Partie A: budget atteint, suite au prochain run'); break }
       try {
-        const r = await sendReplyEmail(d.incoming_reply_id, d.body)
+        const r = await withTimeout(sendReplyEmail(d.incoming_reply_id, d.body), 5_000, `reply ${d.draft_id}`)
         if (r.ok) {
           await sql`UPDATE reply_drafts SET status = 'sent', sent_at = NOW() WHERE id = ${d.draft_id}`
           await sql`UPDATE incoming_replies SET action_taken = 'replied' WHERE id = ${d.incoming_reply_id}`
