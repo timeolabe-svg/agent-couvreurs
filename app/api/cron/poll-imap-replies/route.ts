@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { checkCronAuth } from '@/lib/cron-auth'
-import { getGmailBoxes } from '@/lib/gmail-sender'
+import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
 import { toParisWallClock } from '@/lib/availability'
@@ -742,64 +742,77 @@ ${params.draftBody.substring(0, 300)}${params.draftBody.length > 300 ? '...' : '
 === FIN DU RÉSUMÉ ===`
 }
 
+// Destinataires des notifications internes (Timéo + éventuellement l'agence smma).
+// CLIENT_NOTIFY_EMAIL peut contenir plusieurs adresses séparées par des virgules.
+function notifyRecipients(): string[] {
+  return (CLIENT_NOTIFY_EMAIL || '').split(',').map(s => s.trim()).filter(Boolean)
+}
+
+// Envoie une notif interne SOBRE (texte, zéro émoji) via le moteur Gmail SMTP —
+// pas de limite "mode test" comme Resend, donc TOUS les destinataires reçoivent.
+// Repli sur Resend (par destinataire) si aucune boîte Gmail configurée.
+async function notifyTeam(subject: string, text: string): Promise<void> {
+  const recipients = notifyRecipients()
+  if (recipients.length === 0) return
+  const boxes = getGmailBoxes()
+  if (boxes.length > 0) {
+    for (const to of recipients) {
+      await sendFromBox(boxes[0], { to, subject, text, senderName: 'Agent Hdigiweb' }).catch(() => {})
+    }
+    return
+  }
+  // Repli Resend : 1 envoi PAR destinataire (mode test = seul l'owner reçoit, mais au moins lui).
+  if (!RESEND_API_KEY) return
+  for (const to of recipients) {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
+        to, subject, text,
+      }),
+    }).catch(() => {})
+  }
+}
+
 async function sendRdvNotificationEmail(params: {
   contactName: string; contactCompany: string; scheduledAt: Date
   googleMeetLink: string | null; calendarEventUrl: string | null; exchangeSummary: string; conversationUrl?: string
 }) {
-  if (!RESEND_API_KEY) return
   const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
   const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-      to: CLIENT_NOTIFY_EMAIL,
-      subject: `🎯 RDV automatiquement calé — ${params.contactCompany}`,
-      html: `
-        <h2 style="color:#5c9b82">🎯 RDV calé automatiquement !</h2>
-        <p><strong>${params.contactName}</strong> (${params.contactCompany}) a demandé un RDV.</p>
-        <p>📅 <strong>${dateStr} à ${timeStr}</strong> — 30 min</p>
-        ${params.googleMeetLink ? `<p>🎥 <a href="${params.googleMeetLink}">Lien Google Meet</a></p>` : ''}
-        ${params.calendarEventUrl ? `<p>📆 <a href="${params.calendarEventUrl}">Voir dans Google Calendar</a></p>` : ''}
-        ${params.conversationUrl ? `<p>💬 <a href="${params.conversationUrl}">Voir la conversation complète →</a></p>` : ''}
-        <hr/>
-        <h3>Résumé de l'échange</h3>
-        <pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap">${params.exchangeSummary}</pre>
-      `,
-    }),
-  }).catch(() => {})
+  const text = [
+    `${params.contactName || params.contactCompany} (${params.contactCompany}) a demandé un rendez-vous.`,
+    `Quand : ${dateStr} à ${timeStr} (30 min)`,
+    params.conversationUrl ? `Conversation : ${params.conversationUrl}` : '',
+    ``,
+    `Résumé de l'échange :`,
+    params.exchangeSummary || '(résumé indisponible)',
+    ``,
+    `Agenda : https://agent-couvreurs.vercel.app/agenda`,
+  ].join('\n')
+  await notifyTeam(`Nouveau rendez-vous — ${params.contactCompany}`, text)
 }
 
 async function sendNotificationEmail(params: {
   contactName: string; contactCompany: string; classification: string; replyBody: string; draftBody: string
 }) {
-  if (!RESEND_API_KEY) return
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${RESEND_API_KEY}` },
-    body: JSON.stringify({
-      from: process.env.RESEND_FROM_EMAIL ?? 'onboarding@resend.dev',
-      to: CLIENT_NOTIFY_EMAIL,
-      subject: `Réponse à valider — ${params.contactCompany}`,
-      html: `
-        <h2>Nouvelle réponse à valider</h2>
-        <p><strong>De :</strong> ${params.contactName} (${params.contactCompany})</p>
-        <p><strong>Classification :</strong> ${params.classification}</p>
-        <p><strong>Message reçu :</strong></p>
-        <blockquote style="border-left:3px solid #ccc;padding-left:12px;color:#555">${escapeHtml(params.replyBody).replace(/\n/g, '<br>')}</blockquote>
-        <p><strong>Draft de réponse :</strong></p>
-        <blockquote style="border-left:3px solid #2563eb;padding-left:12px;color:#333">${escapeHtml(params.draftBody).replace(/\n/g, '<br>')}</blockquote>
-        <p><a href="${BASE_URL}/reponses-a-valider" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none">Valider / Modifier</a></p>
-      `,
-    }),
-  }).catch(() => {})
+  const text = [
+    `De : ${params.contactName} (${params.contactCompany})`,
+    `Classification : ${params.classification}`,
+    ``,
+    `Message reçu :`,
+    params.replyBody,
+    ``,
+    `Réponse proposée :`,
+    params.draftBody,
+    ``,
+    `Valider / modifier : ${BASE_URL}/reponses-a-valider`,
+  ].join('\n')
+  await notifyTeam(`Réponse à valider — ${params.contactCompany}`, text)
 }
 
 function normalizeBody(s: string): string {
   return (s || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 200)
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
