@@ -17,8 +17,16 @@ export function checkCronAuth(request: Request): CronAuthResult {
   const secret = process.env.CRON_SECRET
   if (!secret) return { ok: false, status: 500, error: 'CRON_SECRET not configured' }
 
+  // Le token peut venir de l'en-tête Authorization OU d'un paramètre d'URL
+  // (?key=... / ?token=...) — secours quand l'UI cron-job.org galère avec les en-têtes.
   const header = request.headers.get('authorization') ?? ''
-  const token = header.replace(/^Bearer\s+/i, '').trim()
+  let token = header.replace(/^Bearer\s+/i, '').trim()
+  if (!token) {
+    try {
+      const qp = new URL(request.url).searchParams
+      token = (qp.get('key') ?? qp.get('token') ?? '').trim()
+    } catch { /* URL non parsable */ }
+  }
 
   // Partie fixe du secret (avant un éventuel placeholder %cjo:...%)
   const fixed = secret.split('%')[0]
