@@ -742,17 +742,11 @@ ${params.draftBody.substring(0, 300)}${params.draftBody.length > 300 ? '...' : '
 === FIN DU RÉSUMÉ ===`
 }
 
-// Destinataires des notifications internes (Timéo + éventuellement l'agence smma).
-// CLIENT_NOTIFY_EMAIL peut contenir plusieurs adresses séparées par des virgules.
-function notifyRecipients(): string[] {
-  return (CLIENT_NOTIFY_EMAIL || '').split(',').map(s => s.trim()).filter(Boolean)
-}
-
 // Envoie une notif interne SOBRE (texte, zéro émoji) via le moteur Gmail SMTP —
 // pas de limite "mode test" comme Resend, donc TOUS les destinataires reçoivent.
 // Repli sur Resend (par destinataire) si aucune boîte Gmail configurée.
 async function notifyTeam(subject: string, text: string): Promise<void> {
-  const recipients = notifyRecipients()
+  const recipients = CLIENT_NOTIFY_EMAIL
   if (recipients.length === 0) return
   const boxes = getGmailBoxes()
   if (boxes.length > 0) {
