@@ -25,7 +25,7 @@ export const maxDuration = 60
 
 // Cible client : boîtes déjà chauffées → 35/boîte/jour (× 4 boîtes = 140/jour).
 const DAILY_CAP_PER_BOX = 35
-const MAX_PER_RUN = 15 // ~15 × 2s = 30s < 60s
+const MAX_PER_RUN = 8 // ~8 × 2s = 16s : tient sous les 30s de cron-job.org (offre gratuite). 8/run × 4 runs/h = large vs plafond 140/j
 const LIFETIME_CAP_PER_CONTACT = 4 // séquence = 4 étapes max, JAMAIS plus
 
 interface ClaimedRow {

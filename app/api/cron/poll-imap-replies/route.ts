@@ -24,8 +24,8 @@ let sql!: NeonQueryFunction<false, false>
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const GLOBAL_DEADLINE_MS = 44_000 // + 13s/boîte max = 57s < 60s Vercel
-const PER_BOX_TIMEOUT_MS = 13_000
+const GLOBAL_DEADLINE_MS = 23_000 // cron-job.org (gratuit) coupe à 30s → on répond AVANT (23s + 6s/boîte max ≈ 29s)
+const PER_BOX_TIMEOUT_MS = 6_000
 const MAX_MSGS_PER_BOX = 70   // large : le warmup remplit la boîte, il faut voir au-delà des non-lus (relevé avec la fenêtre 72h)
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
@@ -85,8 +85,13 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Partie B : lecture IMAP des boîtes + traitement des nouvelles réponses ──
+  // Rotation de l'ordre des boîtes à chaque run (toutes les 10 min) : avec un budget
+  // serré (<30s), on ne lit pas forcément les 4 boîtes en un run → on tourne l'ordre
+  // pour qu'aucune boîte ne soit jamais oubliée. La dédup Message-ID évite tout doublon.
+  const rot = Math.floor(Date.now() / 600_000) % boxes.length
+  const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot))
   const loop = (async () => {
-    for (const box of boxes) {
+    for (const box of orderedBoxes) {
       if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push('⏱ budget global atteint'); break }
       try {
         await withTimeout(processBox(box, started, results, stats), PER_BOX_TIMEOUT_MS, `box ${box.email}`)
