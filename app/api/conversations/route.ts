@@ -18,9 +18,10 @@ export async function GET() {
 
   try {
     const { db } = await import('@/lib/db')
-    const { contacts, email_queue, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
+    const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
     const { inArray, desc, ne, isNull, or, and, eq } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint } = await import('@/lib/reply-agent/classifier')
+    const { recoverBase64 } = await import('@/lib/decode-body')
 
     // 1. Réponses reçues — on EXCLUT le spam et les réponses automatiques (bots,
     //    accusés de réception) : on ne montre que les vraies conversations.
@@ -83,6 +84,14 @@ export async function GET() {
       .from(reply_drafts)
       .where(inArray(reply_drafts.incoming_reply_id, replyIds))
 
+    // 4bis. RDV confirmés → la conversation doit basculer en "Positives/validé"
+    //        (peu importe la classification de la dernière réponse). Un RDV calé = gagné.
+    const rdvRows = contactIds.length
+      ? await db.select({ contact_id: rdv.contact_id }).from(rdv)
+          .where(and(inArray(rdv.contact_id, contactIds), eq(rdv.status, 'confirmed')))
+      : []
+    const contactsWithRdv = new Set(rdvRows.map(r => r.contact_id).filter(Boolean))
+
     // Assemble par groupe
     type Group = {
       key: string
@@ -118,10 +127,11 @@ export async function GET() {
         })
       }
       const g = groups.get(key)!
+      const decodedBody = recoverBase64(r.body)
       g.messages.push({
         role: 'received',
         subject: r.subject ?? undefined,
-        body: stripQuotedReply(r.body) || r.body,
+        body: stripQuotedReply(decodedBody) || decodedBody,
         date: r.created_at?.toISOString() ?? '',
         classification: r.classification ?? undefined,
       })
@@ -175,6 +185,8 @@ export async function GET() {
       .map(g => {
         g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
+        // RDV calé → conversation gagnée : on force le classement "positif/validé".
+        if (g.contactId && contactsWithRdv.has(g.contactId)) g.classification = 'rdv_request'
         return g
       })
     conversations.sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime())

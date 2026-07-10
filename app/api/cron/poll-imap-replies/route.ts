@@ -16,6 +16,7 @@ import { getGmailBoxes } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
 import { toParisWallClock } from '@/lib/availability'
+import { recoverBase64 } from '@/lib/decode-body'
 
 // Client SQL brut, assigné dynamiquement dans le handler (évite d'évaluer neon()
 // au build, où DATABASE_URL est absent — cause d'échec de "collect page data").
@@ -169,7 +170,8 @@ async function processBox(box: { email: string; password: string }, started: num
         const fetchBody = async (): Promise<string> => {
           const src = await client.fetchOne(uid, { source: true }).catch(() => null)
           const raw = src && src.source ? src.source.toString() : ''
-          return extractPlainText(raw.length > 60_000 ? raw.slice(0, 60_000) : raw)
+          // recoverBase64 = filet de sécurité si le parser MIME a raté un corps base64.
+          return recoverBase64(extractPlainText(raw.length > 60_000 ? raw.slice(0, 60_000) : raw))
         }
 
         // Bounce → blocklist du VRAI destinataire (jamais un daemon).

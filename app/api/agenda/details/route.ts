@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
     const { contacts, email_queue, incoming_replies, reply_drafts } = await import('@/lib/db/schema')
     const { eq, and, ne } = await import('drizzle-orm')
     const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
+    const { recoverBase64 } = await import('@/lib/decode-body')
 
     const [contact] = await db.select().from(contacts).where(eq(contacts.id, contactId)).limit(1)
     if (!contact) return NextResponse.json({ error: 'Contact introuvable' }, { status: 404 })
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
 
     const msgs = [
       ...sent.filter(s => s.body).map(s => ({ role: 'nous' as const, body: s.body, ts: s.at ? new Date(s.at).getTime() : 0 })),
-      ...received.filter(r => r.body).map(r => ({ role: 'prospect' as const, body: stripQuotedReply(r.body) || r.body, ts: r.at ? new Date(r.at).getTime() : 0 })),
+      ...received.filter(r => r.body).map(r => { const b = recoverBase64(r.body); return { role: 'prospect' as const, body: stripQuotedReply(b) || b, ts: r.at ? new Date(r.at).getTime() : 0 } }),
       ...drafts.filter(d => d.status === 'sent' && d.body).map(d => ({ role: 'nous' as const, body: d.body, ts: (d.at ?? d.created) ? new Date((d.at ?? d.created) as Date).getTime() : 0 })),
     ].sort((a, b) => a.ts - b.ts)
       .map(m => ({ role: m.role, body: m.body, date: m.ts ? new Date(m.ts).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '' }))
