@@ -61,11 +61,14 @@ function isSameDay(a: Date, b: Date) {
 function getRdvCompany(r: RdvItem) { return r.contact?.company ?? r.company ?? 'Inconnu' }
 function getRdvPhone(r: RdvItem) { return r.contact?.phone ?? r.phone ?? null }
 
-// Statut dérivé : passé/signé = réalisé ; à venir + confirmé = confirmé ; sinon en attente.
+// Statut dérivé AUTOMATIQUEMENT par l'heure :
+//  - RDV à venir            → "En attente" (le rendez-vous n'a pas encore eu lieu)
+//  - une fois l'heure passée → "Réalisé" (bascule toute seule)
+// "Confirmé" est réservé à une confirmation manuelle éventuelle (statut 'signed' en base).
 function rdvState(r: RdvItem, now: Date): RdvState {
   const past = new Date(r.scheduled_at).getTime() < now.getTime()
-  if (past || r.status === 'signed') return 'realise'
-  if (r.status === 'confirmed') return 'confirme'
+  if (past) return 'realise'
+  if (r.status === 'signed') return 'confirme'
   return 'attente'
 }
 
@@ -117,6 +120,14 @@ export default function AgendaPage() {
   }, [])
 
   useEffect(() => { setCalMonth(new Date()) }, [])
+
+  // Tick chaque minute → recalcule les statuts (un RDV dont l'heure vient de
+  // passer bascule tout seul en "Réalisé" sans recharger la page).
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   const loadRdvs = useCallback(async () => {
     setLoading(true)
