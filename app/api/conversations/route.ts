@@ -97,8 +97,9 @@ export async function GET() {
       .from(reply_drafts)
       .where(inArray(reply_drafts.incoming_reply_id, replyIds))
 
-    // 4bis. RDV confirmés → la conversation doit basculer en "Positives/validé"
-    //        (peu importe la classification de la dernière réponse). Un RDV calé = gagné.
+    // 4bis. RDV confirmés → la conversation bascule en onglet "En attente" (le RDV est
+    //        calé, on attend qu'il ait lieu — plus rien à traiter). "Positives" reste
+    //        réservé aux intéressés SANS RDV encore pris (leads à travailler).
     const rdvRows = contactIds.length
       ? await db.select({ contact_id: rdv.contact_id }).from(rdv)
           .where(and(inArray(rdv.contact_id, contactIds), eq(rdv.status, 'confirmed')))
@@ -115,6 +116,7 @@ export async function GET() {
       phone: string | null
       website: string | null
       classification: string | null
+      rdvBooked: boolean
       messages: ConvMessage[]
       lastDate: string
     }
@@ -135,6 +137,7 @@ export async function GET() {
           phone: c?.phone ?? null,
           website: c?.website ?? null,
           classification: r.classification,
+          rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
           messages: [],
           lastDate: r.created_at?.toISOString() ?? '',
         })
@@ -200,8 +203,6 @@ export async function GET() {
       .map(g => {
         g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
-        // RDV calé → conversation gagnée : on force le classement "positif/validé".
-        if (g.contactId && contactsWithRdv.has(g.contactId)) g.classification = 'rdv_request'
         return g
       })
     conversations.sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime())

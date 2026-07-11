@@ -20,6 +20,7 @@ interface Conversation {
   phone: string | null
   website: string | null
   classification: string | null
+  rdvBooked?: boolean
   messages: ConvMessage[]
   lastDate: string
 }
@@ -43,8 +44,12 @@ function fmt(d: string): string {
 
 type Tab = 'positive' | 'negative' | 'pending'
 
-// Range une conversation dans un des 3 onglets selon sa classification
-function bucketOf(cls: string | null): Tab {
+// Range une conversation dans un des 3 onglets.
+// RDV calé = onglet "En attente" (le rendez-vous est pris, on attend qu'il ait
+// lieu — plus rien à traiter). "Positives" reste pour les intéressés SANS RDV.
+function tabOf(c: Conversation): Tab {
+  if (c.rdvBooked) return 'pending'
+  const cls = c.classification
   if (cls === 'interest' || cls === 'rdv_request') return 'positive'
   if (cls === 'desinterest') return 'negative'
   return 'pending' // objection, oof, spam, other, non classé
@@ -74,9 +79,9 @@ export default function ConversationsPage() {
   useEffect(() => { void load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
   const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0 }
-  for (const c of convs) counts[bucketOf(c.classification)]++
+  for (const c of convs) counts[tabOf(c)]++
 
-  const filtered = convs.filter(c => bucketOf(c.classification) === tab)
+  const filtered = convs.filter(c => tabOf(c) === tab)
 
   // Sélectionne automatiquement la 1ère conv de l'onglet actif
   useEffect(() => {
@@ -139,7 +144,9 @@ export default function ConversationsPage() {
             </p>
           )}
           {filtered.map(c => {
-            const cls = c.classification ? CLASS_LABEL[c.classification] : null
+            const cls = c.rdvBooked
+              ? { label: 'RDV calé', color: '#5c9b82' }
+              : (c.classification ? CLASS_LABEL[c.classification] : null)
             const last = c.messages[c.messages.length - 1]
             const active = c.key === selected
             return (
