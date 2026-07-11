@@ -44,15 +44,14 @@ function fmt(d: string): string {
 
 type Tab = 'positive' | 'negative' | 'pending'
 
-// Range une conversation dans un des 3 onglets.
-// RDV calé = onglet "En attente" (le rendez-vous est pris, on attend qu'il ait
-// lieu — plus rien à traiter). "Positives" reste pour les intéressés SANS RDV.
+// Range une conversation dans un des 3 onglets :
+//  - Positives   = un RDV est calé (l'objectif atteint).
+//  - Négatives   = opt-out "stop" OU échange terminé où le lead décline (desinterest).
+//  - En attente  = l'agent échange encore avec le lead (conversation en cours).
 function tabOf(c: Conversation): Tab {
-  if (c.rdvBooked) return 'pending'
-  const cls = c.classification
-  if (cls === 'interest' || cls === 'rdv_request') return 'positive'
-  if (cls === 'desinterest') return 'negative'
-  return 'pending' // objection, oof, spam, other, non classé
+  if (c.rdvBooked) return 'positive'
+  if (c.classification === 'desinterest') return 'negative'
+  return 'pending' // interest sans RDV, question, objection, oof, other, non classé
 }
 
 const TABS: { key: Tab; label: string; color: string }[] = [
