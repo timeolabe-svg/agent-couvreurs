@@ -45,7 +45,7 @@ interface RdvDetails {
 }
 
 type RdvState = 'attente' | 'confirme' | 'realise'
-type Filter = 'tous' | RdvState
+type Filter = 'avenir' | 'passe'
 type ViewMode = 'list' | 'calendar'
 
 const STATE_META: Record<RdvState, { label: string; color: string }> = {
@@ -89,7 +89,7 @@ export default function AgendaPage() {
   const [rdvs, setRdvs] = useState<RdvItem[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<ViewMode>('list')
-  const [filter, setFilter] = useState<Filter>('tous')
+  const [filter, setFilter] = useState<Filter>('avenir')
   const [calMonth, setCalMonth] = useState<Date | null>(null)
 
   const [showNewRdv, setShowNewRdv] = useState(false)
@@ -177,22 +177,22 @@ export default function AgendaPage() {
 
   const now = new Date()
   const withState = rdvs.map(r => ({ r, state: rdvState(r, now) }))
+  const isUpcoming = (r: RdvItem) => new Date(r.scheduled_at).getTime() >= now.getTime()
   const counts = {
-    tous: rdvs.length,
+    avenir: rdvs.filter(isUpcoming).length,
+    passe: rdvs.filter(r => !isUpcoming(r)).length,
     attente: withState.filter(x => x.state === 'attente').length,
     confirme: withState.filter(x => x.state === 'confirme').length,
     realise: withState.filter(x => x.state === 'realise').length,
     ceMois: rdvs.filter(r => { const d = new Date(r.scheduled_at); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() }).length,
   }
 
-  // Liste triée : à venir d'abord (croissant), puis passés (décroissant).
-  const listRdvs = [...withState]
-    .filter(x => filter === 'tous' || x.state === filter)
+  // À venir = tri croissant (le plus proche d'abord) ; Passé = tri décroissant (le plus récent d'abord).
+  const listRdvs = withState
+    .filter(x => (filter === 'avenir') === isUpcoming(x.r))
     .sort((a, b) => {
       const ta = new Date(a.r.scheduled_at).getTime(), tb = new Date(b.r.scheduled_at).getTime()
-      const aUp = ta >= now.getTime(), bUp = tb >= now.getTime()
-      if (aUp !== bUp) return aUp ? -1 : 1
-      return aUp ? ta - tb : tb - ta
+      return filter === 'avenir' ? ta - tb : tb - ta
     })
 
   const grid = calMonth ? monthGrid(calMonth) : []
@@ -243,16 +243,16 @@ export default function AgendaPage() {
             <div className="flex items-center justify-between gap-3 flex-wrap px-4 pt-4 pb-3">
               <p className="text-[14px] font-semibold" style={{ color: 'var(--color-text)' }}>Prochains rendez-vous</p>
               <div className="flex items-center gap-1 text-[12px]">
-                {([['tous', 'Tous'], ['attente', 'En attente'], ['confirme', 'Confirmés'], ['realise', 'Réalisés']] as const).map(([key, label]) => (
+                {([['avenir', 'À venir'], ['passe', 'Passé']] as const).map(([key, label]) => (
                   <button
                     key={key}
                     onClick={() => setFilter(key)}
-                    className="px-2.5 py-1 rounded-md transition-colors"
+                    className="px-3 py-1 rounded-md transition-colors"
                     style={filter === key
                       ? { background: '#5c9b8218', color: '#5c9b82', fontWeight: 600 }
                       : { color: 'var(--color-muted)' }}
                   >
-                    {label}{key !== 'tous' && counts[key] > 0 ? ` (${counts[key]})` : ''}
+                    {label}{counts[key] > 0 ? ` (${counts[key]})` : ''}
                   </button>
                 ))}
               </div>
