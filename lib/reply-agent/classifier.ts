@@ -201,6 +201,24 @@ export function isChallengeResponseSpam(body: string, subject = ''): boolean {
   return patterns.some(p => p.test(text))
 }
 
+// Détecte "vous vous êtes trompé de cible / ce n'est pas notre activité".
+// = mauvais secteur de prospection → RISQUE LÉGAL + prospect agacé → blocklist immédiate,
+//   jamais de réponse, direction onglet Négatives.
+export function isWrongTarget(body: string): boolean {
+  const t = (body || '').toLowerCase()
+  const patterns = [
+    /ne sommes pas une (entreprise|soci[eé]t[eé])\s+(de|d')/,
+    /(ce )?n'est pas (notre|mon|le bon) (activit[eé]|secteur|m[eé]tier|domaine)/,
+    /(vous )?(vous )?tromp(ez|é|er) (d'|de )(entreprise|destinataire|soci[eé]t[eé]|cible|adresse|secteur)/,
+    /(mauvais|pas le bon) (secteur|destinataire|interlocuteur|cible)/,
+    /renseign(ez|er)[\s-]?vous sur (notre|mon|la|nos) (activit|soci|m[eé]tier)/,
+    /(rien à voir|aucun rapport) avec (notre|mon|nos|mes|la)/,
+    /nous ne (faisons|travaillons|sommes) pas (dans|en|de|des)/,
+    /vous vous adressez à la mauvaise/,
+  ]
+  return patterns.some(p => p.test(t))
+}
+
 // Detect opt-out without calling Claude (saves credits + faster)
 function isOptOut(body: string, subject: string): boolean {
   const text = (body + ' ' + subject).toLowerCase().trim()
@@ -244,6 +262,17 @@ export async function classifyReply(params: {
       action: 'no_action',
       confidence: 98,
       reasoning: 'Anti-spam challenge-response (type SpamEnMoins) détecté — ignoré, aucune réponse.',
+    }
+  }
+
+  // Mauvaise cible ("on n'est pas maçon / ce n'est pas notre activité") → RISQUE LÉGAL.
+  // Blocklist immédiate, aucune réponse, onglet Négatives.
+  if (isWrongTarget(cleanBody)) {
+    return {
+      classification: 'desinterest',
+      action: 'blocklist',
+      confidence: 98,
+      reasoning: 'Mauvaise cible / secteur incorrect signalé par le prospect — blocklist (aucune relance, risque légal).',
     }
   }
 

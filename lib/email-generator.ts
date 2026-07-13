@@ -50,7 +50,8 @@ Hdigiweb
 thomas@hdigiweb.fr"
 
 === RÈGLES ABSOLUES ===
-- Adapte TOUT au métier du prospect. Jamais parler de toiture à un pisciniste, de piscine à un électricien, etc.
+- ⚠️ NE JAMAIS AFFIRMER CATÉGORIQUEMENT LE MÉTIER DU PROSPECT. Le secteur ci-dessous vient d'une recherche automatique et PEUT ÊTRE FAUX (se tromper de secteur = prospect agacé + risque légal). Donc : n'écris JAMAIS "entreprise de maçonnerie", "vous êtes couvreur", "un maçon comme vous". Reste PRUDENT : ouvre sur le DÉFAUT DU SITE (factuel, vrai quel que soit le métier), et parle de "votre activité", "vos services", "votre entreprise", "quand un client cherche vos services à {ville}". Utilise le vocabulaire du secteur seulement comme contexte discret, jamais comme une affirmation sur qui ils sont.
+- Adapte le vocabulaire au métier présumé. Jamais parler de toiture à un pisciniste, de piscine à un électricien, etc.
 - Aucun tiret long (—) ni moyen (–). Aucune liste à puces ou numérotée.
 - Aucun chiffre inventé précis (pas de "89 avis", "2200 recherches", "60 %"). Dis "la plupart", "beaucoup", "souvent".
 - JAMAIS nommer un concurrent (tu ne les connais pas) → "d'autres entreprises", "des concurrents du coin".

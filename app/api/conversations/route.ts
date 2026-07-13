@@ -21,7 +21,7 @@ export async function GET() {
     const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
     const { inArray, desc, ne, isNull, or, and, eq } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint, isChallengeResponseSpam } = await import('@/lib/reply-agent/classifier')
-    const { recoverBase64 } = await import('@/lib/decode-body')
+    const { cleanIncomingBody } = await import('@/lib/decode-body')
 
     // Nettoyage HTML/CSS à l'affichage : certains mails stockés contiennent encore du
     // HTML brut (style/scripts/balises) qui fuit dans la messagerie du client.
@@ -143,7 +143,7 @@ export async function GET() {
         })
       }
       const g = groups.get(key)!
-      const decodedBody = stripHtmlLite(recoverBase64(r.body))
+      const decodedBody = stripHtmlLite(cleanIncomingBody(r.body))
       g.messages.push({
         role: 'received',
         subject: r.subject ?? undefined,

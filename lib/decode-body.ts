@@ -41,3 +41,38 @@ export function recoverBase64(text: string): string {
 
   return decoded.trim()
 }
+
+/**
+ * Décode le quoted-printable (`=C3=A9` → é, `=\n` = retour à la ligne mou).
+ * CRITIQUE : reconstruire les OCTETS puis les interpréter en UTF-8 — un `=C3=A7`
+ * = 2 octets (0xC3 0xA7 = ç). L'ancienne méthode `String.fromCharCode` par octet
+ * cassait les accents (Ã§ au lieu de ç).
+ */
+export function decodeQuotedPrintable(text: string): string {
+  const raw = text || ''
+  // Pas de motif =XX → probablement pas du QP, on ne touche à rien.
+  if (!/=[0-9A-Fa-f]{2}/.test(raw)) return raw
+  const s = raw.replace(/=\r?\n/g, '') // retours à la ligne mous
+  const bytes: number[] = []
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '=' && /^[0-9A-Fa-f]{2}$/.test(s.substr(i + 1, 2))) {
+      bytes.push(parseInt(s.substr(i + 1, 2), 16))
+      i += 2
+    } else {
+      const code = s.charCodeAt(i)
+      if (code <= 0xff) bytes.push(code)
+      else for (const b of Buffer.from(c, 'utf-8')) bytes.push(b) // caractère déjà en UTF-8
+    }
+  }
+  try {
+    return Buffer.from(bytes).toString('utf-8')
+  } catch {
+    return raw
+  }
+}
+
+/** Nettoyage complet d'un corps de mail entrant : base64 PUIS quoted-printable. */
+export function cleanIncomingBody(text: string): string {
+  return decodeQuotedPrintable(recoverBase64(text))
+}

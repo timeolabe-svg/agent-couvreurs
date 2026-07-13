@@ -16,7 +16,7 @@ import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
 import { toParisWallClock } from '@/lib/availability'
-import { recoverBase64 } from '@/lib/decode-body'
+import { cleanIncomingBody, decodeQuotedPrintable } from '@/lib/decode-body'
 
 // Client SQL brut, assigné dynamiquement dans le handler (évite d'évaluer neon()
 // au build, où DATABASE_URL est absent — cause d'échec de "collect page data").
@@ -170,8 +170,8 @@ async function processBox(box: { email: string; password: string }, started: num
         const fetchBody = async (): Promise<string> => {
           const src = await client.fetchOne(uid, { source: true }).catch(() => null)
           const raw = src && src.source ? src.source.toString() : ''
-          // recoverBase64 = filet de sécurité si le parser MIME a raté un corps base64.
-          return recoverBase64(extractPlainText(raw.length > 60_000 ? raw.slice(0, 60_000) : raw))
+          // Filet de sécurité si le parser MIME a raté un corps base64 ou quoted-printable.
+          return cleanIncomingBody(extractPlainText(raw.length > 60_000 ? raw.slice(0, 60_000) : raw))
         }
 
         // Bounce → blocklist du VRAI destinataire (jamais un daemon).
@@ -356,6 +356,28 @@ async function processReply(params: {
   }
 
   if (classification.action === 'no_action') {
+    // Absence ("fermé/absent jusqu'au X") → on DÉCALE les relances en attente pour
+    // qu'elles repartent au retour du prospect (spacing J+3/J+7 préservé), au lieu de
+    // relancer dans le vide pendant qu'il est absent.
+    if (classification.classification === 'oof' && contact?.id) {
+      const ret = extractReturnDate(cleanBody, new Date())
+      if (ret) {
+        const [minRow] = (await sql`
+          SELECT MIN(scheduled_at) AS m FROM email_queue
+          WHERE contact_id = ${contact.id} AND status IN ('pending', 'queued') AND sequence_step > 0
+        `) as Array<{ m: string | null }>
+        if (minRow?.m && new Date(minRow.m).getTime() < ret.getTime()) {
+          const deltaSec = Math.round((ret.getTime() - new Date(minRow.m).getTime()) / 1000)
+          const shifted = (await sql`
+            UPDATE email_queue
+            SET scheduled_at = scheduled_at + (${deltaSec} * interval '1 second')
+            WHERE contact_id = ${contact.id} AND status IN ('pending', 'queued') AND sequence_step > 0
+            RETURNING id
+          `) as Array<{ id: string }>
+          results.push(`⏰ absence → ${shifted.length} relance(s) repoussée(s) à partir du ${ret.toLocaleDateString('fr-FR')}`)
+        }
+      }
+    }
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: 'no_action', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
   }
@@ -588,7 +610,7 @@ function extractPlainText(raw: string): string {
       try { return Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8') } catch { return content }
     }
     if (enc === 'quoted-printable') {
-      return content.replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      return decodeQuotedPrintable(content) // décodage correct multi-octets UTF-8
     }
     return content
   }
@@ -663,6 +685,28 @@ function extractNewEmail(text: string, currentEmail: string): string | null {
     if (el !== cur && !isFakeEmail(el) && !el.includes('hdigiweb') && !el.includes('@instantly')) return el
   }
   return null
+}
+
+// ─── Absence : extrait la date de RETOUR d'un message d'absence (oof) ───
+// "fermé jusqu'au 15 juillet" → relance le 16 ; "de retour le 16" → relance le 16.
+const MONTHS_FR: Record<string, number> = { janvier: 0, 'février': 1, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5, juillet: 6, 'août': 7, aout: 7, septembre: 8, octobre: 9, novembre: 10, 'décembre': 11, decembre: 11 }
+function extractReturnDate(text: string, now: Date): Date | null {
+  const t = (text || '').toLowerCase()
+  const m = t.match(/(jusqu'?\s*(?:au|à)|de retour le|à partir du|a partir du|reprise le|r[ée]ouverture le|retour le|reprenons le|reprend(?:s|rai|rons)? le)\s+(\d{1,2})(?:\s*[\/.]\s*(\d{1,2}))?(?:\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre))?/)
+  if (!m) return null
+  const inclusive = /jusqu/.test(m[1])
+  const day = parseInt(m[2], 10)
+  if (day < 1 || day > 31) return null
+  let month = now.getMonth()
+  if (m[3]) month = parseInt(m[3], 10) - 1
+  else if (m[4]) month = MONTHS_FR[m[4]] ?? month
+  let d = new Date(now.getFullYear(), month, day, 9, 0, 0, 0)
+  // date déjà passée (>2j) → mois suivant (ou année suivante si le mois était précisé)
+  if (d.getTime() < now.getTime() - 2 * 86400000) {
+    d = (m[3] || m[4]) ? new Date(now.getFullYear() + 1, month, day, 9, 0, 0, 0) : new Date(now.getFullYear(), month + 1, day, 9, 0, 0, 0)
+  }
+  if (inclusive) d.setDate(d.getDate() + 1) // "jusqu'au 15" → on relance le 16
+  return d
 }
 
 // ─── Filtre langue : garde tout vrai prospect FR, ne saute que du warmup anglais évident ───
