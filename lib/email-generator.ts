@@ -60,9 +60,13 @@ thomas@hdigiweb.fr"
 - Ne mets JAMAIS "Hdigiweb" dans le corps (uniquement dans la signature).
 - Jamais de jour précis ni de durée exacte pour le RDV (dis "quelques minutes", "début ou fin de semaine").
 
-=== L'OFFRE (à glisser dans UNE relance, pas dans le 1er email) ===
-Le premier mois est OFFERT, sans engagement : l'artisan teste les résultats sur sa zone avant de payer quoi que ce soit. C'est l'argument qui lève le risque.
-À utiliser dans une relance (idéalement la 2e), formulé simplement : "le premier mois est offert, vous testez sur votre secteur, et vous voyez ce que ça donne avant de vous engager." Jamais dans le tout premier email (trop tôt pour parler commercial).
+=== L'OFFRE — LE LEVIER N°1 QUI DÉCLENCHE LE RDV (À MARTELER) ===
+Le premier mois est OFFERT, sans engagement : l'artisan teste les résultats sur sa zone avant de payer quoi que ce soit. C'est CE qui lève le risque et fait accepter un échange — c'est de loin l'argument le plus puissant de toute la séquence, celui qui transforme un "peut-être" en rendez-vous.
+RÈGLE : en parler dans PRESQUE TOUS les emails, sous un angle DIFFÉRENT à chaque fois (jamais la même phrase) :
+- Formulations simples à varier : "le premier mois est offert, vous testez sur votre secteur avant de payer", "sans engagement", "vous ne payez rien tant que vous n'avez pas vu de résultats", "vous testez, et si ça ne donne rien vous arrêtez, ça ne vous coûte rien".
+- Le METTRE EN VALEUR, pas le glisser en passant. C'est l'argument central, pas une note de bas de page.
+- L'ASSOCIER au CTA : on propose l'échange justement POUR lancer ce mois d'essai offert. Ex : "Quelques minutes pour lancer le premier mois d'essai, sans engagement ?"
+- Même le 1er email peut se terminer sur une mention courte ("et le premier mois est offert pour tester") — le but est qu'ils comprennent VITE qu'ils ne risquent rien. Ne PAS attendre la 2e relance.
 
 === SI PAS DE SITE WEB ===
 Si le prospect n'a pas de site, ouvre là-dessus : quand un client cherche son métier sur Google, il ne le trouve nulle part, il n'existe pas en ligne face à des concurrents qui, eux, y sont. Simple et concret.
@@ -257,13 +261,13 @@ PROSPECT :
 - Ville : ${lead.city}
 - Site web : ${lead.hasWebsite ? 'oui' : 'NON'}${seqAuditContext}
 
-Les 4 emails (même fil, sujets courts et cohérents) :
-1. INITIAL (J+0) : ouvre sur le DÉFAUT AUDITÉ ci-dessus + sa conséquence concrète + CTA doux. 50-90 mots.
-2. RELANCE 1 (J+3) : courte, un autre angle du même problème (ou un 2e défaut du site), pas une répétition. 40-70 mots.
-3. RELANCE 2 (J+7) : un artisan du même métier qu'on a aidé (sans nom, sans chiffre inventé), ton chaleureux, ET glisse l'offre "premier mois offert, sans engagement, pour tester sur sa zone avant de payer", puis CTA. 40-70 mots.
-4. RELANCE 3 / BREAK-UP (J+14) : très courte, propose un audit gratuit de son site. 30-60 mots.
+Les 4 emails (même fil, sujets courts et cohérents). L'OFFRE "1er mois offert, sans engagement" est le LEVIER N°1 → elle doit apparaître, sous un angle DIFFÉRENT, dans PRESQUE TOUS les mails :
+1. INITIAL (J+0) : ouvre sur le DÉFAUT AUDITÉ ci-dessus + sa conséquence concrète + CTA doux, ET termine par une mention courte de l'offre ("et le premier mois est offert pour tester, sans engagement"). 50-90 mots.
+2. RELANCE 1 (J+3) : courte, un autre angle du même problème (ou un 2e défaut), PUIS remets l'offre en avant sous un autre angle ("vous ne payez rien tant que vous n'avez pas vu de résultats"), CTA. 40-70 mots.
+3. RELANCE 2 (J+7) : un artisan du même métier qu'on a aidé (sans nom, sans chiffre inventé), ton chaleureux, et APPUIE FORT sur l'offre "premier mois offert, sans engagement, vous testez sur votre secteur avant de payer" + CTA lié à l'offre. 40-70 mots.
+4. RELANCE 3 / BREAK-UP (J+14) : très courte, propose un audit gratuit de son site ET rappelle qu'il peut lancer le mois d'essai offert sans rien risquer. 30-60 mots.
 
-CRITIQUE : chaque email COURT et SIMPLE (jamais un pavé), une seule idée, vocabulaire du métier "${sector}" uniquement. Aucun crochet [à remplir], aucun concurrent nommé, aucun tiret cadratin, aucun chiffre inventé.
+CRITIQUE : chaque email COURT et SIMPLE (jamais un pavé), une seule idée principale + l'offre, vocabulaire du métier "${sector}" uniquement. L'offre doit être MISE EN VALEUR (pas glissée), formulée DIFFÉREMMENT à chaque mail. Aucun crochet [à remplir], aucun concurrent nommé, aucun tiret cadratin, aucun chiffre inventé.
 
 Signature à la fin de CHAQUE email :
 ${fromName}
