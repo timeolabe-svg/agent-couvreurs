@@ -28,11 +28,13 @@ export async function GET(req: Request) {
   sql = (await import('@/lib/db')).sql
   const mode = new URL(req.url).searchParams.get('mode') ?? 'dry'
 
-  // classification spam OU body contenant un motif parasite (ILIKE ANY(array)).
+  // On supprime UNIQUEMENT les conversations vraiment mortes (motifs ci-dessus).
+  // PAS tous les 'spam' : un accusé de réception auto est un VRAI prospect qu'on
+  // recontacte plus tard (il est juste masqué de la messagerie, pas supprimé).
   const candidates = (await sql`
     SELECT id, from_email, classification, LEFT(body, 80) AS extrait
     FROM incoming_replies
-    WHERE classification = 'spam' OR body ILIKE ANY(${JUNK_ILIKE})
+    WHERE body ILIKE ANY(${JUNK_ILIKE})
     ORDER BY created_at DESC
     LIMIT 200
   `) as Array<{ id: string; from_email: string; classification: string | null; extrait: string }>

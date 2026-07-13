@@ -198,6 +198,10 @@ export async function GET() {
         if (isEmptyEmailComplaint(lastReceived.body, '')) return false
         // 5) Anti-spam challenge-response (SpamEnMoins…) déjà stocké → masqué (pas une vraie conv).
         if (isChallengeResponseSpam(lastReceived.body, lastReceived.subject ?? '')) return false
+        // 6) Auto-réponses (accusé de réception / absence = 'oof') → masquées de la messagerie
+        //    (ce sont des bots, pas une vraie conversation). MAIS le prospect reste dans la
+        //    séquence : ses relances continuent / sont décalées au retour. On le recontacte.
+        if (lastReceived.classification === 'oof') return false
         return true
       })
       .map(g => {
