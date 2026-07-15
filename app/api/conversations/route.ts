@@ -205,6 +205,13 @@ export async function GET() {
         // 7) Changement d'adresse mail → pas une conversation (le prospect est recontacté sur
         //    sa nouvelle adresse via un contact neuf ; inutile d'afficher ça comme un échange).
         if (/changement d'?adresse|nouvelle adresse\s*(mail|e-?mail|[ée]lectronique|de messagerie)|notez\s+(notre|ma)\s+nouvelle\s+adresse/i.test(lastReceived.body)) return false
+        // 8) Conversation clairement en ANGLAIS = mail de warmup (cible = artisans FR) → masquée.
+        {
+          const b = (lastReceived.body || '').toLowerCase()
+          const hasFrench = /[àâäéèêëîïôöùûüç]/.test(b) || /\b(bonjour|merci|vous|nous|votre|oui|non|pas|devis|rappel|cordialement|à|est|pour|avec|bien)\b/.test(b)
+          const hasEnglish = /\b(the|thanks|thank you|please|regards|meeting|would|your|hello|hi there|no thank|i want|we can|best regards|sent from my iphone)\b/.test(b)
+          if (!hasFrench && hasEnglish) return false
+        }
         return true
       })
       .map(g => {
