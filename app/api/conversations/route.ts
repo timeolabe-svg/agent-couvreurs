@@ -202,6 +202,9 @@ export async function GET() {
         //    (ce sont des bots, pas une vraie conversation). MAIS le prospect reste dans la
         //    séquence : ses relances continuent / sont décalées au retour. On le recontacte.
         if (lastReceived.classification === 'oof') return false
+        // 7) Changement d'adresse mail → pas une conversation (le prospect est recontacté sur
+        //    sa nouvelle adresse via un contact neuf ; inutile d'afficher ça comme un échange).
+        if (/changement d'?adresse|nouvelle adresse\s*(mail|e-?mail|[ée]lectronique|de messagerie)|notez\s+(notre|ma)\s+nouvelle\s+adresse/i.test(lastReceived.body)) return false
         return true
       })
       .map(g => {

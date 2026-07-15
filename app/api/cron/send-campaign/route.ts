@@ -100,11 +100,16 @@ export async function GET(req: NextRequest) {
         WHERE eq.status = 'queued'
           AND eq.scheduled_at <= NOW()
           AND c.email IS NOT NULL
-          -- ANTI-RÉPÉTITION : jamais à un contact qui a déjà répondu (hors 'oof'/'spam').
-          AND NOT EXISTS (
-            SELECT 1 FROM incoming_replies ir
-            WHERE LOWER(ir.from_email) = LOWER(c.email)
-              AND (ir.classification IS NULL OR ir.classification NOT IN ('oof', 'spam'))
+          -- ANTI-RÉPÉTITION : jamais de relance FROIDE (steps 0-3) à un contact qui a déjà
+          -- répondu. EXCEPTION : les relances de CONVERSATION (steps >= 20) visent justement
+          -- des gens qui ont répondu puis se sont tus → elles doivent passer.
+          AND (
+            eq.sequence_step >= 20
+            OR NOT EXISTS (
+              SELECT 1 FROM incoming_replies ir
+              WHERE LOWER(ir.from_email) = LOWER(c.email)
+                AND (ir.classification IS NULL OR ir.classification NOT IN ('oof', 'spam'))
+            )
           )
           -- OPT-OUT / BOUNCE : jamais à une adresse ou un domaine blocklisté.
           AND NOT EXISTS (
