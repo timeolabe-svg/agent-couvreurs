@@ -26,7 +26,22 @@ export async function GET(req: Request) {
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
 
   sql = (await import('@/lib/db')).sql
-  const mode = new URL(req.url).searchParams.get('mode') ?? 'dry'
+  const params = new URL(req.url).searchParams
+  const mode = params.get('mode') ?? 'dry'
+
+  // Suppression CIBLÉE d'une conversation par email (mode=delete requis).
+  const targetEmail = params.get('email')
+  if (targetEmail) {
+    if (mode !== 'delete') {
+      const rows = (await sql`SELECT id, LEFT(body, 80) AS extrait FROM incoming_replies WHERE LOWER(from_email) = LOWER(${targetEmail})`) as Array<{ id: string; extrait: string }>
+      return NextResponse.json({ mode: 'aperçu', email: targetEmail, total: rows.length, extraits: rows.map(r => (r.extrait || '').slice(0, 60)) })
+    }
+    const ids = ((await sql`SELECT id FROM incoming_replies WHERE LOWER(from_email) = LOWER(${targetEmail})`) as Array<{ id: string }>).map(r => r.id)
+    if (ids.length === 0) return NextResponse.json({ mode: 'delete', email: targetEmail, supprimés: 0 })
+    await sql`DELETE FROM reply_drafts WHERE incoming_reply_id = ANY(${ids})`
+    const del = (await sql`DELETE FROM incoming_replies WHERE id = ANY(${ids}) RETURNING id`) as Array<{ id: string }>
+    return NextResponse.json({ mode: 'delete', email: targetEmail, supprimés: del.length })
+  }
 
   // On supprime UNIQUEMENT les conversations vraiment mortes (motifs ci-dessus).
   // PAS tous les 'spam' : un accusé de réception auto est un VRAI prospect qu'on
