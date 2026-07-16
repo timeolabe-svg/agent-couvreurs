@@ -167,19 +167,25 @@ export async function GET() {
     weeklyLearningRaw,
   ] = await Promise.all([
     db.select({ totalEmailsSent: count() }).from(email_queue).where(eq(email_queue.status, 'sent')),
-    db.select({ totalReplies: count() }).from(incoming_replies),
+    // Vraies réponses humaines uniquement (hors spam et auto-répondeurs) → cohérent avec la messagerie.
+    db.select({ totalReplies: count() }).from(incoming_replies).where(
+      or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof')))
+    ),
     db.select({ totalRdv: count() }).from(rdv),
     db.select({ totalSigned: count() }).from(rdv).where(eq(rdv.status, 'signed')),
     db.select({ emailsSentToday: count() }).from(email_queue).where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, todayStart))),
-    db.select({ repliesToday: count() }).from(incoming_replies).where(gte(incoming_replies.created_at, todayStart)),
+    db.select({ repliesToday: count() }).from(incoming_replies).where(and(
+      gte(incoming_replies.created_at, todayStart),
+      or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
+    )),
     db.select({ rdvToday: count() }).from(rdv).where(gte(rdv.scheduled_at, todayStart)),
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
     db.select({ rdvThisMonth: count() }).from(rdv).where(gte(rdv.created_at, monthStart)),
-    // repliesReceived this month (hors spam / réponses automatiques)
+    // repliesReceived this month (hors spam ET auto-répondeurs — cohérent avec la messagerie)
     db.select({ repliesReceived: count() }).from(incoming_replies).where(and(
       gte(incoming_replies.created_at, monthStart),
-      or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')),
+      or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
     )),
     // clientsSigned this month
     db.select({ clientsSigned: count() }).from(rdv).where(and(eq(rdv.status, 'signed'), gte(rdv.created_at, monthStart))),

@@ -212,6 +212,13 @@ export async function GET() {
           const hasEnglish = /\b(the|thanks|thank you|please|regards|meeting|would|your|hello|hi there|no thank|i want|we can|best regards|sent from my iphone)\b/.test(b)
           if (!hasFrench && hasEnglish) return false
         }
+        // 9) AUTO-ARCHIVAGE : plus aucun échange (ni eux ni nous) depuis 14 jours et pas de
+        //    RDV calé → conversation morte, masquée automatiquement. (Une relance envoyée
+        //    compte comme un échange → elle la fait réapparaître, c'est voulu.)
+        {
+          const lastTs = Math.max(0, ...g.messages.map(m => new Date(m.date).getTime() || 0))
+          if (!g.rdvBooked && lastTs > 0 && Date.now() - lastTs > 14 * 86400000) return false
+        }
         return true
       })
       .map(g => {
