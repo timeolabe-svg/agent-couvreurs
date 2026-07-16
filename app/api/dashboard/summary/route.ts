@@ -167,14 +167,15 @@ export async function GET() {
     weeklyLearningRaw,
   ] = await Promise.all([
     db.select({ totalEmailsSent: count() }).from(email_queue).where(eq(email_queue.status, 'sent')),
-    // Vraies réponses humaines uniquement (hors spam et auto-répondeurs) → cohérent avec la messagerie.
-    db.select({ totalReplies: count() }).from(incoming_replies).where(
+    // Nombre de PERSONNES distinctes ayant vraiment répondu (hors spam et auto-répondeurs)
+    // — pas le nombre de messages : un prospect qui répond 3 fois compte 1.
+    db.select({ totalReplies: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof')))
     ),
     db.select({ totalRdv: count() }).from(rdv),
     db.select({ totalSigned: count() }).from(rdv).where(eq(rdv.status, 'signed')),
     db.select({ emailsSentToday: count() }).from(email_queue).where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, todayStart))),
-    db.select({ repliesToday: count() }).from(incoming_replies).where(and(
+    db.select({ repliesToday: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(and(
       gte(incoming_replies.created_at, todayStart),
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
     )),
@@ -182,8 +183,8 @@ export async function GET() {
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
     db.select({ rdvThisMonth: count() }).from(rdv).where(gte(rdv.created_at, monthStart)),
-    // repliesReceived this month (hors spam ET auto-répondeurs — cohérent avec la messagerie)
-    db.select({ repliesReceived: count() }).from(incoming_replies).where(and(
+    // repliesReceived ce mois = PERSONNES distinctes ayant répondu (hors spam / auto-répondeurs)
+    db.select({ repliesReceived: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(and(
       gte(incoming_replies.created_at, monthStart),
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
     )),
