@@ -23,30 +23,38 @@ export function hasNoRealWebsite(website: string | null | undefined): boolean {
   return FAKE_SITE_PATTERNS.some(p => w.includes(p))
 }
 
-async function fetchPage(url: string, timeoutMs = 5000): Promise<string | null> {
-  try {
-    const normalized = url.startsWith('http') ? url : `https://${url}`
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-    const res = await fetch(normalized, {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-        'Accept': 'text/html',
-      },
-    })
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const ct = res.headers.get('content-type') ?? ''
-    if (!ct.includes('html')) return null
-    const text = await res.text()
-    return text.slice(0, 150_000)
-  } catch {
-    return null
+async function fetchPage(url: string, timeoutMs = 8000): Promise<string | null> {
+  const normalized = url.startsWith('http') ? url : `https://${url}`
+  // 2 essais avec 2 User-Agents : navigateur d'abord (le plus accepté), puis Googlebot.
+  // Beaucoup de sites (Cloudflare & co) renvoient 403 aux bots → sans ça, faux "site inaccessible".
+  const USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+  ]
+  for (const ua of USER_AGENTS) {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+      const res = await fetch(normalized, {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': ua, 'Accept': 'text/html' },
+      })
+      clearTimeout(timer)
+      if (!res.ok) continue
+      const ct = res.headers.get('content-type') ?? ''
+      if (!ct.includes('html')) continue
+      const text = await res.text()
+      // Page de "challenge" anti-bot (Cloudflare…) = PAS le vrai site → ne surtout pas
+      // l'analyser comme si c'était le site du prospect (tous les checks seraient faux).
+      const head = text.slice(0, 4000).toLowerCase()
+      if (/just a moment|attention required|cf-browser-verification|checking your browser|enable javascript and cookies/.test(head)) continue
+      return text.slice(0, 150_000)
+    } catch { /* essai suivant */ }
   }
+  return null
 }
 
-async function checkSSL(url: string): Promise<boolean> {
+export async function checkSSL(url: string): Promise<boolean> {
   // RÈGLE (après l'incident 2L2P ELEC) : ne JAMAIS conclure "pas de HTTPS" sur un simple
   // timeout ou un hoquet réseau — un site lent n'est pas un site non sécurisé, et une
   // fausse accusation coûte toute la crédibilité auprès du prospect.
@@ -91,7 +99,9 @@ function detectObsoleteTags(html: string): string[] {
   if (/<frameset/i.test(html)) issues.push('architecture frameset obsolète')
   if (/jquery[\s"'/]1\.[0-6]/i.test(html)) issues.push('jQuery version très ancienne (1.x)')
   if (/jquery[\s"'/]1\.(7|8|9|10|11|12)/i.test(html)) issues.push('jQuery 1.x obsolète')
-  if (h.includes('flash') || h.includes('.swf')) issues.push('contenu Flash détecté (non supporté)')
+  // Marqueurs RÉELS de Flash uniquement — jamais le simple mot "flash" (promo flash,
+  // flash info… = faux positif garanti et accusation fausse envoyée au prospect).
+  if (/\.swf["'\s)>]|application\/x-shockwave-flash|shockwave-flash|<embed[^>]+flash/i.test(html)) issues.push('contenu Flash détecté (non supporté)')
   if (/text\/javascript/.test(html) && /<script[^>]+language/i.test(html)) issues.push('attribut language= sur balises script (déprécié)')
   return issues
 }
@@ -136,10 +146,13 @@ function detectAbandoned(html: string, url: string): string[] {
   const currentYear = new Date().getFullYear()
   // Copyright year check — fenêtre courte après "copyright"/"©" et année plausible
   // (sinon on capte un SIRET, un numéro de tél, une date au hasard dans le footer).
-  const copyrightMatch = html.match(/copyright[^0-9]{0,12}(20\d{2})/i) ?? html.match(/©[^0-9]{0,8}(20\d{2})/i)
-  if (copyrightMatch) {
-    const year = parseInt(copyrightMatch[1])
-    if (year >= 2000 && year <= currentYear && currentYear - year >= 4) {
+  // Gère les PLAGES "© 2018-2026" : on prend l'année la PLUS RÉCENTE de la fenêtre,
+  // sinon on accuserait à tort un site à jour d'avoir 8 ans de retard.
+  const copyrightWindow = html.match(/(?:copyright|©)[^0-9]{0,12}(20\d{2}(?:\s*[-–—/]\s*20\d{2})?)/i)
+  if (copyrightWindow) {
+    const years = (copyrightWindow[1].match(/20\d{2}/g) ?? []).map(Number).filter(y => y >= 2000 && y <= currentYear)
+    const year = years.length ? Math.max(...years) : 0
+    if (year && currentYear - year >= 4) {
       issues.push(`copyright ${year} (site probablement non mis à jour depuis ${currentYear - year} ans)`)
     }
   }
@@ -160,7 +173,11 @@ export async function auditWebsite(website: string | null | undefined, _sector?:
   ])
 
   if (!html) {
-    return { score: 10, level: 'abandoned', hasWebsite: true, cms: null, ssl, mobileOptimized: false, weaknesses: ['site inaccessible ou en erreur'], totalIssues: 1 }
+    // INCONCLUSIF (site lent, anti-bot, erreur passagère) → on n'affirme RIEN de faux.
+    // Aucune faiblesse "arme d'ouverture" : l'email retombera sur l'angle générique
+    // (visibilité Google), subjectif et sans risque. JAMAIS "site inaccessible/abandonné"
+    // sur un simple échec de fetch — même famille de faux positif que l'incident HTTPS 2L2P.
+    return { score: 55, level: 'outdated', hasWebsite: true, cms: null, ssl, mobileOptimized: true, weaknesses: [], totalIssues: 0 }
   }
 
   const cms = detectCMS(html)

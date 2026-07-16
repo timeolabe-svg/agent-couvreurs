@@ -668,6 +668,22 @@ export async function GET(request: NextRequest) {
             createdAt: contact.created_at?.toISOString() ?? new Date().toISOString(),
             lastActivityAt: new Date().toISOString(),
           }
+          // RE-VÉRIFICATION LIVE du défaut HTTPS juste avant d'écrire l'email : les flags
+          // stockés peuvent être des faux positifs de l'ancien test (incident 2L2P ELEC :
+          // accuser un site sécurisé = crédibilité morte). Si le site est OK maintenant,
+          // on retire le défaut ET on corrige le contact en base.
+          if (lead.website && (lead.auditWeaknesses ?? []).some((w: string) => /HTTPS/i.test(w))) {
+            try {
+              const { checkSSL } = await import('@/lib/website-audit')
+              if (await checkSSL(lead.website)) {
+                lead.auditWeaknesses = (lead.auditWeaknesses ?? []).filter((w: string) => !/HTTPS/i.test(w))
+                await db.update(contacts)
+                  .set({ audit_weaknesses: lead.auditWeaknesses })
+                  .where(eq(contacts.id, contact.id))
+              }
+            } catch { /* vérification impossible → on garde le bénéfice du doute côté prudence : sans confirmation, generateSequence n'insistera pas */ }
+          }
+
           // Tire une variante d'angle pondérée (l'agent teste et favorise les gagnantes).
           const variantId = weightedPick(VARIANT_IDS, variantWeights)
           const variantInstruction = MESSAGE_VARIANTS.find(v => v.id === variantId)?.instruction
