@@ -47,17 +47,26 @@ async function fetchPage(url: string, timeoutMs = 5000): Promise<string | null> 
 }
 
 async function checkSSL(url: string): Promise<boolean> {
-  try {
-    const normalized = url.startsWith('http') ? url : `https://${url}`
-    const httpsUrl = normalized.replace(/^http:\/\//, 'https://')
-    // GET (pas HEAD) : beaucoup de serveurs renvoient 405 sur HEAD → faux "pas de HTTPS".
-    // Si la requête HTTPS aboutit SANS erreur TLS (quel que soit le code HTTP),
-    // c'est que le HTTPS est supporté. Seule une erreur réseau/TLS = pas de HTTPS.
-    await fetch(httpsUrl, { method: 'GET', signal: AbortSignal.timeout(4000) })
-    return true
-  } catch {
-    return false
+  // RÈGLE (après l'incident 2L2P ELEC) : ne JAMAIS conclure "pas de HTTPS" sur un simple
+  // timeout ou un hoquet réseau — un site lent n'est pas un site non sécurisé, et une
+  // fausse accusation coûte toute la crédibilité auprès du prospect.
+  //  - On tente 2 fois (8 s), pour absorber les lenteurs ponctuelles.
+  //  - Timeout / erreur indéterminée → BÉNÉFICE DU DOUTE (true = on ne signale rien).
+  //  - Seule une vraie erreur TLS/certificat ou un refus de connexion sur 443 = pas de HTTPS.
+  const normalized = url.startsWith('http') ? url : `https://${url}`
+  const httpsUrl = normalized.replace(/^http:\/\//, 'https://')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await fetch(httpsUrl, { method: 'GET', signal: AbortSignal.timeout(8000) })
+      return true // la requête HTTPS aboutit (quel que soit le code HTTP) → HTTPS supporté
+    } catch (e) {
+      const msg = String((e as Error)?.cause ?? e).toLowerCase()
+      const isTlsFailure = /cert|tls|ssl|self.signed|unable_to_verify|altname|handshake|econnrefused/.test(msg)
+      if (isTlsFailure) return false // preuve POSITIVE d'un problème HTTPS
+      // timeout / DNS / réseau : indéterminé → on retente puis bénéfice du doute
+    }
   }
+  return true
 }
 
 function detectCMS(html: string): string | null {

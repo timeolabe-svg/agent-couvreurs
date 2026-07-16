@@ -33,6 +33,64 @@ export async function GET(req: Request) {
   const [campaign] = (await sql`SELECT id FROM campaigns WHERE status = 'active' LIMIT 1`) as Array<{ id: string }>
   if (!campaign) return NextResponse.json({ ok: true, reason: 'aucune campagne active' })
 
+  // ── PARTIE A : RÉPARE les réponses restées SANS brouillon ──
+  // Trou possible dans le poll : le message entrant est enregistré (dédup) puis la
+  // génération du brouillon échoue (budget/IA) → la réponse ne serait JAMAIS traitée
+  // et la conversation mourrait en silence. Cette passe régénère le brouillon.
+  const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+  const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
+  const { cleanIncomingBody } = await import('@/lib/decode-body')
+  const repairs: string[] = []
+  const orphans = (await sql`
+    SELECT ir.id, ir.contact_id, ir.body, ir.from_email, ir.classification, ir.action_taken
+    FROM incoming_replies ir
+    WHERE ir.created_at > NOW() - INTERVAL '72 hours'
+      AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
+      AND ir.contact_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id)
+      AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
+      AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = ir.contact_id AND r.status = 'confirmed')
+    ORDER BY ir.created_at ASC
+    LIMIT 2
+  `) as Array<{ id: string; contact_id: string; body: string; from_email: string; classification: string; action_taken: string | null }>
+
+  for (const o of orphans) {
+    try {
+      const [ct] = (await sql`SELECT id, name, company, city, sector FROM contacts WHERE id = ${o.contact_id}`) as Array<{ id: string; name: string | null; company: string; city: string | null; sector: string | null }>
+      const sent = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${o.contact_id} AND status = 'sent' ORDER BY sent_at ASC`) as Array<{ body: string; sent_at: string | null }>
+      const recv = (await sql`SELECT body, created_at FROM incoming_replies WHERE contact_id = ${o.contact_id} ORDER BY created_at ASC`) as Array<{ body: string; created_at: string | null }>
+      const history = [
+        ...sent.map(x => ({ role: 'sent' as const, body: x.body, ts: x.sent_at ? new Date(x.sent_at).getTime() : 0 })),
+        ...recv.map(x => ({ role: 'received' as const, body: cleanIncomingBody(x.body || ''), ts: x.created_at ? new Date(x.created_at).getTime() : 0 })),
+      ].sort((a, b) => a.ts - b.ts)
+        .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+      const [ob] = (await sql`SELECT from_email FROM email_queue WHERE contact_id = ${o.contact_id} AND status = 'sent' AND from_email IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ from_email: string }>
+      const cleaned = cleanIncomingBody(o.body || '')
+      const cleanBody = stripQuotedReply(cleaned) || cleaned
+      const draft = await generateReplyResponse({
+        // la requête SQL filtre déjà sur ces 4 classifications
+        classification: o.classification as 'interest' | 'question' | 'objection' | 'rdv_request',
+        originalEmailBody: sent.length ? sent[sent.length - 1].body : '',
+        replyBody: cleanBody,
+        contactName: ct?.name ?? o.from_email,
+        contactCompany: ct?.company ?? o.from_email,
+        contactCity: ct?.city ?? '',
+        contactSector: ct?.sector ?? undefined,
+        conversationHistory: history,
+        fromEmail: ob?.from_email,
+      })
+      // auto_reply → envoi auto (Partie A du poll) ; sinon → validation humaine dans l'app.
+      if (o.action_taken === 'auto_reply') {
+        await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${o.id}, ${draft}, 'scheduled', NOW())`
+      } else {
+        await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status) VALUES (${o.id}, ${draft}, 'pending')`
+      }
+      repairs.push(`🩹 brouillon régénéré → ${o.from_email} (${o.action_taken === 'auto_reply' ? 'envoi auto' : 'à valider'})`)
+    } catch (e) {
+      repairs.push(`✗ réparation ${o.from_email}: ${String(e).slice(0, 60)}`)
+    }
+  }
+
   // Candidats : conversations réelles, silencieuses après NOTRE dernier message.
   const rows = (await sql`
     SELECT c.id, c.email, c.company, c.name,
@@ -112,5 +170,5 @@ Pour ne plus recevoir mes emails, répondez simplement "Stop".`
     }
   }
 
-  return NextResponse.json({ ok: true, candidats: rows.length, dus: due.length, mis_en_file: queued, results })
+  return NextResponse.json({ ok: true, candidats: rows.length, dus: due.length, mis_en_file: queued, réparations: repairs, results })
 }
