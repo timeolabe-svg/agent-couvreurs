@@ -48,6 +48,10 @@ export async function GET(req: NextRequest) {
   }
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
 
+  // Si MillionVerifier est configuré → on n'envoie QU'aux emails VALIDÉS (email_validated=true),
+  // ce qui élimine les bounces. Sans MV → on garde l'ancien comportement (confiance >= 90).
+  const requireValidated = Boolean(process.env.MILLION_VERIFIER_API_KEY)
+
   const { sql } = await import('@/lib/db')
 
   try {
@@ -111,6 +115,8 @@ export async function GET(req: NextRequest) {
                 AND (ir.classification IS NULL OR ir.classification NOT IN ('oof', 'spam'))
             )
           )
+          -- ANTI-BOUNCE : si MillionVerifier est actif, on n'envoie QU'aux emails validés.
+          AND (c.email_validated IS TRUE OR ${!requireValidated})
           -- OPT-OUT / BOUNCE : jamais à une adresse ou un domaine blocklisté.
           AND NOT EXISTS (
             SELECT 1 FROM blocklist b

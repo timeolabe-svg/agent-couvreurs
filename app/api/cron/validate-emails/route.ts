@@ -32,11 +32,12 @@ export async function GET(req: Request) {
   const { contacts, email_queue } = await import('@/lib/db/schema')
   const { eq, and, or, isNull, sql, inArray } = await import('drizzle-orm')
 
-  // Contacts NON validés qui ont au moins un email en file d'attente (donc à envoyer).
+  // Contacts NON validés qui ont au moins un email PAS ENCORE ENVOYÉ (pending OU queued) :
+  // on les valide AVANT que send-campaign ne les envoie → aucun bounce.
   const rows = await db
     .selectDistinct({ id: contacts.id, email: contacts.email, company: contacts.company })
     .from(contacts)
-    .innerJoin(email_queue, and(eq(email_queue.contact_id, contacts.id), eq(email_queue.status, 'pending')))
+    .innerJoin(email_queue, and(eq(email_queue.contact_id, contacts.id), inArray(email_queue.status, ['pending', 'queued'])))
     .where(or(eq(contacts.email_validated, false), isNull(contacts.email_validated)))
     .orderBy(sql`${contacts.created_at} asc`)
     .limit(BATCH)
@@ -63,7 +64,7 @@ export async function GET(req: Request) {
         // Adresse non fiable → on annule sa file (jamais envoyée) pour éviter le bounce.
         await db.update(email_queue)
           .set({ status: 'cancelled' })
-          .where(and(eq(email_queue.contact_id, c.id), eq(email_queue.status, 'pending')))
+          .where(and(eq(email_queue.contact_id, c.id), inArray(email_queue.status, ['pending', 'queued'])))
         rejected++
       } else {
         // 'unknown' / 'error' (crédits) → on laisse, re-tenté plus tard.
