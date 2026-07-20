@@ -33,7 +33,22 @@ export async function GET(req: Request) {
       WHERE status = 'confirmed' AND notes ILIKE '%Aucune date précisée%'
       RETURNING id
     `) as Array<{ id: string }>
-    return NextResponse.json({ ok: true, repasses_en_proposed: updated.length })
+
+    // Supprime les brouillons NON ENVOYÉS (scheduled/pending) des contacts dont le RDV a été
+    // inventé (note "Aucune date précisée", désormais 'proposed') : rédigés par l'ancien code, ils
+    // CONFIRMENT le créneau inventé ("comme convenu") → ne surtout pas les envoyer. Une fois
+    // supprimés, conversation-followups régénère une vraie PROPOSITION oui/non. (Jamais les 'sent'.)
+    const del = (await sql`
+      DELETE FROM reply_drafts rd
+      USING incoming_replies ir
+      WHERE rd.incoming_reply_id = ir.id
+        AND rd.status IN ('scheduled', 'pending')
+        AND ir.contact_id IN (
+          SELECT contact_id FROM rdv WHERE status = 'proposed' AND notes ILIKE '%Aucune date précisée%'
+        )
+      RETURNING rd.id
+    `) as Array<{ id: string }>
+    return NextResponse.json({ ok: true, repasses_en_proposed: updated.length, brouillons_non_envoyes_supprimes: del.length })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
   }
