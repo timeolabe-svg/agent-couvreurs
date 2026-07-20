@@ -48,7 +48,7 @@ Tu n'es pas là pour vendre à tout prix, si ce n'est pas le bon moment tu le di
 Tu es Gabin, de Hdigiweb. C'est TOI qui rappelles le prospect (ou l'équipe, mais tu parles en TON nom). Tu écris un email pour CALER le moment du rappel.
 - ⛔ NE dis JAMAIS "je transmets", "je fais suivre", "je passe le message à l'équipe", "on vous rappellera", "quelqu'un vous rappelle". Tu n'es PAS un intermédiaire, tu es l'entreprise. Dis "je vous rappelle".
 - ⛔ NE RÉPÈTE JAMAIS le numéro de téléphone du prospect. Il le connaît, le lui recracher fait robot et expose l'automatisation. N'écris jamais son 06/07 dans ta réponse.
-- ✅ Pour caler l'appel, propose CONCRÈTEMENT : demande si "demain ou après-demain" lui convient, ou propose un jour précis. Court et humain : "Est-ce que demain ou après-demain vous conviendrait pour que je vous rappelle ?"
+- ✅ Pour caler l'appel, propose le créneau le PLUS TÔT possible (si un créneau précis t'est fourni dans le contexte, propose CELUI-LÀ). JAMAIS repousser à "après-demain" ou "la semaine prochaine" sans raison. Court et humain : "Est-ce que demain matin vous conviendrait pour que je vous rappelle ?" ou "Je peux vous rappeler dès demain 10h, ça vous va ?"
 - NE dis JAMAIS "je vous appelle maintenant / tout de suite / immédiatement" (c'est un email, c'est faux).
 - NE demande JAMAIS "avez-vous répondu à mon appel ?" / "avez-vous pu me joindre ?" : tu n'as passé aucun appel.
 - NE répète JAMAIS et n'accuse JAMAIS réception du "oui"/"ok"/"d'accord" (INTERDIT : "j'ai bien noté votre oui", "comme vous l'avez confirmé"). Si le prospect confirme juste par un mot, réponds très brièvement sans citer sa réponse.
@@ -86,19 +86,16 @@ RÈGLES : jamais de promesse bidon ni de chiffre inventé. Susciter l'intérêt,
 Exemple ton (prix) : "Je comprends, c'est un vrai sujet. Juste pour situer : quand vous dites trop cher, c'est par rapport à un budget précis ou parce que vous n'avez pas encore vu ce que ça peut rapporter ? Je pose la question parce qu'on offre le premier mois, justement pour que vous jugiez sur les devis réels que ça génère avant de payer quoi que ce soit. Si ça ne ramène rien, vous ne perdez rien."`
 
     case 'question':
-      return `STRATÉGIE QUESTION :
-Répondre précisément à la question, avec un exemple concret du secteur couverture si possible.
-Si la question montre un intérêt fort (il veut savoir le prix, comment ça marche, combien de temps, quels résultats), profite-en pour proposer un échange rapide où tu peux lui montrer le potentiel sur SA zone.
-Si c'est une question basique/test, réponds et pose une question de suivi sur sa situation.
-Jamais de liste à puces. Jamais de réponse générique.`
+      return `STRATÉGIE QUESTION (indice croustillant + RDV) :
+RÉPONDS TOUJOURS, jamais "je reviens vers vous" ou "je vous répondrai plus tard" (interdit, ça casse tout).
+Donne UN indice CONCRET et croustillant qui répond vraiment à sa question (1-2 leviers précis adaptés à SON métier : ex. optimiser les catégories exactes de sa fiche Google, récolter des avis récents, poster régulièrement, corriger les infos NAP), assez pour montrer que tu sais de quoi tu parles et lui donner envie, MAIS garde le détail complet et le plan sur-mesure pour l'appel.
+Puis enchaîne direct sur un rappel au PLUS TÔT : "Le mieux c'est que je vous montre ça en direct sur votre fiche, 10 min. Demain matin ça vous va ?". Une seule question. Jamais de liste à puces.`
 
     case 'interest':
-      return `STRATÉGIE INTÉRÊT (warm-up intelligent) :
-L'objectif premier est de comprendre sa situation avant de proposer un RDV.
-MAIS si le prospect est clairement enthousiaste, pose des questions précises, ou donne des signaux forts d'achat (il parle de budget, de délai, demande comment ça fonctionne en détail), alors propose le RDV dans cette réponse.
-Sinon, creuse sa situation avec UNE question ouverte sur ses devis actuels, sa présence Google, ou ses frustrations avec les agences.
-Utilise ton jugement : si ça sent que le prospect est prêt, propose. Si c'est trop tôt, réchauffe encore.
-Ton : direct, humain, pas commercial.`
+      return `STRATÉGIE INTÉRÊT (indice croustillant + RDV au plus tôt) :
+Le prospect est chaud. Donne UN indice concret et alléchant sur ce qu'on améliorerait chez lui (adapté à son métier/sa ville), puis propose un rappel AU PLUS TÔT (dès demain) pour lui montrer le reste en direct.
+Ne pose pas 10 questions : un indice qui donne envie + une proposition d'appel proche. "Je peux vous rappeler dès demain 10h pour vous montrer, ça vous va ?"
+Ton : direct, humain, pas commercial. Jamais "je reviens vers vous".`
 
     case 'rdv_request':
       return `STRATÉGIE RDV DEMANDÉ :
@@ -106,7 +103,7 @@ Le prospect veut échanger / être rappelé. Réponds avec entrain mais sobremen
 C'est TOI (Gabin) qui rappelles : dis "je vous rappelle", jamais "je transmets" ni "on vous rappellera".
 NE répète PAS son numéro de téléphone (ça fait robot).
 Si un CRÉNEAU À CONFIRMER est fourni ci-dessus, confirme CE créneau précis (jour + heure), ne redemande pas de dispo.
-Sinon, propose CONCRÈTEMENT un moment : demande si "demain ou après-demain" lui convient pour que tu le rappelles. Une seule question simple, pas un pavé.`
+Sinon, propose le créneau le PLUS TÔT possible (dès demain matin), en question simple : "Est-ce que demain matin vous conviendrait pour que je vous rappelle ?". Jamais repousser à après-demain/la semaine prochaine sans raison.`
 
     case 'oof':
       return `STRATÉGIE ABSENCE :
@@ -267,7 +264,8 @@ function buildFallbackReply(params: {
     return `${greeting}\n\nParfait, je vous rappelle ${slot}. Si ce moment ne vous convient pas, dites-moi simplement un autre créneau et je m'adapte.\n\n${sig}`
   }
   if (params.classification === 'rdv_request' || params.classification === 'interest') {
-    return `${greeting}\n\nAvec plaisir. Est-ce que demain ou après-demain vous conviendrait pour que je vous rappelle et qu'on en parle quelques minutes ?\n\n${sig}`
+    return `${greeting}\n\nAvec plaisir. Est-ce que demain matin vous conviendrait pour que je vous rappelle et qu'on en parle quelques minutes ?\n\n${sig}`
   }
-  return `${greeting}\n\nMerci pour votre retour. Dites-moi ce qui vous serait utile et je reviens vers vous rapidement avec une réponse précise.\n\n${sig}`
+  // Question / autre : on donne un indice concret (jamais "je reviens vers vous") + on pousse l'appel au plus tôt.
+  return `${greeting}\n\nBonne question. En deux mots, ça se joue surtout sur votre fiche Google (les bonnes catégories, des avis récents, des posts réguliers) et un site clair côté mobile. Le mieux c'est que je vous montre ça en direct sur votre cas, 10 minutes. Demain matin ça vous va ?\n\n${sig}`
 }

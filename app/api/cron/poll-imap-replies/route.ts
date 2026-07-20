@@ -190,16 +190,28 @@ async function processBox(box: { email: string; password: string }, started: num
           continue
         }
 
-        // Ne traiter QUE les réponses de VRAIS prospects (contact en base) → filtre le warmup.
+        // Ne traiter QUE les réponses de VRAIS prospects → filtre le warmup. MAIS un prospect
+        // répond parfois depuis une AUTRE adresse que celle qu'on a contactée (perso, alias...).
+        // Si l'expéditeur est inconnu mais que le SUJET correspond à un email qu'on a réellement
+        // ENVOYÉ (email_queue), c'est une vraie réponse depuis une autre adresse → on la relie au
+        // bon contact au lieu de la jeter (sinon lead chaud perdu en silence — cas BJM).
         const known = (await sql`SELECT 1 FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Array<unknown>
-        if (known.length === 0) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+        let contactHint: string | undefined
+        if (known.length === 0) {
+          const baseSubject = subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim()
+          if (baseSubject.length > 8) {
+            const m = (await sql`SELECT contact_id FROM email_queue WHERE LOWER(subject) = LOWER(${baseSubject}) AND status = 'sent' AND contact_id IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ contact_id: string }>
+            if (m[0]?.contact_id) contactHint = m[0].contact_id
+          }
+          if (!contactHint) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+        }
 
         const body = await fetchBody()
         await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
         stats.processed++
 
         try {
-          const outcome = await processReply({ from, subject, body, messageId, boxEmail: box.email, results })
+          const outcome = await processReply({ from, subject, body, messageId, boxEmail: box.email, results, contactHint })
           if (outcome?.processed) {
             stats.replies++
             if (outcome.classification && outcome.classification !== 'oof') {
@@ -220,9 +232,9 @@ async function processBox(box: { email: string; password: string }, started: num
 
 // ── Pipeline de traitement d'une nouvelle réponse (classification → action) ──
 async function processReply(params: {
-  from: string; subject: string; body: string; messageId: string; boxEmail: string; results: string[]
+  from: string; subject: string; body: string; messageId: string; boxEmail: string; results: string[]; contactHint?: string
 }): Promise<{ processed: boolean; classification?: string } | null> {
-  const { from, subject, body, messageId, results } = params
+  const { from, subject, body, messageId, results, contactHint } = params
   const { classifyReply, stripQuotedReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
 
@@ -231,12 +243,15 @@ async function processReply(params: {
   const seen = (await sql`SELECT id FROM incoming_replies WHERE instantly_reply_id = ${dedupKey} LIMIT 1`) as Array<{ id: string }>
   if (seen.length > 0) return null
 
-  // Contact (par email) — sinon création minimale.
+  // Contact : par contactHint (réponse depuis une autre adresse, résolue par le sujet) sinon par email.
   type Contact = { id: string; email: string; name: string | null; company: string | null; city: string | null; sector: string | null; phone: string | null }
-  const contactRows = (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Contact[]
+  const contactRows = contactHint
+    ? (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE id = ${contactHint} LIMIT 1`) as Contact[]
+    : (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Contact[]
   let contact: Contact | undefined = contactRows[0]
+  if (contactHint && contact) results.push(`↪ réponse depuis autre adresse (${from}) reliée à ${contact.company ?? contact.email}`)
 
-  if (!contact && from.includes('@')) {
+  if (!contact && !contactHint && from.includes('@')) {
     const created = (await sql`
       INSERT INTO contacts (email, company, sector, source)
       VALUES (${from}, ${from.split('@')[1]?.split('.')[0] ?? 'Inconnu'}, 'inconnu', 'reply_auto')
@@ -389,7 +404,8 @@ async function processReply(params: {
   }
 
   // Vraie conversation (intérêt/question/objection/RDV) → on stoppe les relances froides.
-  if (contact?.id && classification.classification !== 'oof') await cancelSteps(from)
+  // On annule par l'email du CONTACT (pas `from`, qui peut être une adresse alternative).
+  if (contact?.id && classification.classification !== 'oof') await cancelSteps(contact.email)
 
   // ── RDV : logique PROPOSER → CONFIRMER (jamais caler une date non acceptée) ──
   // On ne cale JAMAIS un RDV que le prospect n'a pas accepté. L'agent PROPOSE un créneau précis
@@ -416,7 +432,10 @@ async function processReply(params: {
     try {
       const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
       availabilityCfg = await getAvailability()
-      parsedDate = rawExtracted ? parseExtractedDate(rawExtracted) : null
+      // Date voulue : d'abord l'extraction du classifieur, sinon on parse DIRECTEMENT le corps du
+      // message (le classifieur rate parfois "demain avant-midi" → il faut quand même caler au bon
+      // moment). Le créneau retenu est TOUJOURS le plus tôt disponible à partir de là.
+      parsedDate = (rawExtracted ? parseExtractedDate(rawExtracted) : null) ?? parseExtractedDate(cleanBody)
       candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg)
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
@@ -738,7 +757,7 @@ function parseExtractedDate(dateStr: string): Date | null {
     if (hm) { d.setHours(parseInt(hm[1]), parseInt(hm[2] || '0'), 0, 0); return }
     if (/fin de journ[ée]e|fin d'?apr[èe]s-?midi|ce soir|en soir[ée]e/.test(lower)) { d.setHours(17, 0, 0, 0); return }
     if (/d[ée]but d'?apr[èe]s-?midi|d[ée]but apr[èe]s-?midi/.test(lower)) { d.setHours(14, 0, 0, 0); return }
-    if (/matin|matin[ée]e/.test(lower)) { d.setHours(9, 30, 0, 0); return }
+    if (/matin|matin[ée]e|avant[- ]?midi|dans la matin/.test(lower)) { d.setHours(9, 30, 0, 0); return }
     if (/apr[èe]s-?midi/.test(lower)) { d.setHours(15, 0, 0, 0); return }
     if (/midi/.test(lower)) { d.setHours(12, 0, 0, 0); return }
     d.setHours(17, 0, 0, 0)
