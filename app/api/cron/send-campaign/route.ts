@@ -116,7 +116,10 @@ export async function GET(req: NextRequest) {
             )
           )
           -- ANTI-BOUNCE : si MillionVerifier est actif, on n'envoie QU'aux emails validés.
-          AND (c.email_validated IS TRUE OR ${!requireValidated})
+          -- EXCEPTION : les relances de CONVERSATION (step >= 20) visent des gens qui ont DÉJÀ
+          -- RÉPONDU → leur email est prouvé livrable. Les bloquer sur le gate MV faisait qu'un lead
+          -- chaud silencieux n'était jamais relancé (relance restait 'queued' à vie). On les exempte.
+          AND (eq.sequence_step >= 20 OR c.email_validated IS TRUE OR ${!requireValidated})
           -- OPT-OUT / BOUNCE : jamais à une adresse ou un domaine blocklisté.
           AND NOT EXISTS (
             SELECT 1 FROM blocklist b
