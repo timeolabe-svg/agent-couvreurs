@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { rdv, contacts } = await import('@/lib/db/schema')
-  const { eq, and, gte, lte } = await import('drizzle-orm')
+  const { eq, and, gte, lte, ne } = await import('drizzle-orm')
 
   const { searchParams } = new URL(request.url)
   const status = searchParams.get('status')
@@ -64,7 +64,10 @@ export async function GET(request: NextRequest) {
   const to = searchParams.get('to')
 
   const conditions = []
+  // Les RDV 'proposed' (créneau proposé mais PAS encore accepté par le prospect) ne sont pas de
+  // vrais RDV → exclus de l'agenda par défaut (sauf si on les demande explicitement via ?status=).
   if (status) conditions.push(eq(rdv.status, status))
+  else conditions.push(ne(rdv.status, 'proposed'))
   if (from) conditions.push(gte(rdv.scheduled_at, new Date(from)))
   if (to) conditions.push(lte(rdv.scheduled_at, new Date(to)))
 

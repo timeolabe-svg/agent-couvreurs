@@ -169,11 +169,11 @@ ${examples.map((e, i) => `Exemple ${i + 1} :\nMessage reçu : "${e.question.slic
 
   // Si un créneau a été réservé, l'agent doit le CONFIRMER précisément (pas redemander)
   const slotBlock = params.proposedSlot
-    ? `\n=== CRÉNEAU À CONFIRMER ===
-Un créneau a été réservé pour ce prospect : ${params.proposedSlot}.
-Confirme CE créneau précis dans ta réponse, en TON nom (ex: "Parfait, je vous rappelle ${params.proposedSlot}.").
-NE répète PAS son numéro de téléphone (il le connaît, ça fait robot). NE dis pas "je transmets".
-Laisse une porte de sortie courte ("si ça ne vous convient pas, dites-moi un autre moment"). Ne redemande PAS une disponibilité ouverte puisque le créneau est posé.`
+    ? `\n=== CRÉNEAU À PROPOSER (le prospect n'a PAS encore accepté) ===
+Propose CE créneau précis comme une simple question OUI/NON, en TON nom. NE dis PAS qu'il est déjà
+réservé/calé (il ne l'est pas tant qu'il n'a pas dit oui).
+Exemple de formulation : "Est-ce que ${params.proposedSlot} vous conviendrait pour que je vous rappelle ? Si oui je bloque ce créneau, sinon dites-moi un autre moment."
+Reste TRÈS court (2-3 lignes). NE répète PAS son numéro de téléphone. NE dis pas "je transmets".`
     : ''
 
   const antiRepeatBlock = `

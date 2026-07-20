@@ -385,38 +385,73 @@ async function processReply(params: {
   // Vraie conversation (intérêt/question/objection/RDV) → on stoppe les relances froides.
   if (contact?.id && classification.classification !== 'oof') await cancelSteps(from)
 
-  // ── RDV : calcule le créneau AVANT de rédiger ──
+  // ── RDV : logique PROPOSER → CONFIRMER (jamais caler une date non acceptée) ──
+  // On ne cale JAMAIS un RDV que le prospect n'a pas accepté. L'agent PROPOSE un créneau précis
+  // ("mardi 15h ça vous va ?") → le RDV reste 'proposed' (invisible côté agenda/stats). Il ne passe
+  // 'confirmed' (+ notif client) QUE quand le prospect dit oui, OU donne lui-même une date précise.
   const isRdv = classification.classification === 'rdv_request'
-  const extractedDate = (classification as { extractedDate?: string }).extractedDate
+  const rawExtracted = (classification as { extractedDate?: string }).extractedDate
   const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
   const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
 
-  // RDV déjà calé ? → on ne re-propose rien, on confirme juste (et on saute les "oui/ok").
+  // RDV DÉJÀ CALÉ (confirmé) = job terminé → l'agent n'envoie plus rien (l'humain gère).
   const existRdv = contact?.id ? (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }> : []
-  const existRdvAt = existRdv[0]?.scheduled_at ? new Date(existRdv[0].scheduled_at) : null
-  const existingRdvSlot = existRdvAt ? existRdvAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + existRdvAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : undefined
-  // RDV DÉJÀ CALÉ = job terminé sur ce lead → l'agent n'envoie plus rien (l'humain gère).
-  if (existingRdvSlot) {
+  if (existRdv[0]?.scheduled_at) {
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'no_action_rdv_deja_cale', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
   }
 
+  // Créneau candidat (dispo + éventuelle date donnée par le prospect).
   let availabilityCfg: Awaited<ReturnType<typeof import('@/lib/availability').getAvailability>> | null = null
   let parsedDate: Date | null = null
-  let scheduledDate: Date | null = null
-  let proposedSlotStr: string | undefined
-
-  if (isRdv && !existingRdvSlot) {
+  let candidateSlot: Date | null = null
+  let candidateSlotStr: string | undefined
+  if (isRdv) {
     try {
       const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
       availabilityCfg = await getAvailability()
-      parsedDate = extractedDate ? parseExtractedDate(extractedDate) : null
-      scheduledDate = findNextAvailableSlot(parsedDate, availabilityCfg)
-      proposedSlotStr =
-        scheduledDate.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) +
-        ' à ' + scheduledDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      parsedDate = rawExtracted ? parseExtractedDate(rawExtracted) : null
+      candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg)
+      candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
       results.push(`calcul créneau échoué: ${String(e).slice(0, 60)}`)
+    }
+  }
+
+  // RDV déjà PROPOSÉ (en attente du oui/non du prospect) ?
+  const propRows = contact?.id ? (await sql`SELECT id, scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'proposed' ORDER BY created_at DESC LIMIT 1`) as Array<{ id: string; scheduled_at: string }> : []
+  const proposedExisting = propRows[0]
+
+  let confirmSlotStr: string | undefined // créneau qu'on VIENT de caler → l'agent confirme brièvement
+  let proposeSlotStr: string | undefined // créneau à PROPOSER (question oui/non)
+  let confirmedAt: Date | null = null    // date réelle du RDV calé (pour la notif client)
+  let bookedNow = false                  // on vient de passer 'confirmed' → notif client
+
+  if (proposedExisting) {
+    if (parsedDate && candidateSlot) {
+      // Le prospect donne une AUTRE date précise → accord sur cette date → on cale.
+      await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()}, status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
+      confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
+    } else if (isAffirmativeConfirmation(cleanBody)) {
+      // "oui / ok / parfait" en réponse au créneau proposé → on cale AU créneau proposé.
+      await sql`UPDATE rdv SET status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
+      confirmedAt = new Date(proposedExisting.scheduled_at); confirmSlotStr = fmtSlot(confirmedAt); bookedNow = true
+    } else if (candidateSlot) {
+      // Ni oui clair, ni date : refus / question / autre → on RE-propose un créneau (met à jour le proposé).
+      await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()} WHERE id = ${proposedExisting.id}`
+      proposeSlotStr = candidateSlotStr
+    }
+  } else if (isRdv && availabilityCfg && candidateSlot && contact?.id) {
+    if (parsedDate) {
+      // Le prospect a donné LUI-MÊME une date précise → accord → on cale directement.
+      await sql`INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, notes)
+        VALUES (${contact.id}, ${incomingReplyId}, ${candidateSlot.toISOString()}, ${availabilityCfg.slotDurationMin || 30}, 'confirmed', ${'RDV — créneau donné par le prospect.'})`
+      confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
+    } else {
+      // Aucune date donnée → on PROPOSE un créneau (status 'proposed'), on NE cale PAS, aucune notif.
+      await sql`INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, notes)
+        VALUES (${contact.id}, ${incomingReplyId}, ${candidateSlot.toISOString()}, ${availabilityCfg.slotDurationMin || 30}, 'proposed', ${'Créneau proposé, en attente de confirmation du prospect.'})`
+      proposeSlotStr = candidateSlotStr
     }
   }
 
@@ -438,69 +473,29 @@ async function processReply(params: {
     contactCity: contact?.city ?? '',
     contactSector: contact?.sector ?? undefined,
     conversationHistory: history,
-    proposedSlot: proposedSlotStr,
+    proposedSlot: proposeSlotStr,     // créneau à PROPOSER en oui/non (pas encore accepté)
+    existingRdvSlot: confirmSlotStr,  // créneau qu'on vient de CALER → confirmation brève
     contactPhone: isRdv ? contactPhone : undefined,
     fromEmail: ownerBox,
-    existingRdvSlot,
   })
 
-  // ── RDV auto-booking (Google Calendar + facturation Stripe) ──
+  // Notif client UNIQUEMENT quand un RDV vient d'être réellement CALÉ (pas sur une simple proposition).
   let rdvHandled = false
-  // ANTI-DOUBLON RDV : un seul RDV confirmé par contact (jamais 2 pour le même prospect).
-  const existingRdv = contact?.id
-    ? (await sql`SELECT id FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' LIMIT 1`) as Array<{ id: string }>
-    : []
-  if (existingRdv.length > 0) rdvHandled = true
-  if (isRdv && scheduledDate && availabilityCfg && existingRdv.length === 0) {
-    const availability = availabilityCfg
+  if (bookedNow && confirmSlotStr) {
     try {
       const exchangeSummary = buildExchangeSummary({
         originalEmailBody, replyBody: cleanBody, draftBody,
         contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
       })
-
-      // Google Calendar retiré : le RDV vit dans l'agenda du logiciel + notif email.
-      const googleEventId: string | null = null
-      const googleMeetLink: string | null = null
-      const calendarEventUrl: string | null = null
-
-      const slotNote = parsedDate && scheduledDate.getTime() !== parsedDate.getTime()
-        ? `Date demandée : "${extractedDate}" → ajustée au prochain créneau disponible.`
-        : extractedDate ? `Date extraite : "${extractedDate}".` : 'Aucune date précisée — prochain créneau disponible sélectionné.'
-
-      const insertedRdv = (await sql`
-        INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, google_event_id, google_meet_link, notes)
-        VALUES (${contact?.id ?? null}, ${incomingReplyId}, ${scheduledDate.toISOString()}, ${availability.slotDurationMin || 30}, 'confirmed', ${googleEventId}, ${googleMeetLink}, ${`RDV demandé par le prospect. ${slotNote}`})
-        RETURNING id
-      `) as Array<{ id: string }>
-
-      // Facturation UNIQUEMENT si un vrai event Google a été calé (idempotence = id RDV).
-      if (process.env.STRIPE_SECRET_KEY && insertedRdv[0]?.id && googleEventId) {
-        try {
-          const { stripe } = await import('@/lib/stripe')
-          const cust = (await sql`SELECT value FROM agent_config WHERE key = 'stripe_customer_id'`) as Array<{ value: string }>
-          const pm = (await sql`SELECT value FROM agent_config WHERE key = 'stripe_payment_method_id'`) as Array<{ value: string }>
-          if (cust[0]?.value && pm[0]?.value) {
-            await stripe.paymentIntents.create({
-              amount: 5000, currency: 'eur', customer: cust[0].value, payment_method: pm[0].value,
-              confirm: true, off_session: true,
-              description: `RDV Hdigiweb auto — ${contact?.company ?? from} — ${scheduledDate.toLocaleDateString('fr-FR')}`,
-              metadata: { rdv_id: insertedRdv[0].id, contact_company: contact?.company ?? from },
-            }, { idempotencyKey: `rdv-charge-${insertedRdv[0].id}` })
-          }
-        } catch (stripeErr) {
-          results.push(`Stripe charge failed: ${String(stripeErr).slice(0, 60)}`)
-        }
-      }
-
       await sendRdvNotificationEmail({
         contactName: contact?.name ?? from, contactCompany: contact?.company ?? from,
-        scheduledAt: scheduledDate, googleMeetLink, calendarEventUrl, exchangeSummary,
+        scheduledAt: confirmedAt ?? new Date(), googleMeetLink: null, calendarEventUrl: null, exchangeSummary,
         conversationUrl: `${BASE_URL}/conversations?contact=${contact?.id ?? ''}`,
       })
       rdvHandled = true
     } catch (rdvErr) {
-      results.push(`RDV auto-booking failed: ${String(rdvErr).slice(0, 60)}`)
+      results.push(`RDV notif failed: ${String(rdvErr).slice(0, 60)}`)
+      rdvHandled = true // le RDV est calé même si la notif échoue
     }
   }
 
@@ -765,6 +760,21 @@ function parseExtractedDate(dateStr: string): Date | null {
     }
   }
   return null
+}
+
+// Formate un créneau en français lisible ("mardi 21 juillet à 12:00").
+function fmtSlot(d: Date): string {
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+    + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+// Le prospect confirme-t-il un créneau proposé ? ("oui", "ok", "parfait", "ça marche"...).
+// Message COURT + marqueur positif + AUCUN marqueur négatif ("non", "pas", "plutôt", "annul").
+function isAffirmativeConfirmation(text: string): boolean {
+  const t = (text || '').trim().toLowerCase()
+  if (!t || t.length > 140) return false
+  if (/\b(non|pas|plut[oô]t|impossible|ne peux|ne pourrai|annul|autre (jour|moment|cr[ée]neau)|d[ée]cal)/.test(t)) return false
+  return /\b(oui|ouais|ok|okay|d'?accord|parfait|nickel|impec(cable)?|ça marche|ca marche|ça me va|ca me va|ça (me )?convient|ca (me )?convient|c'?est bon|c'?est parfait|tr[eè]s bien|volontiers|avec plaisir|je confirme|convient|top|banco|allons-?y|allez-?y|entendu|ça roule|ca roule)\b/.test(t)
 }
 
 function buildExchangeSummary(params: {
