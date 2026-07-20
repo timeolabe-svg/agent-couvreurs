@@ -24,6 +24,23 @@ export async function GET(req: Request) {
     }
   }
 
+  // ?audit=1 → réponses classées auto_reply MAIS sans aucun brouillon (auto-réponse jamais créée)
+  if (new URL(req.url).searchParams.get('audit')) {
+    try {
+      const byAction = (await sql`SELECT action_taken, count(*)::int AS n FROM incoming_replies GROUP BY action_taken ORDER BY n DESC`) as Array<Record<string, unknown>>
+      const orphans = (await sql`
+        SELECT ir.id, ir.from_email, ir.classification, ir.action_taken, ir.created_at
+        FROM incoming_replies ir
+        LEFT JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
+        WHERE ir.action_taken IN ('auto_reply','draft_for_validation') AND rd.id IS NULL
+        ORDER BY ir.created_at DESC LIMIT 50
+      `) as Array<Record<string, unknown>>
+      return NextResponse.json({ by_action: byAction, orphans_sans_brouillon: orphans.length, orphans })
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
   const email = new URL(req.url).searchParams.get('email')
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
