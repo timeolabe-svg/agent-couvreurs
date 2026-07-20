@@ -149,7 +149,10 @@ async function processBox(box: { email: string; password: string }, started: num
       // (marquée "lue") était ratée par seen:false. Dédup par Message-ID + filtre "vrai contact"
       // (le warmup vient d'adresses tierces → ignoré sans coût IA).
       const found = await client.search({ since })
-      const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX)
+      // Du PLUS RÉCENT au plus ancien : une vraie réponse récente (ex. BJM) doit être traitée AVANT
+      // que le budget temps (30s cron / 6s par boîte) ne coupe. Avant, on traitait les vieux d'abord
+      // et on timeoutait avant d'atteindre les messages récents → réponse jamais lue.
+      const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX).reverse()
       results.push(`[${box.email}] ${uids.length} messages récents`)
 
       for (const uid of uids) {
