@@ -27,7 +27,7 @@ export const maxDuration = 60
 
 const GLOBAL_DEADLINE_MS = 23_000 // cron-job.org (gratuit) coupe à 30s → on répond AVANT (23s + 6s/boîte max ≈ 29s)
 const PER_BOX_TIMEOUT_MS = 6_000
-const MAX_MSGS_PER_BOX = 70   // large : le warmup remplit la boîte, il faut voir au-delà des non-lus (relevé avec la fenêtre 72h)
+const MAX_MSGS_PER_BOX = 180  // le warmup remplit vite la boîte : à 70, une vraie réponse un peu ancienne (ex. répondue tôt puis noyée sous le warmup) sortait de la fenêtre et n'était jamais lue. On élargit.
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
 const CLIENT_NOTIFY_EMAIL = (process.env.CLIENT_NOTIFY_EMAIL ?? 'contact@hdigiweb.fr')
