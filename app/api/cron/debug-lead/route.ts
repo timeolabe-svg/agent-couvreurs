@@ -13,6 +13,17 @@ export async function GET(req: Request) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
   sql = (await import('@/lib/db')).sql
+  // ?cols=table → dump des colonnes réelles en prod (détection de dérive de schéma)
+  const colsTable = new URL(req.url).searchParams.get('cols')
+  if (colsTable) {
+    try {
+      const cols = (await sql`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ${colsTable} ORDER BY ordinal_position`) as Array<Record<string, unknown>>
+      return NextResponse.json({ table: colsTable, columns: cols })
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
   const email = new URL(req.url).searchParams.get('email')
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
