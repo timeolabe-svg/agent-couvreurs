@@ -11,9 +11,9 @@ export const maxDuration = 60
 // contact. L'envoi (autopilot-tick) n'enverra QUE des contacts audités → chaque
 // mail pourra attaquer un vrai défaut au lieu d'être générique.
 
-const BATCH = 8              // contacts audités par passage
-const PER_SITE_TIMEOUT = 8000 // ms max par site (garde-fou anti-timeout)
-const TIME_BUDGET_MS = 50000  // budget total (marge sous maxDuration 60s)
+const BATCH = 5              // contacts audités par passage (réduit : par-site plus long ci-dessous)
+const PER_SITE_TIMEOUT = 12000 // ms max par site : > pire cas interne de auditWebsite (fetch 2×5s // checkSSL 2×5s ≈ 10s), sinon la course coupe un audit sain et fabrique un faux défaut
+const TIME_BUDGET_MS = 45000  // budget total (marge sous maxDuration 60s : 45s + 1 site 12s = 57s)
 
 export async function GET(req: Request) {
   const cronAuth = checkCronAuth(req)
@@ -62,22 +62,25 @@ export async function GET(req: Request) {
         audited++
         if (samples.length < 8) samples.push(`${c.company} → ${audit.level} (${audit.weaknesses.length} défauts)`)
       } else {
-        // Timeout dur : site trop lent → on marque audité (défaut = lenteur) pour ne pas reboucler
+        // Timeout dur : on n'a PAS pu auditer → JAMAIS inventer un défaut accusatoire (incident
+        // 2L2P). On marque audité pour ne pas reboucler, avec un niveau NEUTRE et AUCUNE faiblesse
+        // (aligné sur le fail-open de auditWebsite quand le HTML est injoignable) → l'email
+        // n'accusera de rien, il partira sur l'offre sans prétendre que le site est mauvais.
         await db.update(contacts).set({
-          audit_score: 15,
-          audit_level: 'abandoned',
-          audit_weaknesses: ['site très lent ou inaccessible'],
+          audit_score: 50,
+          audit_level: 'outdated',
+          audit_weaknesses: [],
           audit_done: true,
           updated_at: new Date(),
         }).where(eq(contacts.id, c.id))
         failed++
       }
     } catch (err) {
-      // On marque quand même audité pour ne pas bloquer la file indéfiniment.
+      // Exception (souvent DB, pas le site) → même règle : niveau neutre, aucune faiblesse inventée.
       await db.update(contacts).set({
         audit_done: true,
-        audit_level: 'abandoned',
-        audit_weaknesses: ['audit indisponible'],
+        audit_level: 'outdated',
+        audit_weaknesses: [],
         updated_at: new Date(),
       }).where(eq(contacts.id, c.id))
       failed++

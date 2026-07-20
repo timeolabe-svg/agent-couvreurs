@@ -126,6 +126,7 @@ export async function GET() {
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayEnd = new Date(todayStart); todayEnd.setDate(todayStart.getDate() + 1) // borne haute "aujourd'hui" (demain 00:00)
 
   // This week Mon..Sun
   const day = now.getDay()
@@ -179,7 +180,7 @@ export async function GET() {
       gte(incoming_replies.created_at, todayStart),
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
     )),
-    db.select({ rdvToday: count() }).from(rdv).where(gte(rdv.scheduled_at, todayStart)),
+    db.select({ rdvToday: count() }).from(rdv).where(and(gte(rdv.scheduled_at, todayStart), sql`${rdv.scheduled_at} < ${todayEnd}`)),
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
     db.select({ rdvThisMonth: count() }).from(rdv).where(gte(rdv.created_at, monthStart)),
@@ -350,11 +351,23 @@ export async function GET() {
         .from(rdv)
         .where(and(eq((rdv as typeof rdv & { campaign_id?: unknown }).campaign_id as Parameters<typeof eq>[0], c.id), gte(rdv.created_at, monthStart)))
         .catch(() => [{ rdvCnt: 0 }])
-      const [{ repliesCnt }] = await db
-        .select({ repliesCnt: count() })
+      // TAUX DE RÉPONSE de CETTE campagne (avant : numérateur = TOUTES les réponses du mois, non
+      // filtré campagne ni spam → taux > 100% aberrant). Numérateur = PERSONNES distinctes ayant
+      // répondu parmi les contacts de la campagne (hors spam/oof) ; dénominateur = contacts
+      // distincts réellement contactés ce mois. Cap 100% par sécurité.
+      const [{ repliedPersons }] = await db
+        .select({ repliedPersons: sql<number>`count(distinct lower(${incoming_replies.from_email}))::int` })
         .from(incoming_replies)
-        .where(gte(incoming_replies.created_at, monthStart))
-      const rr = sentThisMonth > 0 ? +((repliesCnt / sentThisMonth) * 100).toFixed(1) : 0
+        .where(and(
+          gte(incoming_replies.created_at, monthStart),
+          or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
+          sql`EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = ${incoming_replies.contact_id} AND eq.campaign_id = ${c.id} AND eq.status = 'sent')`,
+        ))
+      const [{ sentContacts }] = await db
+        .select({ sentContacts: sql<number>`count(distinct ${email_queue.contact_id})::int` })
+        .from(email_queue)
+        .where(and(eq(email_queue.campaign_id, c.id), eq(email_queue.status, 'sent'), gte(email_queue.sent_at, monthStart)))
+      const rr = sentContacts > 0 ? Math.min(100, +((repliedPersons / sentContacts) * 100).toFixed(1)) : 0
       return {
         name: c.name,
         sentThisMonth,

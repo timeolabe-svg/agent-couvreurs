@@ -132,6 +132,14 @@ export function findNextAvailableSlot(
     return d
   })()
 
+  // ⚠️ JAMAIS un créneau dans le passé. Un prospect qui écrit à 17h "rappelez-moi cet après-midi"
+  // donnait un preferredDate = aujourd'hui 15h (déjà passé) → RDV périmé, notif absurde, réponse
+  // qui confirme un appel déjà dépassé. On borne le point de départ à maintenant + 1h (marge de
+  // rappel réaliste) ; la recherche de créneau ci-dessous avance ensuite vers le prochain slot valide.
+  const floor = toParisWallClock()
+  floor.setHours(floor.getHours() + 1, 0, 0, 0)
+  if (candidate.getTime() < floor.getTime()) candidate.setTime(floor.getTime())
+
   // Zero out seconds/ms
   candidate.setSeconds(0, 0)
 

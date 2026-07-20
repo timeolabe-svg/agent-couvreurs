@@ -128,6 +128,15 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM email_queue s
             WHERE s.contact_id = eq.contact_id AND s.sequence_step = eq.sequence_step AND s.status = 'sent'
           )
+          -- ANTI-DOUBLON INTRA-RUN : si DEUX lignes 'queued' existent pour le même (contact, étape)
+          -- (double enqueue / backfill / requeue), aucune n'est encore 'sent' → sans ce garde les
+          -- deux seraient réclamées dans le même lot et envoyées. On ne garde que la plus ancienne
+          -- (id min) ; sa jumelle est ignorée (elle finira annulée/écrasée en aval).
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue s3
+            WHERE s3.contact_id = eq.contact_id AND s3.sequence_step = eq.sequence_step
+              AND s3.status = 'queued' AND s3.id < eq.id
+          )
           -- PLAFOND À VIE : jamais plus de 4 mails envoyés à un même contact.
           AND (
             SELECT COUNT(*) FROM email_queue s2
@@ -135,6 +144,11 @@ export async function GET(req: NextRequest) {
           ) < ${LIFETIME_CAP_PER_CONTACT}
         ORDER BY eq.scheduled_at ASC
         LIMIT ${limit}
+        -- VERROU DE FILE (anti-double-envoi entre runs concurrents) : chaque ligne 'queued' est
+        -- verrouillée le temps du claim ; un run parallèle SKIP LOCKED la saute au lieu de la
+        -- réclamer aussi. Sans ça, deux runs (cron qui se chevauche / rejeu après timeout) peuvent
+        -- sélectionner le MÊME lot puis l'envoyer chacun → double envoi (l'incident des 130 mails).
+        FOR UPDATE OF eq SKIP LOCKED
       )
       RETURNING id, subject, body, sequence_step, campaign_id, contact_id, from_email
     `) as ClaimedRow[]

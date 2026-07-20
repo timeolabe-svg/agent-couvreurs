@@ -129,6 +129,40 @@ Pour ne plus recevoir mes emails, répondez simplement "Stop".`,
   },
 ]
 
+// ⚠️ REPLI NEUTRE, ADAPTÉ AU SECTEUR — à utiliser quand la génération IA échoue.
+// Les templates EMAIL_SEQUENCE ci-dessus sont HARDCODÉS COUVREUR (toiture, démoussage, "+11 devis
+// à Nîmes", "70%"...). Les envoyer à un pisciniste/terrassier/maçon = faux métier + chiffres
+// inventés = faute grave. Ce repli n'emploie AUCUN chiffre fabriqué et adapte le vocabulaire au
+// métier réel du lead (sector), tout en gardant l'offre "1er mois offert".
+export function buildNeutralSequenceEmail(
+  step: number,
+  vars: { firstName?: string; city?: string; sector?: string; fromEmail?: string; fromName?: string },
+): { subject: string; body: string } {
+  const metier = (vars.sector && vars.sector.trim() && vars.sector !== 'inconnu') ? vars.sector.trim() : 'artisan'
+  const ville = vars.city?.trim() || 'votre secteur'
+  const hi = vars.firstName?.trim() ? `Bonjour ${vars.firstName.trim()},` : 'Bonjour,'
+  const sig = `Bien à vous,\n\n${vars.fromName || 'Gabin'}\nHdigiweb\n${vars.fromEmail || 'contact@hdigiweb.fr'}\n---\nPour ne plus recevoir mes emails, répondez simplement "Stop".`
+  const bodies: Record<number, { subject: string; body: string }> = {
+    0: {
+      subject: `Plus de demandes de devis pour votre activité de ${metier} ?`,
+      body: `${hi}\n\nQuand un client cherche un ${metier} sur ${ville}, il passe presque toujours par Google, et ce sont souvent les mêmes entreprises qui ressortent en haut. Si vous n'en faites pas partie, ces demandes de devis partent ailleurs.\n\nC'est exactement ce qu'on aide à corriger. Le premier mois est offert, sans engagement, pour que vous jugiez sur les résultats avant de payer quoi que ce soit.\n\nÇa vous dirait d'en parler quelques minutes ?\n\n${sig}`,
+    },
+    1: {
+      subject: `Être mieux visible sur "${metier} ${ville}"`,
+      body: `${hi}\n\nJe reviens vers vous. L'idée est simple : vous rendre plus visible quand quelqu'un cherche un ${metier} sur ${ville}, pour capter les demandes de devis qui passent aujourd'hui à côté.\n\nLe premier mois est offert, vous ne payez que si ça vous convainc. Un créneau en début ou en fin de semaine pour en discuter ?\n\n${sig}`,
+    },
+    2: {
+      subject: `Votre métier se voit sur le terrain, pas encore sur Google`,
+      body: `${hi}\n\nBeaucoup d'artisans sont très bons sur le terrain mais peu visibles en ligne, du coup les demandes partent chez d'autres. C'est précisément ce sur quoi on travaille pour les ${metier}s.\n\nPremier mois offert pour tester sur ${ville}, sans engagement. Vous voulez qu'on en parle ?\n\n${sig}`,
+    },
+    3: {
+      subject: `Dernier message`,
+      body: `${hi}\n\nJe ne vais pas vous relancer davantage. Si vous voulez tester sans risque, le premier mois reste offert et sans engagement : vous ne payez que si les résultats vous conviennent.\n\nUn mot de votre part et on lance ça.\n\n${sig}`,
+    },
+  }
+  return bodies[step] ?? bodies[0]
+}
+
 // Helpers
 export function getSequenceStep(step: number): SequenceEmail | undefined {
   return EMAIL_SEQUENCE.find(s => s.step === step && s.active)

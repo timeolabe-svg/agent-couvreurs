@@ -12,8 +12,12 @@ export const maxDuration = 60
 //  - 'unknown'/'error'/MV indispo       → on laisse (re-tenté au prochain passage)
 // L'envoi (autopilot-tick) n'enverra QUE les contacts email_validated=true.
 
-const BATCH = 15
-const TIME_BUDGET_MS = 50000
+// cron-job.org COUPE à 30s (pas 60s comme Vercel). Chaque email = 1 appel MillionVerifier
+// (~3-5s, timeout 12s) EN SÉRIE → un lot de 15 visant 50s se faisait couper à 30s et l'endpoint
+// ne renvoyait jamais son 200 (échec cron systématique). On plafonne à 5/run sous ~22s ; le cron
+// 30 min écoule la file au fil de l'eau.
+const BATCH = 5
+const TIME_BUDGET_MS = 22000
 
 export async function GET(req: Request) {
   const cronAuth = checkCronAuth(req)

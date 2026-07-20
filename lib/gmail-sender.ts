@@ -60,6 +60,12 @@ function buildTransport(box: GmailBox) {
     port: 465,
     secure: true,
     auth: { user: box.email, pass: box.password.replace(/\s+/g, '') },
+    // TIMEOUTS EXPLICITES : sans ça, les défauts nodemailer se comptent en minutes → une seule
+    // boîte Gmail qui pend pouvait faire sauter le budget 30s du cron (send-campaign / poll Partie A)
+    // et tronquer tout le run. On borne chaque phase pour échouer vite et passer à la boîte suivante.
+    connectionTimeout: 8000,
+    greetingTimeout: 6000,
+    socketTimeout: 10000,
   })
 }
 

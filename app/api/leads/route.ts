@@ -20,8 +20,8 @@ export async function GET(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts } = await import('@/lib/db/schema')
-  const { eq, ilike, or, and, sql } = await import('drizzle-orm')
+  const { contacts, rdv, incoming_replies, email_queue } = await import('@/lib/db/schema')
+  const { eq, ilike, or, and, sql, inArray } = await import('drizzle-orm')
 
   // Build conditions array — avoids WHERE overwrite bug
   const conditions = []
@@ -48,6 +48,23 @@ export async function GET(request: NextRequest) {
 
   const total = countResult[0]?.count ?? 0
 
+  // STAGE RÉEL par lead (avant : 'contacted' figé pour TOUT le monde → incohérent avec l'agenda
+  // qui montrait un RDV). On calcule en 3 requêtes groupées sur les leads de la page :
+  // RDV calé > a répondu > contacté (mail envoyé) > prospecté.
+  const ids = rows.map(r => r.id)
+  const [rdvRows, repliedRows, sentRows] = ids.length > 0
+    ? await Promise.all([
+        db.select({ id: rdv.contact_id }).from(rdv).where(and(inArray(rdv.contact_id, ids), eq(rdv.status, 'confirmed'))),
+        db.selectDistinct({ id: incoming_replies.contact_id }).from(incoming_replies).where(inArray(incoming_replies.contact_id, ids)),
+        db.selectDistinct({ id: email_queue.contact_id }).from(email_queue).where(and(inArray(email_queue.contact_id, ids), eq(email_queue.status, 'sent'))),
+      ])
+    : [[], [], []]
+  const rdvSet = new Set(rdvRows.map(r => r.id).filter(Boolean))
+  const repliedSet = new Set(repliedRows.map(r => r.id).filter(Boolean))
+  const sentSet = new Set(sentRows.map(r => r.id).filter(Boolean))
+  const stageOf = (id: string): 'rdv_booked' | 'replied' | 'contacted' | 'prospected' =>
+    rdvSet.has(id) ? 'rdv_booked' : repliedSet.has(id) ? 'replied' : sentSet.has(id) ? 'contacted' : 'prospected'
+
   // Map DB contacts → Lead shape expected by UI
   const leads = rows.map(c => ({
     id: c.id,
@@ -63,7 +80,7 @@ export async function GET(request: NextRequest) {
     specialty: c.sector ? [c.sector] : [],
     hasGoogleAds: false,
     hasWebsite: Boolean(c.website),
-    stage: 'contacted' as const,
+    stage: stageOf(c.id),
     thread: [],
     score: c.email_confidence_score ?? 50,
     createdAt: c.created_at?.toISOString() ?? new Date().toISOString(),

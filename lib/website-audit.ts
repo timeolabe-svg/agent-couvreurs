@@ -58,14 +58,16 @@ export async function checkSSL(url: string): Promise<boolean> {
   // RÈGLE (après l'incident 2L2P ELEC) : ne JAMAIS conclure "pas de HTTPS" sur un simple
   // timeout ou un hoquet réseau — un site lent n'est pas un site non sécurisé, et une
   // fausse accusation coûte toute la crédibilité auprès du prospect.
-  //  - On tente 2 fois (8 s), pour absorber les lenteurs ponctuelles.
+  //  - On tente 2 fois (5 s), pour absorber les lenteurs ponctuelles. (5 s et non 8 s : 2×8=16 s
+  //    dépassait le garde-fou PER_SITE_TIMEOUT de audit-sites → la course coupait l'audit et
+  //    fabriquait un faux "site abandonné". 2×5=10 s tient sous le budget par site.)
   //  - Timeout / erreur indéterminée → BÉNÉFICE DU DOUTE (true = on ne signale rien).
   //  - Seule une vraie erreur TLS/certificat ou un refus de connexion sur 443 = pas de HTTPS.
   const normalized = url.startsWith('http') ? url : `https://${url}`
   const httpsUrl = normalized.replace(/^http:\/\//, 'https://')
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      await fetch(httpsUrl, { method: 'GET', signal: AbortSignal.timeout(8000) })
+      await fetch(httpsUrl, { method: 'GET', signal: AbortSignal.timeout(5000) })
       return true // la requête HTTPS aboutit (quel que soit le code HTTP) → HTTPS supporté
     } catch (e) {
       const msg = String((e as Error)?.cause ?? e).toLowerCase()

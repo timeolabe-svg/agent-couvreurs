@@ -168,7 +168,10 @@ export function isEmptyEmailComplaint(body: string, subject = ''): boolean {
     /pas (de|de\s+)contenu/,
     /aucun (contenu|texte|message|fichier|document)/,
     /ne contient (rien|aucun|pas de|ni)/,               // "mail qui ne contient ni message ni fichier"
-    /(pi[eè]ce|fichier|document) (jointe?|attach[eé]e?|manquant|absent|oubli[eé])/,
+    // ⚠️ NE matche QUE la PLAINTE (pièce manquante/absente/oubliée), PAS la simple mention
+    // "en pièce jointe" : "envoyez-moi le devis en pièce jointe" est un SIGNAL D'ACHAT, pas
+    // une plainte "mail vide" — il ne doit surtout pas être classé spam/no_action.
+    /(pi[eè]ce|fichier|document) (manquant|absent|oubli[eé])/,
     /sans (pi[eè]ce|fichier|document|pj\b)/,
     /oubli[eé]\s*(la|une|votre|de)?\s*(pi[eè]ce|pj|fichier|document)/,
     /\bpj\b.*manqu/,
@@ -213,7 +216,10 @@ export function isWrongTarget(body: string): boolean {
     /(mauvais|pas le bon) (secteur|destinataire|interlocuteur|cible)/,
     /renseign(ez|er)[\s-]?vous sur (notre|mon|la|nos) (activit|soci|m[eé]tier)/,
     /(rien à voir|aucun rapport) avec (notre|mon|nos|mes|la)/,
-    /nous ne (faisons|travaillons|sommes) pas (dans|en|de|des)/,
+    // ⚠️ RETIRÉ : /nous ne (faisons|travaillons|sommes) pas (dans|en|de|des)/ était TROP large
+    // et blocklistait à tort un artisan qui décrit son périmètre ("on ne fait pas de neuf,
+    // que de la réno" / "on ne travaille pas en dessous de X"). Blocklist = irréversible côté
+    // séquence : on garde uniquement les tournures NON ambiguës de mauvaise cible ci-dessus.
     /vous vous adressez à la mauvaise/,
   ]
   return patterns.some(p => p.test(t))
@@ -230,10 +236,11 @@ function isOptOut(body: string, subject: string): boolean {
     /souhait(e|ons) (ne plus|pas) [eê]tre contact/,
     // "cela/ce ne m'intéresse pas" — tournure explicite
     /ce(la|ci) ne m'int[eé]resse pas/,
-    // "je ne suis / nous ne sommes pas intéressé(s)"
-    /(je ne suis|nous ne sommes) pas int[eé]ress[eé]e?s?\b/,
-    // "ne m'intéresse pas" UNIQUEMENT si non suivi de "mais" ou "cependant" dans les 30 chars
-    /ne m'int[eé]resse pas(?!.{0,30}(mais|cependant))/,
+    // "je ne suis / nous ne sommes pas intéressé(s)" — SAUF s'il enchaîne sur un pivot positif
+    // ("pas intéressé par le SEO MAIS par la refonte") ou un report ("pas cette année, au printemps").
+    /(je ne suis|nous ne sommes) pas int[eé]ress[eé]e?s?\b(?!.{0,60}(mais|cependant|par contre|en revanche|plus tard|cette ann[eé]e|au printemps|revoy|pour l'instant|pour le moment|par vos|par votre|par la|par le))/,
+    // "ne m'intéresse pas" — même garde élargie (fenêtre 60 car., report + pivot).
+    /ne m'int[eé]resse pas(?!.{0,60}(mais|cependant|par contre|en revanche|plus tard|cette ann[eé]e|au printemps|revoy|pour l'instant|pour le moment))/,
     // message de moins de 50 chars contenant "pas intéressé"
     ...(((body + ' ' + subject).toLowerCase().trim().length < 50)
       ? [/pas int[eé]ress[eé]e?\b/]

@@ -141,7 +141,7 @@ export async function GET(request: NextRequest) {
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
   const { eq, and, or, gte, lte, sql } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
-  const { getSequenceStep, renderTemplate } = await import('@/data/sequence')
+  const { buildNeutralSequenceEmail } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
   let queued = 0
@@ -692,13 +692,12 @@ export async function GET(request: NextRequest) {
           try {
             emails = await generateSequence(lead, inbox.email, inbox.senderName, variantInstruction)
           } catch {
-            // Repli : email initial seul (sector-aware), sinon template
+            // Repli : email initial seul (sector-aware), sinon template NEUTRE adapté au métier
+            // (jamais le template couvreur figé à chiffres inventés — faux métier = faute grave).
             try {
               emails = [await generateEmail(lead, 'initial', inbox.email, inbox.senderName)]
             } catch {
-              const tpl = getSequenceStep(0)
-              const vars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
-              emails = tpl ? [{ subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) }] : []
+              emails = [buildNeutralSequenceEmail(0, { firstName: lead.firstName, city: lead.city, sector: contact.sector ?? undefined, fromEmail: inbox.email, fromName: inbox.senderName })]
             }
           }
 
@@ -706,7 +705,7 @@ export async function GET(request: NextRequest) {
           // Le template Instantly a 4 étapes ({{body}}..{{body4}}). Si une relance
           // manque ou a un body vide, Instantly envoie un mail VIDE au prospect.
           // On comble chaque trou par le template officiel (jamais de vide).
-          const tplVars = { firstName: lead.firstName, city: lead.city, company: lead.company, fromEmail: inbox.email, fromName: inbox.senderName }
+          const neutralVars = { firstName: lead.firstName, city: lead.city, sector: contact.sector ?? undefined, fromEmail: inbox.email, fromName: inbox.senderName }
           const isValid = (e?: { subject: string; body: string }) =>
             Boolean(e && e.body && e.body.trim().length >= 20 && e.subject && e.subject.trim().length > 0)
           const filled: Array<{ subject: string; body: string }> = []
@@ -714,8 +713,8 @@ export async function GET(request: NextRequest) {
             if (isValid(emails[i])) {
               filled.push(emails[i])
             } else {
-              const tpl = getSequenceStep(i)
-              if (tpl) filled.push({ subject: renderTemplate(tpl.subject, tplVars), body: renderTemplate(tpl.body, tplVars) })
+              // Trou de génération → repli NEUTRE adapté au métier (jamais le template couvreur figé).
+              filled.push(buildNeutralSequenceEmail(i, neutralVars))
             }
           }
           // L'email INITIAL doit absolument être valide, sinon on n'envoie pas

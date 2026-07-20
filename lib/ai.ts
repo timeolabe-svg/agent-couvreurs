@@ -40,9 +40,12 @@ export async function generateText(params: {
   // et le lead chaud était perdu. On tente jusqu'à 3 fois avec un court backoff ; on ne jette
   // qu'après épuisement (le générateur a de toute façon un repli déterministe en dernier recours).
   // Clé en HEADER (x-goog-api-key), jamais en query string (fuite logs). Timeout 20s/appel.
+  // Timeout PAR tentative volontairement court (12s) : 3 essais + backoff ≈ 37s pire cas, ce qui
+  // reste sous maxDuration 60 de l'appelant (et sous le garde-fou 50s du poll). À 20s/essai le pire
+  // cas montait à ~61s et pouvait faire tuer le tick par Vercel.
   let lastErr = 'unknown'
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt)) // 0ms, 500ms, 1000ms
+    if (attempt > 0) await new Promise(r => setTimeout(r, 400 * attempt)) // 0ms, 400ms, 800ms
     let res: Response
     try {
       res = await fetch(
@@ -51,7 +54,7 @@ export async function generateText(params: {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(20000),
+          signal: AbortSignal.timeout(12000),
         }
       )
     } catch (e) {
@@ -81,6 +84,7 @@ export function cleanEmailText(s: string): string {
   let t = s
     .replace(/\s*[—–]\s*/g, ', ')                       // tirets IA → virgule
     .replace(/\s*\[[^\]]*\]\s*/g, ' ')                  // supprime les placeholders [xxx]
+    .replace(/\s*\{[^}]*\}\s*/g, ' ')                   // supprime les placeholders {ville}/{City} non substitués
     .replace(/\b(comme|tels que|tel que)\s+ou\b/gi, '') // résidu "comme  ou"
     .replace(/\bou\s+(\.|,|\?)/gi, '$1')                // résidu "ou ."
     .replace(/\(\s*\)/g, '')                            // parenthèses vides
