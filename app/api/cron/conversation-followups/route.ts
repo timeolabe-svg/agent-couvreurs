@@ -41,17 +41,22 @@ export async function GET(req: Request) {
   const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
   const { cleanIncomingBody } = await import('@/lib/decode-body')
   const repairs: string[] = []
+  // ⚠️ NE PAS exclure les leads avec RDV : un lead qui a un RDV calé MAIS pas de brouillon
+  // (génération IA tombée) était le PIRE cas — il a donné son numéro, on l'a noté en RDV, mais
+  // on ne lui a JAMAIS répondu. Il faut au contraire lui répondre pour CONFIRMER l'appel.
+  // Fenêtre élargie à 30 j (les orphelins anciens restaient bloqués à vie sous 72h) et on ne
+  // répond qu'au DERNIER message de chaque contact (jamais un message dépassé par la suite).
   const orphans = (await sql`
     SELECT ir.id, ir.contact_id, ir.body, ir.from_email, ir.classification, ir.action_taken
     FROM incoming_replies ir
-    WHERE ir.created_at > NOW() - INTERVAL '72 hours'
+    WHERE ir.created_at > NOW() - INTERVAL '30 days'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
       AND ir.contact_id IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id)
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
-      AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = ir.contact_id AND r.status = 'confirmed')
-    ORDER BY ir.created_at ASC
-    LIMIT 2
+      AND ir.created_at = (SELECT MAX(ir2.created_at) FROM incoming_replies ir2 WHERE ir2.contact_id = ir.contact_id)
+    ORDER BY ir.created_at DESC
+    LIMIT 5
   `) as Array<{ id: string; contact_id: string; body: string; from_email: string; classification: string; action_taken: string | null }>
 
   for (const o of orphans) {
@@ -65,6 +70,13 @@ export async function GET(req: Request) {
       ].sort((a, b) => a.ts - b.ts)
         .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
       const [ob] = (await sql`SELECT from_email FROM email_queue WHERE contact_id = ${o.contact_id} AND status = 'sent' AND from_email IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ from_email: string }>
+      // Un RDV FUTUR déjà calé ? → la réponse doit le CONFIRMER (pas re-proposer). Un RDV passé
+      // (créneau auto choisi il y a des jours, jamais honoré) est ignoré → on re-propose un moment.
+      const [futureRdv] = (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${o.contact_id} AND status = 'confirmed' AND scheduled_at > NOW() ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }>
+      const existingRdvSlot = futureRdv?.scheduled_at
+        ? new Date(futureRdv.scheduled_at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + new Date(futureRdv.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+        : undefined
+      const phoneMatch = cleanIncomingBody(o.body || '').match(/0[1-9]([\s. ]?\d{2}){4}/)
       const cleaned = cleanIncomingBody(o.body || '')
       const cleanBody = stripQuotedReply(cleaned) || cleaned
       const draft = await generateReplyResponse({
@@ -77,6 +89,8 @@ export async function GET(req: Request) {
         contactCity: ct?.city ?? '',
         contactSector: ct?.sector ?? undefined,
         conversationHistory: history,
+        contactPhone: phoneMatch ? phoneMatch[0].trim() : undefined,
+        existingRdvSlot,
         fromEmail: ob?.from_email,
       })
       // auto_reply → envoi auto (Partie A du poll) ; sinon → validation humaine dans l'app.

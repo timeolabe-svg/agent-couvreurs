@@ -35,29 +35,42 @@ export async function generateText(params: {
     },
   }
 
-  // Clé passée en HEADER (x-goog-api-key), jamais en query string — sinon elle fuite
-  // dans les logs Vercel/proxies. Timeout 20s pour ne pas pendre la fonction serverless.
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20000),
+  // RÉESSAIS sur défaillances TRANSITOIRES (429 rate-limit du palier gratuit, 5xx, réponse
+  // vide). Sur un burst de réponses, Gemini renvoyait ponctuellement 429/vide → l'appel jetait
+  // et le lead chaud était perdu. On tente jusqu'à 3 fois avec un court backoff ; on ne jette
+  // qu'après épuisement (le générateur a de toute façon un repli déterministe en dernier recours).
+  // Clé en HEADER (x-goog-api-key), jamais en query string (fuite logs). Timeout 20s/appel.
+  let lastErr = 'unknown'
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt)) // 0ms, 500ms, 1000ms
+    let res: Response
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(20000),
+        }
+      )
+    } catch (e) {
+      lastErr = `fetch ${String((e as Error)?.message ?? e).slice(0, 60)}`
+      continue // timeout/réseau → on retente
     }
-  )
-
-  if (!res.ok) {
-    // Ne pas recracher l'URL (contient potentiellement des secrets) ; juste le statut.
-    throw new Error(`Gemini API error: ${res.status}`)
+    if (!res.ok) {
+      lastErr = `Gemini API error: ${res.status}`
+      // 429 (quota) et 5xx = transitoires → retenter ; 4xx (hors 429) = définitif → stop.
+      if (res.status === 429 || res.status >= 500) continue
+      throw new Error(lastErr)
+    }
+    const data = (await res.json()) as GeminiResponse
+    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
+    if (text.trim()) return text
+    lastErr = 'Gemini returned empty text'
+    // vide (souvent MAX_TOKENS/blocage ponctuel) → on retente
   }
-
-  const data = (await res.json()) as GeminiResponse
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? ''
-  if (!text.trim()) {
-    throw new Error('Gemini returned empty text')
-  }
-  return text
+  throw new Error(lastErr)
 }
 
 /** Nettoyage OBLIGATOIRE des emails générés (Gemini ignore parfois les consignes) :

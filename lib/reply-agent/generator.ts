@@ -224,26 +224,47 @@ Rédige la réponse. JSON uniquement :
   const system = params.fromEmail
     ? SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, params.fromEmail)
     : SYSTEM_PROMPT
-  const text = await generateText({
-    system,
-    prompt: userPrompt,
-    maxTokens: 1000,
-    temperature: 0.8,
-  })
 
-  let parsed: { body: string } | null = null
+  // ⚠️ RÈGLE ABSOLUE : cette fonction ne DOIT JAMAIS jeter. Un hoquet Gemini (vide, 429,
+  // timeout) tuait tout processReply → aucun brouillon → le lead CHAUD (qui a donné son
+  // numéro !) était perdu EN SILENCE, définitivement (le message entrant est dédupé, jamais
+  // réessayé). On enveloppe tout : à la moindre défaillance IA, on renvoie un repli DÉTERMINISTE
+  // de qualité (confirmation d'appel si un créneau est posé), pour qu'une réponse parte TOUJOURS.
   try {
-    parsed = extractJson<{ body: string }>(text)
+    const text = await generateText({ system, prompt: userPrompt, maxTokens: 1200, temperature: 0.8 })
+    const parsed = extractJson<{ body: string }>(text)
+    if (!parsed?.body || parsed.body.trim().length < 10) throw new Error('Gemini reply body empty/court')
+    return fixSig(cleanEmailText(parsed.body))
   } catch (err) {
-    console.error('[generator] extractJson a échoué (JSON tronqué ?):', err, '— Raw:', text.slice(0, 300))
-    // Fallback court plutôt que crasher le cron
-    return cleanEmailText(
-      `Bonjour ${params.contactName},\n\nMerci pour votre retour. Je reviens vers vous très vite pour vous répondre dans les meilleures conditions.\n\nBien à vous,\nGabin\nHdigiweb`
-    )
+    console.error('[generator] génération IA échouée → repli déterministe:', String(err).slice(0, 120))
+    return fixSig(cleanEmailText(buildFallbackReply(params)))
   }
-  if (!parsed?.body || parsed.body.trim().length < 10) {
-    console.error('[generator] Gemini a retourné un body vide ou trop court. Raw:', text.slice(0, 300))
-    throw new Error('Gemini reply body empty')
+}
+
+// Repli DÉTERMINISTE (zéro IA) — garantit qu'une réponse part même si Gemini est indisponible.
+// Priorité au lead chaud : si un créneau d'appel est posé, on le CONFIRME clairement (avec le
+// numéro s'il l'a donné). Sinon, réponse d'accroche courte qui garde la porte ouverte.
+function buildFallbackReply(params: {
+  classification: ReplyClassification
+  contactName: string
+  proposedSlot?: string
+  contactPhone?: string
+  existingRdvSlot?: string
+  fromEmail?: string
+}): string {
+  const name = (params.contactName && params.contactName.includes('@')) ? '' : (params.contactName || '')
+  const greeting = name ? `Bonjour ${name},` : 'Bonjour,'
+  const box = params.fromEmail || 'gabin@hdigiweb-agence.com'
+  const sig = `Bien à vous,\n\nGabin\nHdigiweb\n${box}`
+  const slot = params.existingRdvSlot || params.proposedSlot
+  const phone = params.contactPhone ? ` au ${params.contactPhone}` : ''
+
+  if (slot) {
+    // Lead chaud, créneau posé → on confirme l'appel. Ne jamais prétendre appeler "maintenant".
+    return `${greeting}\n\nParfait, Gabin vous rappelle ${slot}${phone}. Si ce moment ne vous convient pas, dites-moi simplement un autre créneau et je m'adapte.\n\n${sig}`
   }
-  return fixSig(cleanEmailText(parsed.body))
+  if (params.classification === 'rdv_request' || params.classification === 'interest') {
+    return `${greeting}\n\nAvec plaisir. Pour caler un rappel rapide, quel moment vous arrange le mieux, plutôt en début ou en fin de semaine ? Gabin vous rappelle${phone || ' au numéro de votre choix'} pour en parler quelques minutes.\n\n${sig}`
+  }
+  return `${greeting}\n\nMerci pour votre retour. Dites-moi ce qui vous serait utile et je reviens vers vous rapidement avec une réponse précise.\n\n${sig}`
 }
