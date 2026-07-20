@@ -124,11 +124,8 @@ export async function GET() {
 
     const groupKeyFor = (contactId: string | null, email: string) => contactId ?? `email:${email}`
 
-    // Anti-doublon d'AFFICHAGE : le même message a parfois été ré-ingéré (ex. ré-encodé base64 non
-    // reconnu par la dédup) → il apparaissait 2-3 fois et le fil semblait "dans tous les sens".
-    // On ne montre qu'UNE fois chaque contenu reçu (par conversation), et on masque aussi ses
-    // brouillons (des réponses en double, tout aussi parasites).
-    const seenReceived = new Map<string, Set<string>>()
+    // Anti-doublon d'AFFICHAGE (le même message parfois ré-ingéré → base64 non reconnu → il
+    // apparaissait 2-3 fois, le fil semblait "dans tous les sens"). Normalisation pour comparer.
     const normForDedup = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9àâäéèêëîïôöùûüç]+/gi, ' ').trim().slice(0, 160)
 
     for (const r of replies) {
@@ -152,14 +149,6 @@ export async function GET() {
       const g = groups.get(key)!
       const decodedBody = stripHtmlLite(cleanIncomingBody(r.body))
       const displayBody = stripQuotedReply(decodedBody) || decodedBody
-      // Déjà vu ce contenu reçu dans cette conversation ? → doublon, on saute (message ET brouillons).
-      const norm = normForDedup(displayBody)
-      if (norm) {
-        let seen = seenReceived.get(key)
-        if (!seen) { seen = new Set(); seenReceived.set(key, seen) }
-        if (seen.has(norm)) continue
-        seen.add(norm)
-      }
       g.messages.push({
         role: 'received',
         subject: r.subject ?? undefined,
@@ -239,6 +228,19 @@ export async function GET() {
       })
       .map(g => {
         g.messages.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+        // Dédup d'AFFICHAGE des messages REÇUS en double (même contenu ré-ingéré → base64 non
+        // reconnu), APRÈS le tri chronologique : on garde la PREMIÈRE occurrence (la plus ancienne,
+        // celle qui porte les vraies réponses de l'agent) et on retire les répétitions ultérieures.
+        // Les messages 'sent'/'agent' ne sont jamais dédupliqués.
+        const seen = new Set<string>()
+        g.messages = g.messages.filter(m => {
+          if (m.role !== 'received') return true
+          const norm = normForDedup(m.body)
+          if (!norm) return true
+          if (seen.has(norm)) return false
+          seen.add(norm)
+          return true
+        })
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
         return g
       })
