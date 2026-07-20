@@ -47,7 +47,10 @@ export async function GET(req: Request) {
     const sent = (await sql`SELECT sequence_step, status, sent_at, subject, left(body,60) AS body FROM email_queue WHERE contact_id=${id} AND status='sent' ORDER BY sent_at`) as Array<Record<string, unknown>>
     const recv = (await sql`SELECT id, created_at, classification, left(body,70) AS body FROM incoming_replies WHERE contact_id=${id} ORDER BY created_at`) as Array<Record<string, unknown>>
     const drafts = (await sql`SELECT rd.status, rd.created_at, rd.sent_at, rd.incoming_reply_id, left(rd.body,60) AS body FROM reply_drafts rd JOIN incoming_replies ir ON ir.id=rd.incoming_reply_id WHERE ir.contact_id=${id} ORDER BY rd.created_at`) as Array<Record<string, unknown>>
-    return NextResponse.json({ contact: c[0], sent, received: recv, drafts })
+    const bl = (await sql`SELECT reason, created_at FROM blocklist WHERE LOWER(email)=LOWER(${email})`) as Array<Record<string, unknown>>
+    const rdvs = (await sql`SELECT status, scheduled_at FROM rdv WHERE contact_id=${id}`) as Array<Record<string, unknown>>
+    const q20 = (await sql`SELECT sequence_step, status FROM email_queue WHERE contact_id=${id} AND sequence_step>=20`) as Array<Record<string, unknown>>
+    return NextResponse.json({ contact: c[0], blocklist: bl, rdv: rdvs, relances_20: q20, sent, received: recv, drafts })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
   }
