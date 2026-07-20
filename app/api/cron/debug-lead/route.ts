@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
   try {
-    const c = (await sql`SELECT id, email, name, company, phone, status, sector FROM contacts WHERE lower(email)=lower(${email}) LIMIT 1`) as Array<Record<string, unknown>>
+    const c = (await sql`SELECT id, email, name, company, phone, sector, city FROM contacts WHERE lower(email)=lower(${email}) LIMIT 1`) as Array<Record<string, unknown>>
     if (!c[0]) return NextResponse.json({ error: 'contact introuvable', email })
     const id = c[0].id as string
     const ir = (await sql`SELECT id, classification, action_taken, created_at, left(body,140) AS body FROM incoming_replies WHERE contact_id=${id} ORDER BY created_at`) as Array<Record<string, unknown>>
