@@ -63,6 +63,35 @@ export async function GET(req: Request) {
     return NextResponse.json(out)
   }
 
+  // ?gen=1 → teste la génération Gemini brute (finishReason + longueur) pour un prompt de réponse type
+  if (new URL(req.url).searchParams.get('gen')) {
+    const key = process.env.GEMINI_API_KEY
+    const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'
+    if (!key) return NextResponse.json({ error: 'GEMINI_API_KEY absente' })
+    const out: Record<string, unknown> = { model }
+    for (const maxTok of [1000, 2048]) {
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: 'Tu es Gabin, commercial chez Hdigiweb. Réponds en français, court.' }] },
+            contents: [{ role: 'user', parts: [{ text: 'Un couvreur répond "appelez-moi au 06 14 87 64 81". Rédige la réponse. JSON uniquement: {"body":"..."}' }] }],
+            generationConfig: { maxOutputTokens: maxTok, temperature: 0.8, thinkingConfig: { thinkingBudget: 0 } },
+          }),
+          signal: AbortSignal.timeout(20000),
+        })
+        const j = await r.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }> }
+        const cand = j.candidates?.[0]
+        const txt = cand?.content?.parts?.map(p => p.text ?? '').join('') ?? ''
+        out[`maxTok_${maxTok}`] = { http: r.status, finishReason: cand?.finishReason ?? '(none)', textLen: txt.length, sample: txt.slice(0, 120) }
+      } catch (e) {
+        out[`maxTok_${maxTok}`] = { error: String((e as Error)?.message ?? e).slice(0, 150) }
+      }
+    }
+    return NextResponse.json(out)
+  }
+
   const email = new URL(req.url).searchParams.get('email')
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
