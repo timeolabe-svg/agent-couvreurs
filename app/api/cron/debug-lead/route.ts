@@ -92,6 +92,27 @@ export async function GET(req: Request) {
     return NextResponse.json(out)
   }
 
+  // ?genreal=1 → appelle le VRAI générateur sur un cas "appelez-moi au 06..." pour vérifier le ton
+  if (new URL(req.url).searchParams.get('genreal')) {
+    try {
+      const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
+      const body = await generateReplyResponse({
+        classification: 'rdv_request',
+        originalEmailBody: 'Bonjour, un mot rapide sur votre visibilité Google à Sèvres. Bien à vous, Gabin, Hdigiweb.',
+        replyBody: 'Bonjour, je viens de recevoir un mail de votre part. Pouvez-vous m’appeler au 06 14 87 64 81 pour qu’on discute un peu ensemble',
+        contactName: 'Bauer',
+        contactCompany: 'Rénovation Bauer',
+        contactCity: 'Sèvres',
+        contactSector: 'couvreur',
+        contactPhone: '06 14 87 64 81',
+        fromEmail: 'gabin@hdigiweb-agence.com',
+      })
+      return NextResponse.json({ body })
+    } catch (e) {
+      return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
+    }
+  }
+
   const email = new URL(req.url).searchParams.get('email')
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
