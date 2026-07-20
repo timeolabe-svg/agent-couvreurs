@@ -14,6 +14,7 @@ export async function GET(req: Request) {
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
   sql = (await import('@/lib/db')).sql
 
+  try {
   const [sent] = (await sql`SELECT count(*)::int AS n, count(distinct contact_id)::int AS contacts FROM email_queue WHERE status = 'sent'`) as Array<{ n: number; contacts: number }>
   const [sent30] = (await sql`SELECT count(*)::int AS n FROM email_queue WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '30 days'`) as Array<{ n: number }>
   const [bounces] = (await sql`SELECT count(*)::int AS n FROM blocklist WHERE reason = 'bounce'`) as Array<{ n: number }>
@@ -42,4 +43,7 @@ export async function GET(req: Request) {
     opt_outs: optouts.n,
     par_boite: byBox,
   })
+  } catch (e) {
+    return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
+  }
 }
