@@ -248,14 +248,20 @@ async function processReply(params: {
 
   const cleanBody = stripQuotedReply(body) || body
 
-  // Dédup par CONTENU (même message ré-entrant) pour ce contact.
+  // Dédup par CONTENU (même message ré-entrant) pour ce contact. ⚠️ On DÉCODE les deux côtés
+  // (cleanIncomingBody) AVANT de comparer : d'anciens messages stockés en base64 non décodé
+  // faisaient échouer la comparaison (base64 ≠ texte) → le même message était ré-ingéré et
+  // ré-répondu, polluant la conversation. Fenêtre élargie à 30 messages.
   if (contact?.id) {
     const recent = (await sql`
       SELECT body FROM incoming_replies WHERE contact_id = ${contact.id}
-      ORDER BY created_at DESC LIMIT 10
+      ORDER BY created_at DESC LIMIT 30
     `) as Array<{ body: string }>
     const norm = normalizeBody(cleanBody)
-    if (norm && recent.some(r => normalizeBody(stripQuotedReply(r.body ?? '') || r.body || '') === norm)) {
+    if (norm && recent.some(r => {
+      const dec = cleanIncomingBody(r.body ?? '')
+      return normalizeBody(stripQuotedReply(dec) || dec) === norm
+    })) {
       results.push(`doublon contenu ignoré : ${from}`)
       return null
     }

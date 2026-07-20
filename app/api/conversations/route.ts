@@ -124,6 +124,13 @@ export async function GET() {
 
     const groupKeyFor = (contactId: string | null, email: string) => contactId ?? `email:${email}`
 
+    // Anti-doublon d'AFFICHAGE : le même message a parfois été ré-ingéré (ex. ré-encodé base64 non
+    // reconnu par la dédup) → il apparaissait 2-3 fois et le fil semblait "dans tous les sens".
+    // On ne montre qu'UNE fois chaque contenu reçu (par conversation), et on masque aussi ses
+    // brouillons (des réponses en double, tout aussi parasites).
+    const seenReceived = new Map<string, Set<string>>()
+    const normForDedup = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9àâäéèêëîïôöùûüç]+/gi, ' ').trim().slice(0, 160)
+
     for (const r of replies) {
       const key = groupKeyFor(r.contact_id, r.from_email)
       const c = r.contact_id ? contactMap.get(r.contact_id) : null
@@ -144,10 +151,19 @@ export async function GET() {
       }
       const g = groups.get(key)!
       const decodedBody = stripHtmlLite(cleanIncomingBody(r.body))
+      const displayBody = stripQuotedReply(decodedBody) || decodedBody
+      // Déjà vu ce contenu reçu dans cette conversation ? → doublon, on saute (message ET brouillons).
+      const norm = normForDedup(displayBody)
+      if (norm) {
+        let seen = seenReceived.get(key)
+        if (!seen) { seen = new Set(); seenReceived.set(key, seen) }
+        if (seen.has(norm)) continue
+        seen.add(norm)
+      }
       g.messages.push({
         role: 'received',
         subject: r.subject ?? undefined,
-        body: stripQuotedReply(decodedBody) || decodedBody,
+        body: displayBody,
         date: r.created_at?.toISOString() ?? '',
         classification: r.classification ?? undefined,
       })
