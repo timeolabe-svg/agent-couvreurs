@@ -36,7 +36,10 @@ export async function GET(req: Request) {
   // Contacts NON validés qui ont au moins un email PAS ENCORE ENVOYÉ (pending OU queued) :
   // on les valide AVANT que send-campaign ne les envoie → aucun bounce.
   const rows = await db
-    .selectDistinct({ id: contacts.id, email: contacts.email, company: contacts.company })
+    // created_at DOIT figurer dans le SELECT DISTINCT car on trie dessus (règle Postgres,
+    // sinon "ORDER BY expressions must appear in select list" → 500). id étant unique, la
+    // dé-duplication du DISTINCT (contact avec plusieurs mails en file) reste correcte.
+    .selectDistinct({ id: contacts.id, email: contacts.email, company: contacts.company, created_at: contacts.created_at })
     .from(contacts)
     .innerJoin(email_queue, and(eq(email_queue.contact_id, contacts.id), inArray(email_queue.status, ['pending', 'queued'])))
     .where(or(eq(contacts.email_validated, false), isNull(contacts.email_validated)))
