@@ -39,11 +39,12 @@ export async function GET(req: Request) {
     const c = (await sql`SELECT id, email, company FROM contacts WHERE lower(email)=lower(${email}) LIMIT 1`) as Array<Record<string, unknown>>
     if (!c[0]) return NextResponse.json({ error: 'introuvable' })
     const id = c[0].id as string
+    const sent = (await sql`SELECT sequence_step, status, sent_at, from_email, subject FROM email_queue WHERE contact_id=${id} ORDER BY sequence_step`) as Array<Record<string, unknown>>
     const recv = (await sql`SELECT created_at, classification, action_taken, left(body,90) AS body FROM incoming_replies WHERE contact_id=${id} ORDER BY created_at`) as Array<Record<string, unknown>>
     const drafts = (await sql`SELECT rd.status, rd.sent_at, left(rd.body,70) AS body FROM reply_drafts rd JOIN incoming_replies ir ON ir.id=rd.incoming_reply_id WHERE ir.contact_id=${id} ORDER BY rd.created_at`) as Array<Record<string, unknown>>
     const bl = (await sql`SELECT reason, created_at FROM blocklist WHERE LOWER(email)=LOWER(${email})`) as Array<Record<string, unknown>>
     const rdvs = (await sql`SELECT status, scheduled_at, left(notes,60) AS notes FROM rdv WHERE contact_id=${id}`) as Array<Record<string, unknown>>
-    return NextResponse.json({ contact: c[0], blocklist: bl, rdv: rdvs, received: recv, drafts })
+    return NextResponse.json({ contact: c[0], blocklist: bl, rdv: rdvs, sent, received: recv, drafts })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 300) }, { status: 500 })
   }
