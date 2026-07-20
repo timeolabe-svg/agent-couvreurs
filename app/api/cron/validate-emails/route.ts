@@ -28,6 +28,7 @@ export async function GET(req: Request) {
   }
 
   const started = Date.now()
+  try {
   const { db } = await import('@/lib/db')
   const { contacts, email_queue } = await import('@/lib/db/schema')
   const { eq, and, or, isNull, sql, inArray } = await import('drizzle-orm')
@@ -83,4 +84,8 @@ export async function GET(req: Request) {
     unknown,     // re-tentés plus tard
     remaining: rows.length === BATCH ? 'oui (encore à valider)' : 'dernier batch',
   })
+  } catch (e) {
+    // Plus jamais de 500 muet : on renvoie la vraie erreur pour diagnostic (visible dans cron-job.org).
+    return NextResponse.json({ error: String((e as Error)?.message ?? e).slice(0, 400) }, { status: 500 })
+  }
 }
