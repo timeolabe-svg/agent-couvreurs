@@ -824,11 +824,23 @@ ${params.draftBody.substring(0, 300)}${params.draftBody.length > 300 ? '...' : '
 === FIN DU RÉSUMÉ ===`
 }
 
+// Destinataires de notif : PRIORITÉ au champ UI (agent_config.client_notif_email, réglé dans
+// l'écran Agent) → sinon l'env CLIENT_NOTIFY_EMAIL. AVANT : on lisait UNIQUEMENT l'env, donc
+// changer l'adresse dans l'UI ne changeait rien et le client ne recevait pas les notifs.
+async function getNotifyRecipients(): Promise<string[]> {
+  try {
+    const r = (await sql`SELECT value FROM agent_config WHERE key = 'client_notif_email' LIMIT 1`) as Array<{ value: string }>
+    const fromUi = (r[0]?.value ?? '').split(',').map(s => s.trim()).filter(Boolean)
+    if (fromUi.length > 0) return fromUi
+  } catch { /* table/clé absente → repli env */ }
+  return CLIENT_NOTIFY_EMAIL
+}
+
 // Envoie une notif interne SOBRE (texte, zéro émoji) via le moteur Gmail SMTP —
 // pas de limite "mode test" comme Resend, donc TOUS les destinataires reçoivent.
 // Repli sur Resend (par destinataire) si aucune boîte Gmail configurée.
 async function notifyTeam(subject: string, text: string): Promise<void> {
-  const recipients = CLIENT_NOTIFY_EMAIL
+  const recipients = await getNotifyRecipients()
   if (recipients.length === 0) return
   const boxes = getGmailBoxes()
   if (boxes.length > 0) {

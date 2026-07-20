@@ -27,6 +27,10 @@ export const maxDuration = 60
 const DAILY_CAP_PER_BOX = 35
 const MAX_PER_RUN = 8 // ~8 × 2s = 16s : tient sous les 30s de cron-job.org (offre gratuite). 8/run × 4 runs/h = large vs plafond 140/j
 const LIFETIME_CAP_PER_CONTACT = 4 // séquence = 4 étapes max, JAMAIS plus
+// Les relances de CONVERSATION (step >= 20) vont à des gens qui ont RÉPONDU (ils les attendent,
+// n'affectent pas la réputation) → elles ont leur PROPRE plafond et passent même quand le plafond
+// cold (warmup) est atteint. Sinon un lead chaud silencieux attendait le lendemain pour être relancé.
+const CONVO_DAILY_CAP = 30
 
 interface ClaimedRow {
   id: string
@@ -76,8 +80,22 @@ export async function GET(req: NextRequest) {
 
     const results: string[] = []
     results.push(`Boîtes: ${boxes.length} | capacité restante aujourd'hui: ${totalCapacity}`)
+
+    // Plafond SÉPARÉ pour les relances de conversation (step >= 20) : elles passent même si le cold
+    // est saturé (destinataire = a répondu, faible risque). On compte celles déjà parties aujourd'hui.
+    const [{ convoSent }] = (await sql`SELECT COUNT(*)::int AS "convoSent" FROM email_queue WHERE status = 'sent' AND sent_at::date = CURRENT_DATE AND sequence_step >= 20`) as Array<{ convoSent: number }>
+    const convoCapacity = Math.max(0, CONVO_DAILY_CAP - (convoSent ?? 0))
+    let convoOnly = false
     if (totalCapacity <= 0) {
-      return NextResponse.json({ ok: true, sent: 0, results: [...results, 'Plafond quotidien atteint sur toutes les boîtes'] })
+      if (convoCapacity <= 0) {
+        return NextResponse.json({ ok: true, sent: 0, results: [...results, 'Plafond quotidien atteint (cold ET relances de conversation)'] })
+      }
+      // Cold saturé mais on autorise ENCORE les relances de conversation. On injecte leur capacité
+      // dans les boîtes pour que la sélection de boîte fonctionne (la requête ne réclamera QUE des step>=20).
+      convoOnly = true
+      const per = Math.max(1, Math.ceil(convoCapacity / boxes.length))
+      for (const b of boxes) capacity.set(b.email, per)
+      results.push(`Plafond cold atteint → relances de conversation uniquement (${convoCapacity} dispo aujourd'hui)`)
     }
 
     // REAPER : une ligne coincée en 'sending' > 15 min = le run qui l'a réclamée a crashé.
@@ -94,7 +112,7 @@ export async function GET(req: NextRequest) {
     // CLAIM ATOMIQUE : sort les lignes 'queued' → 'sending' en UNE requête (UPDATE ... WHERE id IN (SELECT)).
     // Une ligne passée en 'sending' ne peut PLUS être re-sélectionnée par un run concurrent
     // ni par une réexécution après timeout → zéro renvoi en boucle.
-    const limit = Math.min(MAX_PER_RUN, totalCapacity)
+    const limit = Math.min(MAX_PER_RUN, convoOnly ? convoCapacity : totalCapacity)
     const claimed = (await sql`
       UPDATE email_queue SET status = 'sending', sent_at = NOW()
       WHERE id IN (
@@ -104,6 +122,8 @@ export async function GET(req: NextRequest) {
         WHERE eq.status = 'queued'
           AND eq.scheduled_at <= NOW()
           AND c.email IS NOT NULL
+          -- Mode "relances de conversation uniquement" (plafond cold saturé) : on ne réclame QUE les step>=20.
+          AND (${!convoOnly} OR eq.sequence_step >= 20)
           -- ANTI-RÉPÉTITION : jamais de relance FROIDE (steps 0-3) à un contact qui a déjà
           -- répondu. EXCEPTION : les relances de CONVERSATION (steps >= 20) visent justement
           -- des gens qui ont répondu puis se sont tus → elles doivent passer.
