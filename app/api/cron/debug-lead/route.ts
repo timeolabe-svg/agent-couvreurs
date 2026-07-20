@@ -41,6 +41,28 @@ export async function GET(req: Request) {
     }
   }
 
+  // ?testinsert=<incoming_reply_id> → reproduit l'INSERT auto_reply exact, capture l'erreur, puis nettoie
+  const testId = new URL(req.url).searchParams.get('testinsert')
+  if (testId) {
+    const out: Record<string, unknown> = {}
+    try {
+      const r = (await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${testId}, ${'__debug_test__'}, 'scheduled', ${new Date(Date.now() + 300000).toISOString()}) RETURNING id`) as Array<{ id: string }>
+      out.scheduled_insert = 'OK id=' + r[0]?.id
+      await sql`DELETE FROM reply_drafts WHERE id = ${r[0].id}`
+      out.cleanup = 'ok'
+    } catch (e) {
+      out.scheduled_insert_error = String((e as Error)?.message ?? e).slice(0, 300)
+    }
+    try {
+      const r2 = (await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status) VALUES (${testId}, ${'__debug_test2__'}, 'pending') RETURNING id`) as Array<{ id: string }>
+      out.pending_insert = 'OK id=' + r2[0]?.id
+      await sql`DELETE FROM reply_drafts WHERE id = ${r2[0].id}`
+    } catch (e) {
+      out.pending_insert_error = String((e as Error)?.message ?? e).slice(0, 300)
+    }
+    return NextResponse.json(out)
+  }
+
   const email = new URL(req.url).searchParams.get('email')
   if (!email) return NextResponse.json({ error: 'email requis' }, { status: 400 })
 
