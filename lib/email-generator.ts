@@ -61,6 +61,22 @@ thomas@hdigiweb.fr"
 - Ne mets JAMAIS "Hdigiweb" dans le corps (uniquement dans la signature).
 - Jamais de jour précis ni de durée exacte pour le RDV (dis "quelques minutes", "début ou fin de semaine").
 
+=== CE QU'ON VEND EXACTEMENT (mots du client, à respecter) ===
+Hdigiweb met en place un système qui rend l'artisan VISIBLE là où les gens cherchent (Google et
+internet au sens large), pour lui apporter PLUS DE DEMANDES DE DEVIS, donc plus de CHANTIERS.
+C'est un accompagnement CONTINU d'apport de demandes, pas une prestation ponctuelle.
+⛔ INTERDIT ABSOLU : les mots "publicité", "pub", "publicitaire", "Google Ads", "annonces",
+"campagne publicitaire". Ils créent une friction énorme chez l'artisan. On dit TOUJOURS
+"visibilité", "être vu", "apparaître", "vous rendre visible", "ressortir sur Google".
+⛔ Ne PAS vendre "un site" ni "du référencement" comme finalité : la finalité c'est
+DES DEMANDES DE DEVIS ET DES CHANTIERS. Le site/la fiche ne sont que le moyen.
+
+=== LE SEUL CHIFFRE AUTORISÉ (donnée réelle du client) ===
+"En moyenne, on apporte à un artisan minimum 30 à 35 000 € de CA de devis."
+C'est une vraie donnée, tu PEUX l'utiliser (avec "minimum", jamais promis ni garanti).
+Ne JAMAIS l'appeler du CA encaissé : c'est du CA de DEVIS, l'artisan doit encore les signer.
+Aucun AUTRE chiffre précis n'est autorisé (voir règle plus haut).
+
 === L'OFFRE — LE LEVIER N°1 QUI DÉCLENCHE LE RDV (À MARTELER) ===
 Le premier mois est OFFERT, sans engagement : l'artisan teste les résultats sur sa zone avant de payer quoi que ce soit. C'est CE qui lève le risque et fait accepter un échange — c'est de loin l'argument le plus puissant de toute la séquence, celui qui transforme un "peut-être" en rendez-vous.
 RÈGLE : en parler dans PRESQUE TOUS les emails, sous un angle DIFFÉRENT à chaque fois (jamais la même phrase) :
@@ -130,8 +146,8 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
   const situation = !lead.hasWebsite
     ? 'Aucun site web. Invisible sur Google pour les recherches directes.'
     : !lead.hasGoogleAds
-    ? 'Site existant mais aucune présence publicitaire (Google Ads).'
-    : 'Site et ads existants mais sous-performants.'
+    ? 'Site existant mais faible visibilité quand on cherche son métier sur Google.'
+    : 'Site existant mais qui ne lui rapporte pas assez de demandes.'
 
   const auditContext = buildAuditContext(lead.auditLevel, lead.auditWeaknesses, lead.auditCms)
 
@@ -155,7 +171,7 @@ function buildLeadBlock(lead: Lead, type: string, fromEmail: string, fromName: s
 - Métier du prospect : ${sector}
 - Ville : ${lead.city}
 - Site web : ${lead.hasWebsite ? 'oui' : 'NON'}
-- Google Ads : ${lead.hasGoogleAds ? 'oui' : 'NON'}
+- Visibilité payante détectée : ${lead.hasGoogleAds ? 'oui' : 'NON'} (info interne, NE JAMAIS l'évoquer dans l'email)
 - Bonne réputation Google : ${lead.googleRating && lead.googleRating >= 4.0 ? 'oui' : 'non'}
 - Situation : ${situation}${auditContext}
 
