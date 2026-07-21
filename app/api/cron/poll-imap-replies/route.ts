@@ -810,7 +810,10 @@ function fmtSlot(d: Date): string {
 // au lieu de re-demander une dispo. Avant, l'agent se contentait de proposer → aucun RDV en
 // agenda, aucune notif client, et le lead chaud restait invisible (cas Renov Habitat).
 function isOpenCallRequest(text: string): boolean {
-  const t = (text || '').toLowerCase()
+  // ⚠️ On NORMALISE les apostrophes courbes (’ ‘ `) en apostrophe droite : les mails envoyés depuis
+  // iPhone/Outlook utilisent ’, et toutes les regex écrites avec ' échouaient silencieusement
+  // (cas Renov Habitat : "veiller m’appeler" jamais détecté → aucun RDV calé).
+  const t = (text || '').toLowerCase().replace(/[’‘`´]/g, "'")
   if (/\b(non|pas maintenant|plus tard|rappelez plus tard|arr[êe]tez)\b/.test(t)) return false
   return /(appel(ez|e|er)[- ]?moi|rappel(ez|e|er)[- ]?moi|veuillez m'?appeler|veiller m'?appeler|me contacter|contactez[- ]?moi|joignez[- ]?moi|vous pouvez m'?appeler|quand vous (voulez|voudrez|le souhaitez|souhaitez)|[àa] votre convenance|n'?importe quand|quand [çc]a vous arrange|je suis (dispo|disponible|joignable))/.test(t)
 }
@@ -818,7 +821,7 @@ function isOpenCallRequest(text: string): boolean {
 // Le prospect confirme-t-il un créneau proposé ? ("oui", "ok", "parfait", "ça marche"...).
 // Message COURT + marqueur positif + AUCUN marqueur négatif ("non", "pas", "plutôt", "annul").
 function isAffirmativeConfirmation(text: string): boolean {
-  const t = (text || '').trim().toLowerCase()
+  const t = (text || '').trim().toLowerCase().replace(/[’‘`´]/g, "'") // apostrophes courbes normalisées
   if (!t || t.length > 140) return false
   if (/\b(non|pas|plut[oô]t|impossible|ne peux|ne pourrai|annul|autre (jour|moment|cr[ée]neau)|d[ée]cal)/.test(t)) return false
   return /\b(oui|ouais|ok|okay|d'?accord|parfait|nickel|impec(cable)?|ça marche|ca marche|ça me va|ca me va|ça (me )?convient|ca (me )?convient|c'?est bon|c'?est parfait|tr[eè]s bien|volontiers|avec plaisir|je confirme|convient|top|banco|allons-?y|allez-?y|entendu|ça roule|ca roule)\b/.test(t)

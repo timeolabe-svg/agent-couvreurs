@@ -11,7 +11,7 @@ let sql!: NeonQueryFunction<false, false>
 
 // Même détection que le poll : le prospect a donné carte blanche pour l'appel.
 function isOpenCallRequest(text: string): boolean {
-  const t = (text || '').toLowerCase()
+  const t = (text || '').toLowerCase().replace(/[’‘`´]/g, "'") // apostrophes courbes (iPhone/Outlook) normalisées
   if (/\b(non|pas maintenant|plus tard|arr[êe]tez)\b/.test(t)) return false
   return /(appel(ez|e|er)[- ]?moi|rappel(ez|e|er)[- ]?moi|veuillez m'?appeler|veiller m'?appeler|me contacter|contactez[- ]?moi|vous pouvez m'?appeler|quand vous (voulez|voudrez|le souhaitez|souhaitez)|[àa] votre convenance|n'?importe quand|quand [çc]a vous arrange|je suis (dispo|disponible|joignable))/.test(t)
 }

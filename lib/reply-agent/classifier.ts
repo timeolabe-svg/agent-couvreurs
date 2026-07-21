@@ -227,7 +227,9 @@ export function isWrongTarget(body: string): boolean {
 
 // Detect opt-out without calling Claude (saves credits + faster)
 function isOptOut(body: string, subject: string): boolean {
-  const text = (body + ' ' + subject).toLowerCase().trim()
+  // Apostrophes courbes (’) des mails iPhone/Outlook normalisées : sinon "ne m’intéresse pas"
+  // n'était PAS détecté comme opt-out et on continuait à relancer (risque juridique + réputation).
+  const text = (body + ' ' + subject).toLowerCase().trim().replace(/[’‘`´]/g, "'")
   const optOutPatterns = [
     /^stop\b/m,                                       // "Stop" / "STOP" en début de ligne
     /\bstop\b\s*[.!]?\s*$/m,                           // "... stop" en fin de message
