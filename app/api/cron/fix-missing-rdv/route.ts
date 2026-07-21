@@ -26,7 +26,7 @@ export async function GET(req: Request) {
   const apply = new URL(req.url).searchParams.get('apply') === '1'
 
   const rows = (await sql`
-    SELECT DISTINCT ON (c.id) c.id, c.email, c.company, c.name, c.phone, ir.id AS reply_id, ir.body, ir.created_at
+    SELECT DISTINCT ON (c.id) c.id, c.email, c.company, c.name, c.phone, ir.id AS reply_id, ir.body, ir.subject, ir.created_at
     FROM contacts c
     JOIN incoming_replies ir ON ir.contact_id = c.id
     WHERE ir.created_at > NOW() - INTERVAL '14 days'
@@ -34,11 +34,14 @@ export async function GET(req: Request) {
       AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status = 'confirmed')
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
     ORDER BY c.id, ir.created_at DESC
-  `) as Array<{ id: string; email: string; company: string | null; name: string | null; phone: string | null; reply_id: string; body: string; created_at: string }>
+  `) as Array<{ id: string; email: string; company: string | null; name: string | null; phone: string | null; reply_id: string; body: string; subject: string | null; created_at: string }>
 
-  const candidats = rows.filter(r => isOpenCallRequest(cleanIncomingBody(r.body || '')))
+  // Objet + corps : le message est souvent écrit DANS L'OBJET (mobile), le corps ne contenant que
+  // la signature ("Envoyé de mon iPhone"). En ne lisant que le corps, on rate complètement la demande.
+  const full = (r: { subject?: string | null; body?: string | null }) => `${r.subject ?? ''}\n${cleanIncomingBody(r.body || '')}`
+  const candidats = rows.filter(r => isOpenCallRequest(full(r)))
   if (!apply) {
-    return NextResponse.json({ dry_run: true, a_caler: candidats.length, leads: candidats.map(c => ({ company: c.company, email: c.email, phone: c.phone, extrait: cleanIncomingBody(c.body || '').replace(/\s+/g, ' ').slice(0, 70) })) })
+    return NextResponse.json({ dry_run: true, a_caler: candidats.length, leads: candidats.map(c => ({ company: c.company, email: c.email, phone: c.phone, extrait: full(c).replace(/\s+/g, ' ').slice(0, 70) })) })
   }
 
   const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
@@ -68,7 +71,7 @@ export async function GET(req: Request) {
           c.phone ? `Téléphone : ${c.phone}` : '',
           `Email : ${c.email}`,
           ``,
-          `Message reçu : "${cleanIncomingBody(c.body || '').replace(/\s+/g, ' ').slice(0, 200)}"`,
+          `Message reçu : "${full(c).replace(/\s+/g, ' ').slice(0, 200)}"`,
           ``,
           `Agenda : https://agent-couvreurs.vercel.app/agenda`,
         ].filter(Boolean).join('\n')

@@ -416,7 +416,12 @@ async function processReply(params: {
   // 'confirmed' (+ notif client) QUE quand le prospect dit oui, OU donne lui-même une date précise.
   const isRdv = classification.classification === 'rdv_request'
   const rawExtracted = (classification as { extractedDate?: string }).extractedDate
-  const phoneMatch = cleanBody.match(/0[1-9]([\s. ]?\d{2}){4}/)
+  // ⚠️ Beaucoup de prospects (surtout depuis un mobile) écrivent tout leur message DANS L'OBJET et
+  // laissent un corps vide ("Envoyé de mon iPhone"). En n'analysant que le corps, on ratait le
+  // numéro, la demande de rappel et la date → aucun RDV calé, lead chaud perdu (cas Renov Habitat).
+  // On analyse donc OBJET + CORPS pour toute la détection.
+  const analysisText = `${subject}\n${cleanBody}`
+  const phoneMatch = analysisText.match(/0[1-9]([\s. ]?\d{2}){4}/)
   const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
 
   // RDV DÉJÀ CALÉ (confirmé) = job terminé → l'agent n'envoie plus rien (l'humain gère).
@@ -438,7 +443,7 @@ async function processReply(params: {
       // Date voulue : d'abord l'extraction du classifieur, sinon on parse DIRECTEMENT le corps du
       // message (le classifieur rate parfois "demain avant-midi" → il faut quand même caler au bon
       // moment). Le créneau retenu est TOUJOURS le plus tôt disponible à partir de là.
-      parsedDate = (rawExtracted ? parseExtractedDate(rawExtracted) : null) ?? parseExtractedDate(cleanBody)
+      parsedDate = (rawExtracted ? parseExtractedDate(rawExtracted) : null) ?? parseExtractedDate(analysisText)
       candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg)
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
@@ -460,7 +465,7 @@ async function processReply(params: {
       // Le prospect donne une AUTRE date précise → accord sur cette date → on cale.
       await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()}, status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
-    } else if (isAffirmativeConfirmation(cleanBody) || isOpenCallRequest(cleanBody)) {
+    } else if (isAffirmativeConfirmation(analysisText) || isOpenCallRequest(analysisText)) {
       // "oui / ok / parfait", OU carte blanche ("appelez-moi quand vous voulez") → on cale AU créneau proposé.
       await sql`UPDATE rdv SET status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmedAt = new Date(proposedExisting.scheduled_at); confirmSlotStr = fmtSlot(confirmedAt); bookedNow = true
@@ -470,7 +475,7 @@ async function processReply(params: {
       proposeSlotStr = candidateSlotStr
     }
   } else if (isRdv && availabilityCfg && candidateSlot && contact?.id) {
-    const openCall = isOpenCallRequest(cleanBody)
+    const openCall = isOpenCallRequest(analysisText)
     if (parsedDate || openCall) {
       // Soit il a donné une date précise, soit il a donné CARTE BLANCHE ("appelez-moi", "quand
       // vous voulez"). Dans les deux cas il a dit oui à l'appel → on CALE au prochain créneau
