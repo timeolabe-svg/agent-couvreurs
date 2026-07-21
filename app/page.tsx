@@ -164,6 +164,8 @@ export default function DashboardPage() {
   const emailsSent = s?.totalEmailsSent ?? s?.repliesReceived != null ? (s?.totalEmailsSent ?? 0) : 0
   const repliesReceived = s?.repliesReceived ?? s?.totalReplies ?? 0
   const rdvCount = s?.rdvThisMonth ?? 0
+  // KPI du haut = TOTAL de tous les RDV obtenus depuis le début (pas seulement le mois en cours).
+  const rdvTotal = s?.totalRdv ?? rdvCount
   const clientsSigned = s?.clientsSigned ?? s?.totalSigned ?? 0
   const revenue = s?.revenue ?? (rdvCount * 50)
   const pendingReplies = s?.draftsAwaitingValidation ?? 0
@@ -302,7 +304,7 @@ export default function DashboardPage() {
           {[
             { Icon: Mail, iconColor: '#5f83ac', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
             { Icon: MessageSquare, iconColor: '#5c9b82', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
-            { Icon: Calendar, iconColor: '#7d6fb0', label: 'RDV GÉNÉRÉS', value: String(rdvCount), href: '/agenda' },
+            { Icon: Calendar, iconColor: '#7d6fb0', label: 'RDV GÉNÉRÉS', value: String(rdvTotal), href: '/agenda' },
             { Icon: User, iconColor: '#7d6fb0', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
           ].map(card => (
             <a

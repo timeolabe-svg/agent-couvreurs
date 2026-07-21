@@ -774,7 +774,10 @@ function parseExtractedDate(dateStr: string): Date | null {
     if (/matin|matin[ée]e|avant[- ]?midi|dans la matin/.test(lower)) { d.setHours(9, 30, 0, 0); return }
     if (/apr[èe]s-?midi/.test(lower)) { d.setHours(15, 0, 0, 0); return }
     if (/midi/.test(lower)) { d.setHours(12, 0, 0, 0); return }
-    d.setHours(17, 0, 0, 0)
+    // DÉFAUT = matin. Avant c'était 17h (fin de journée) : un prospect qui écrit juste "à demain"
+    // se retrouvait calé en fin d'après-midi alors que l'agent lui avait répondu "demain matin"
+    // → promesse non tenue. On veut toujours le créneau le PLUS TÔT.
+    d.setHours(9, 30, 0, 0)
   }
   if (/aujourd'?hui|ce soir|fin de journ[ée]e|en soir[ée]e/.test(lower) && !/demain/.test(lower)) {
     const d = new Date(now); setHourFromText(d); return d
