@@ -37,7 +37,9 @@ export async function GET(req: Request) {
     } catch (e) { out.db_error = String((e as Error)?.message ?? e).slice(0, 120) }
   }
 
-  // ── Boîtes IMAP ──
+  // ── Boîtes IMAP (sautable : ?skipmail=1 pour une réponse rapide base-seule) ──
+  if (u.searchParams.get('skipmail') === '1') return NextResponse.json(out)
+  const started = Date.now()
   const boxes = getGmailBoxes()
   const found: Array<Record<string, unknown>> = []
   const { ImapFlow } = await import('imapflow')
@@ -53,8 +55,9 @@ export async function GET(req: Request) {
       const lock = await client.getMailboxLock('INBOX')
       try {
         const res = await client.search({ since })
-        const uids = (Array.isArray(res) ? res : []).slice(-200).reverse()
+        const uids = (Array.isArray(res) ? res : []).slice(-90).reverse()
         for (const uid of uids) {
+          if (Date.now() - started > 40000) break // garde-fou temps global
           const env = await client.fetchOne(uid, { envelope: true }).catch(() => null)
           if (!env || !env.envelope) continue
           const from = (env.envelope.from?.[0]?.address ?? '').toLowerCase()
