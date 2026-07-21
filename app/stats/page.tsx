@@ -17,7 +17,7 @@ interface AnalyticsData {
   conversionRate: number
   topCities: Array<{ city: string; sent: number; replies: number; replyRate: number; rdv: number; revenue: number }>
   dailyActivity: Array<{ date: string; sent: number; replies: number }>
-  pipeline: { prospects: number; contacted: number; replied: number; rdv: number }
+  pipeline: { prospects: number; contacted: number; replied: number; rdv: number; signed?: number }
   bestCity: { city: string; replyRate: number; rdv: number } | null
   classificationBreakdown: Array<{ classification: string; count: number }>
   autoRepliesSent: number
@@ -270,37 +270,43 @@ export default function StatsPage() {
                 <p className="text-[13px] font-semibold" style={{ color: '#e8e8f0' }}>Répartition du pipeline</p>
               </div>
               <div className="px-4 py-4 space-y-4" style={{ background: '#111118' }}>
-                {PIPELINE_ITEMS.map(({ key, label, color }) => {
-                  const val = d?.pipeline?.[key] ?? 0
-                  const total = d?.pipeline?.prospects ?? 1
-                  const pct = total > 0 ? Math.round((val / total) * 100) : 0
-                  return (
-                    <div key={key}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[12px]" style={{ color: '#e8e8f0' }}>{label}</span>
-                        <span className="text-[12px]" style={{ color: '#6b6b80' }}>
-                          {val.toLocaleString('fr-FR')} · {pct}%
-                        </span>
+                {/* Entonnoir : chaque étape est exprimée en % de l'étape PRÉCÉDENTE (taux de
+                    conversion), pas en % du total. En % du total, 9 RDV sur 2 300 prospects
+                    affichait "0%" et la barre était invisible — inexploitable. Là on lit
+                    directement où ça coince (ex : 25 réponses → 6 RDV = 24%). */}
+                {(() => {
+                  const p = d?.pipeline
+                  const etapes: { label: string; val: number; color: string; ref: string }[] = [
+                    { label: 'Prospects', val: p?.prospects ?? 0, color: '#5f83ac', ref: '' },
+                    { label: 'Contactés', val: p?.contacted ?? 0, color: '#5c9b82', ref: 'des prospects' },
+                    { label: 'Réponses', val: p?.replied ?? 0, color: '#c19653', ref: 'des contactés' },
+                    { label: 'RDV', val: p?.rdv ?? 0, color: '#7d6fb0', ref: 'des réponses' },
+                    { label: 'Clients signés', val: p?.signed ?? 0, color: '#a99cc9', ref: 'des RDV' },
+                  ]
+                  return etapes.map((e, i) => {
+                    const prev = i === 0 ? e.val : etapes[i - 1].val
+                    const raw = prev > 0 ? (e.val / prev) * 100 : 0
+                    // 1 décimale sous 10% pour ne jamais afficher un "0%" trompeur
+                    const pct = i === 0 ? 100 : (raw > 0 && raw < 10 ? +raw.toFixed(1) : Math.round(raw))
+                    return (
+                      <div key={e.label}>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[12px]" style={{ color: '#e8e8f0' }}>{e.label}</span>
+                          <span className="text-[12px]" style={{ color: '#6b6b80' }}>
+                            {e.val.toLocaleString('fr-FR')}
+                            {e.ref ? ` · ${pct}% ${e.ref}` : ' · 100%'}
+                          </span>
+                        </div>
+                        <div className="w-full rounded-sm" style={{ height: '6px', background: '#1a1a24' }}>
+                          <div
+                            className="h-full rounded-sm transition-all"
+                            style={{ width: `${Math.max(e.val > 0 ? 2 : 0, Math.min(pct, 100))}%`, background: e.color }}
+                          />
+                        </div>
                       </div>
-                      <div className="w-full rounded-sm" style={{ height: '6px', background: '#1a1a24' }}>
-                        <div
-                          className="h-full rounded-sm transition-all"
-                          style={{ width: `${Math.min(pct, 100)}%`, background: color }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-                {/* Clients signés */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[12px]" style={{ color: '#e8e8f0' }}>Clients signés</span>
-                    <span className="text-[12px]" style={{ color: '#6b6b80' }}>0 · 0%</span>
-                  </div>
-                  <div className="w-full rounded-sm" style={{ height: '6px', background: '#1a1a24' }}>
-                    <div className="h-full rounded-sm" style={{ width: '0%', background: '#7d6fb0' }} />
-                  </div>
-                </div>
+                    )
+                  })
+                })()}
               </div>
             </div>
           </div>

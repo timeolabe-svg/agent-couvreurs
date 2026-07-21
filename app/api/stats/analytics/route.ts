@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+// Prix facturé par RDV généré (accord Hdigiweb). À mettre à jour si le tarif change.
+const PRIX_PAR_RDV = 80
+
 type Period = '7d' | '30d' | '90d' | 'all'
 
 function getMockAnalytics(period: Period) {
@@ -88,8 +91,11 @@ export async function GET(request: NextRequest) {
     : undefined
 
   // RDV : on EXCLUT les annulés (sinon CA gonflé par des RDV qui n'ont pas eu lieu)
+  // On EXCLUT aussi les 'proposed' : un créneau proposé mais PAS encore accepté par le prospect
+  // n'est pas un RDV obtenu — sinon les stats et le CA sont gonflés (9 affichés au lieu de 6).
   const rdvConditions = and(
     ne(rdv.status, 'cancelled'),
+    ne(rdv.status, 'proposed'),
     periodStart ? gte(rdv.created_at, periodStart) : undefined,
   )
 
@@ -120,8 +126,14 @@ export async function GET(request: NextRequest) {
     )),
   ])
 
+  // Clients signés (dernière étape du pipeline) — était codé en dur à 0 dans l'affichage.
+  const [{ signedCount }] = await db.select({ signedCount: count() }).from(rdv).where(and(
+    eq(rdv.status, 'signed'),
+    periodStart ? gte(rdv.created_at, periodStart) : undefined,
+  ))
+
   const replyRate = emailsSent > 0 ? +(Math.min(replies, emailsSent) / emailsSent * 100).toFixed(1) : 0
-  const revenue = rdvCount * 50
+  const revenue = rdvCount * PRIX_PAR_RDV
   const conversionRate = emailsSent > 0 ? +(rdvCount / emailsSent * 100).toFixed(2) : 0
 
   // Top cities
@@ -166,7 +178,7 @@ export async function GET(request: NextRequest) {
         replies: cityReplies,
         replyRate: sent > 0 ? +(cityReplies / sent * 100).toFixed(1) : 0,
         rdv: cityRdv,
-        revenue: cityRdv * 50,
+        revenue: cityRdv * PRIX_PAR_RDV,
       }
     })
     // Trier : RDV d'abord, puis taux de réponse, puis volume envoyé
@@ -250,6 +262,7 @@ export async function GET(request: NextRequest) {
       contacted: emailsSent,
       replied: replies,
       rdv: rdvCount,
+      signed: signedCount,
     },
     bestCity: bestCity ? { city: bestCity.city, replyRate: bestCity.replyRate, rdv: bestCity.rdv } : null,
     classificationBreakdown,
