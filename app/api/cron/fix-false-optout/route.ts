@@ -39,8 +39,11 @@ export async function GET(req: Request) {
       .toLowerCase()
 
   // Refus RÉEL du prospect (dans SON texte, pas dans la citation).
+  // "stop" en mot ISOLÉ n'importe où dans SON texte (pas seulement en début) : un simple "Stop"
+  // dans le corps est un vrai refus. \b évite "stopper le chantier". Dans le doute → on garde
+  // blocklisté (prudence : mieux vaut rater un déblocage que réactiver quelqu'un qui a dit stop).
   const vraiRefus = (t: string) =>
-    /^\s*stop\b/.test(t) || /d[ée]sabonn|d[ée]sinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|[ée]crire|solliciter)|pas int[ée]ress|retirez[- ]?(moi|nous)/.test(t)
+    /\bstop\b/.test(t) || /d[ée]sabonn|d[ée]sinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|[ée]crire|solliciter)|pas int[ée]ress|retirez[- ]?(moi|nous)/.test(t)
 
   // ⚠️ SÉCURITÉ : on ne débloque QUE si AUCUNE de ses réponses (toutes classifications confondues,
   // y compris les 'desinterest') ne contient un vrai refus. On ne réactive JAMAIS quelqu'un qui a
