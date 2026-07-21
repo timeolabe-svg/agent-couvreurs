@@ -19,7 +19,7 @@ export async function GET() {
   try {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
-    const { inArray, desc, ne, isNull, or, and, eq, sql } = await import('drizzle-orm')
+    const { inArray, desc, ne, isNull, or, and, eq, sql, gte } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint, isChallengeResponseSpam } = await import('@/lib/reply-agent/classifier')
     const { cleanIncomingBody } = await import('@/lib/decode-body')
 
@@ -109,20 +109,24 @@ export async function GET() {
     // 4ter. ÉPUISÉ : plus rien ne partira automatiquement pour ce contact — aucun mail en file,
     // aucun brouillon en attente d'envoi, et les 2 relances de conversation ont été consommées.
     // Ces conversations n'ont plus rien à faire dans "En attente" → onglet "Échoué".
-    const exhaustedRows = contactIds.length
-      ? (await db.execute(sql`
-          SELECT c.id::text AS contact_id
-          FROM contacts c
-          WHERE c.id = ANY(${contactIds})
-            AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status IN ('pending','queued','sending'))
-            AND NOT EXISTS (
-              SELECT 1 FROM reply_drafts rd JOIN incoming_replies ir2 ON ir2.id = rd.incoming_reply_id
-              WHERE ir2.contact_id = c.id AND rd.status IN ('pending','scheduled')
-            )
-            AND (SELECT COUNT(*) FROM email_queue eq2 WHERE eq2.contact_id = c.id AND eq2.sequence_step >= 20 AND eq2.status = 'sent') >= 2
-        `)) as unknown as Array<{ contact_id: string }>
-      : []
-    const contactsExhausted = new Set((Array.isArray(exhaustedRows) ? exhaustedRows : (exhaustedRows as unknown as { rows?: Array<{ contact_id: string }> }).rows ?? []).map(r => r.contact_id))
+    const [mailsEnFile, brouillonsEnAttente, relancesConvo] = contactIds.length
+      ? await Promise.all([
+          db.selectDistinct({ id: email_queue.contact_id }).from(email_queue)
+            .where(and(inArray(email_queue.contact_id, contactIds), inArray(email_queue.status, ['pending', 'queued', 'sending']))),
+          db.selectDistinct({ id: incoming_replies.contact_id }).from(reply_drafts)
+            .innerJoin(incoming_replies, eq(incoming_replies.id, reply_drafts.incoming_reply_id))
+            .where(and(inArray(incoming_replies.contact_id, contactIds), inArray(reply_drafts.status, ['pending', 'scheduled']))),
+          db.select({ id: email_queue.contact_id, n: sql<number>`count(*)::int` }).from(email_queue)
+            .where(and(inArray(email_queue.contact_id, contactIds), gte(email_queue.sequence_step, 20), eq(email_queue.status, 'sent')))
+            .groupBy(email_queue.contact_id),
+        ])
+      : [[], [], []]
+    const aMailEnFile = new Set(mailsEnFile.map(r => r.id).filter(Boolean))
+    const aBrouillon = new Set(brouillonsEnAttente.map(r => r.id).filter(Boolean))
+    const relancesFinies = new Set(relancesConvo.filter(r => (r.n ?? 0) >= 2).map(r => r.id).filter(Boolean))
+    const contactsExhausted = new Set(
+      contactIds.filter(id => !aMailEnFile.has(id) && !aBrouillon.has(id) && relancesFinies.has(id))
+    )
 
     // Assemble par groupe
     type Group = {
