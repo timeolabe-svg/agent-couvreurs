@@ -19,7 +19,7 @@ export async function GET() {
   try {
     const { db } = await import('@/lib/db')
     const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
-    const { inArray, desc, ne, isNull, or, and, eq } = await import('drizzle-orm')
+    const { inArray, desc, ne, isNull, or, and, eq, sql } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint, isChallengeResponseSpam } = await import('@/lib/reply-agent/classifier')
     const { cleanIncomingBody } = await import('@/lib/decode-body')
 
@@ -106,6 +106,24 @@ export async function GET() {
       : []
     const contactsWithRdv = new Set(rdvRows.map(r => r.contact_id).filter(Boolean))
 
+    // 4ter. ÉPUISÉ : plus rien ne partira automatiquement pour ce contact — aucun mail en file,
+    // aucun brouillon en attente d'envoi, et les 2 relances de conversation ont été consommées.
+    // Ces conversations n'ont plus rien à faire dans "En attente" → onglet "Échoué".
+    const exhaustedRows = contactIds.length
+      ? (await db.execute(sql`
+          SELECT c.id::text AS contact_id
+          FROM contacts c
+          WHERE c.id = ANY(${contactIds})
+            AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status IN ('pending','queued','sending'))
+            AND NOT EXISTS (
+              SELECT 1 FROM reply_drafts rd JOIN incoming_replies ir2 ON ir2.id = rd.incoming_reply_id
+              WHERE ir2.contact_id = c.id AND rd.status IN ('pending','scheduled')
+            )
+            AND (SELECT COUNT(*) FROM email_queue eq2 WHERE eq2.contact_id = c.id AND eq2.sequence_step >= 20 AND eq2.status = 'sent') >= 2
+        `)) as unknown as Array<{ contact_id: string }>
+      : []
+    const contactsExhausted = new Set((Array.isArray(exhaustedRows) ? exhaustedRows : (exhaustedRows as unknown as { rows?: Array<{ contact_id: string }> }).rows ?? []).map(r => r.contact_id))
+
     // Assemble par groupe
     type Group = {
       key: string
@@ -117,6 +135,7 @@ export async function GET() {
       website: string | null
       classification: string | null
       rdvBooked: boolean
+      exhausted: boolean // plus aucune relance ni brouillon à venir → conversation morte
       messages: ConvMessage[]
       lastDate: string
     }
@@ -142,6 +161,7 @@ export async function GET() {
           website: c?.website ?? null,
           classification: r.classification,
           rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
+          exhausted: r.contact_id ? contactsExhausted.has(r.contact_id) : false,
           messages: [],
           lastDate: r.created_at?.toISOString() ?? '',
         })

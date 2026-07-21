@@ -21,6 +21,7 @@ interface Conversation {
   website: string | null
   classification: string | null
   rdvBooked?: boolean
+  exhausted?: boolean // plus aucune relance ni brouillon à venir → conversation morte
   messages: ConvMessage[]
   lastDate: string
 }
@@ -42,15 +43,18 @@ function fmt(d: string): string {
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-type Tab = 'positive' | 'negative' | 'pending'
+type Tab = 'positive' | 'negative' | 'pending' | 'failed'
 
-// Range une conversation dans un des 3 onglets :
+// Range une conversation dans un des 4 onglets :
 //  - Positives   = un RDV est calé (l'objectif atteint).
 //  - Négatives   = opt-out "stop" OU échange terminé où le lead décline (desinterest).
-//  - En attente  = l'agent échange encore avec le lead (conversation en cours).
+//  - En attente  = l'agent échange encore avec le lead (quelque chose est encore prévu).
+//  - Échoué      = plus AUCUNE relance ni réponse à venir et toujours pas de RDV : la
+//                  conversation est morte, elle ne doit plus polluer "En attente".
 function tabOf(c: Conversation): Tab {
   if (c.rdvBooked) return 'positive'
   if (c.classification === 'desinterest') return 'negative'
+  if (c.exhausted) return 'failed'
   return 'pending' // interest sans RDV, question, objection, oof, other, non classé
 }
 
@@ -58,6 +62,7 @@ const TABS: { key: Tab; label: string; color: string }[] = [
   { key: 'positive', label: 'Positives', color: '#5c9b82' },
   { key: 'negative', label: 'Négatives', color: '#ef4444' },
   { key: 'pending', label: 'En attente', color: '#c19653' },
+  { key: 'failed', label: 'Échoué', color: '#6b6b80' },
 ]
 
 export default function ConversationsPage() {
@@ -77,7 +82,7 @@ export default function ConversationsPage() {
   }
   useEffect(() => { void load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
-  const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0 }
+  const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0, failed: 0 }
   for (const c of convs) counts[tabOf(c)]++
 
   const filtered = convs.filter(c => tabOf(c) === tab)
@@ -145,6 +150,8 @@ export default function ConversationsPage() {
           {filtered.map(c => {
             const cls = c.rdvBooked
               ? { label: 'RDV calé', color: '#5c9b82' }
+              : (c.exhausted && c.classification !== 'desinterest')
+              ? { label: 'Relances épuisées', color: '#6b6b80' }
               : (c.classification ? CLASS_LABEL[c.classification] : null)
             const last = c.messages[c.messages.length - 1]
             const active = c.key === selected
