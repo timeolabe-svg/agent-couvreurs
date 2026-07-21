@@ -124,6 +124,7 @@ export function findNextAvailableSlot(
   preferredDate: Date | null,
   availability: Availability,
   takenTimes?: Array<Date | string>, // créneaux DÉJÀ pris par un RDV confirmé → à sauter
+  allowToday = false,                // par défaut on ne cale JAMAIS le jour même (voir plancher)
 ): Date {
   // Créneaux occupés (à la minute près) : sans ça, deux prospects pouvaient être calés sur le
   // MÊME créneau (impossible à honorer, le client doit décaler à la main).
@@ -142,8 +143,16 @@ export function findNextAvailableSlot(
   // donnait un preferredDate = aujourd'hui 15h (déjà passé) → RDV périmé, notif absurde, réponse
   // qui confirme un appel déjà dépassé. On borne le point de départ à maintenant + 1h (marge de
   // rappel réaliste) ; la recherche de créneau ci-dessous avance ensuite vers le prochain slot valide.
+  // PLANCHER : on ne cale JAMAIS le jour même (l'artisan est sur chantier, il lui faut le temps de
+  // s'organiser) → minimum le LENDEMAIN. Exception : il a explicitement dit qu'il n'était dispo
+  // qu'aujourd'hui (allowToday), et là on part de maintenant + 1h.
   const floor = toParisWallClock()
-  floor.setHours(floor.getHours() + 1, 0, 0, 0)
+  if (allowToday) {
+    floor.setHours(floor.getHours() + 1, 0, 0, 0)
+  } else {
+    floor.setDate(floor.getDate() + 1)
+    floor.setHours(0, 0, 0, 0)
+  }
   if (candidate.getTime() < floor.getTime()) candidate.setTime(floor.getTime())
 
   // Zero out seconds/ms

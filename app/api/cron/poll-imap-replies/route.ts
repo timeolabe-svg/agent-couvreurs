@@ -447,7 +447,9 @@ async function processReply(params: {
       // Créneaux déjà occupés par un RDV confirmé → on ne double-book pas (sinon deux prospects
       // sur le même horaire, impossible à honorer pour le client).
       const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
-      candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg, busy.map(b => b.scheduled_at))
+      // Le jour même n'est autorisé QUE si le prospect le demande explicitement.
+      const allowToday = /aujourd'?hui|ce soir|dans la journ[ée]e|maintenant|tout de suite|d[èe]s que possible/i.test(analysisText.replace(/[’‘`´]/g, "'"))
+      candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg, busy.map(b => b.scheduled_at), allowToday)
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
       results.push(`calcul créneau échoué: ${String(e).slice(0, 60)}`)

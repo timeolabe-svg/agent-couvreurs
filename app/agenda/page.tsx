@@ -291,9 +291,9 @@ export default function AgendaPage() {
                       {/* Date block */}
                       <div className="flex flex-col items-center justify-center rounded-lg flex-shrink-0"
                         style={{ width: 52, padding: '8px 0', background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
-                        <span className="text-[10px] uppercase" style={{ color: sm.color }}>{d.toLocaleDateString('fr-FR', { month: 'short' })}</span>
+                        <span className="text-[10px] uppercase" style={{ color: sm.color }}>{d.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}</span>
                         <span className="text-[19px] font-bold leading-none my-0.5" style={{ color: 'var(--color-text)' }}>{d.getDate()}</span>
-                        <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>{d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}</span>
                       </div>
 
                       {/* Main */}
@@ -304,7 +304,7 @@ export default function AgendaPage() {
                           {contactName && <span className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>· {contactName}</span>}
                         </div>
                         <p className="text-[11px] mt-0.5" style={{ color: 'var(--color-muted)' }}>
-                          {d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} à {d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} · {r.duration_min ?? 30} min
+                          {d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })} à {d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} · {r.duration_min ?? 30} min
                         </p>
 
                         {/* Coordonnées */}
@@ -371,7 +371,7 @@ export default function AgendaPage() {
                         <button key={r.id} onClick={() => r.contact_id && void openDetails(r.contact_id, getRdvCompany(r))}
                           className="text-left rounded px-1.5 py-0.5 truncate text-[10px]"
                           style={{ background: sm.color + '22', color: sm.color, borderLeft: `2px solid ${sm.color}` }}>
-                          {new Date(r.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} {getRdvCompany(r)}
+                          {new Date(r.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} {getRdvCompany(r)}
                         </button>
                       )
                     })}

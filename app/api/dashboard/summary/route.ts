@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server'
 
+// Prix facturé par RDV généré (accord Hdigiweb). À mettre à jour si le tarif change.
+const PRIX_PAR_RDV = 80
 export const dynamic = 'force-dynamic'
 
 function getMockSummary() {
   const rdvThisMonth = 12
-  const revenue = rdvThisMonth * 50
+  const revenue = rdvThisMonth * PRIX_PAR_RDV
 
   const now = new Date()
   const day = now.getDay()
@@ -431,7 +433,7 @@ export async function GET() {
     .map(r => ({
       month: r.month.trim(),
       rdv: r.cnt,
-      revenue: r.cnt * 50,
+      revenue: r.cnt * PRIX_PAR_RDV,
     }))
 
   const weeklyLearning = weeklyLearningRaw[0]
@@ -465,7 +467,7 @@ export async function GET() {
     activeCampaigns: activeCampaignsCount[0]?.cnt ?? 0,
     totalCampaigns: totalCampaignsCount[0]?.cnt ?? 0,
     lastTickMinutesAgo,
-    revenue_this_month: rdvThisMonth * 50,
+    revenue_this_month: rdvThisMonth * PRIX_PAR_RDV,
     // new
     repliesReceived,
     clientsSigned,
@@ -476,7 +478,7 @@ export async function GET() {
     topCampaigns,
     recentActivity,
     weeklyLearning,
-    revenue: rdvThisMonth * 50,
+    revenue: rdvThisMonth * PRIX_PAR_RDV,
     monthlyHistory,
     // legacy
     recentEvents,

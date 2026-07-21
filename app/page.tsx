@@ -167,7 +167,7 @@ export default function DashboardPage() {
   // KPI du haut = TOTAL de tous les RDV obtenus depuis le début (pas seulement le mois en cours).
   const rdvTotal = s?.totalRdv ?? rdvCount
   const clientsSigned = s?.clientsSigned ?? s?.totalSigned ?? 0
-  const revenue = s?.revenue ?? (rdvCount * 50)
+  const revenue = s?.revenue ?? (rdvCount * 80)
   const pendingReplies = s?.draftsAwaitingValidation ?? 0
   const rdvToday = s?.rdvToday ?? 0
   const pendingFollowups = s?.pendingFollowups ?? 0
