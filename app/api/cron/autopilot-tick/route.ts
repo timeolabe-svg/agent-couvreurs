@@ -31,6 +31,9 @@ function getDailyCapacity(weeksElapsed: number): number {
     ?? RAMP_SCHEDULE[RAMP_SCHEDULE.length - 1]
   return step.perInbox * getInboxCount()
 }
+// CIBLAGE demandé par le client (Haris) : ne contacter QUE les entreprises ayant au moins
+// 20 avis Google. En dessous, l'entreprise est trop peu établie et le RDV ne se transforme pas.
+const MIN_GOOGLE_REVIEWS = 20
 const MIN_PIPELINE_LEADS = 80    // scrape quand il reste moins de X leads en attente
 const SCRAPE_BATCH_SIZE = 12     // leads par requête (réduit pour tenir sous le timeout)
 
@@ -611,6 +614,10 @@ export async function GET(request: NextRequest) {
               gte(contacts.email_confidence_score, 90),
               eq(contacts.email_validated, true),
             ),
+            // CIBLAGE CLIENT (Haris) : on ne contacte QUE les entreprises ayant au moins
+            // MIN_GOOGLE_REVIEWS avis Google. En dessous, l'entreprise est trop peu établie
+            // et le RDV ne se transforme pas. Filtre demandé explicitement par le client.
+            gte(contacts.google_reviews_count, MIN_GOOGLE_REVIEWS),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)

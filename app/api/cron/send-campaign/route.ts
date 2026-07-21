@@ -135,6 +135,10 @@ export async function GET(req: NextRequest) {
                 AND (ir.classification IS NULL OR ir.classification NOT IN ('oof', 'spam'))
             )
           )
+          -- CIBLAGE CLIENT (Haris) : au moins 20 avis Google. Bloque aussi les contacts déjà en
+          -- file qui étaient sous le seuil. EXCEPTION : les relances de conversation (step >= 20)
+          -- vont à des gens qui ont DÉJÀ répondu — on ne les abandonne pas pour un critère de ciblage.
+          AND (eq.sequence_step >= 20 OR COALESCE(c.google_reviews_count, 0) >= 20)
           -- ANTI-BOUNCE : si MillionVerifier est actif, on n'envoie QU'aux emails validés.
           -- EXCEPTION : les relances de CONVERSATION (step >= 20) visent des gens qui ont DÉJÀ
           -- RÉPONDU → leur email est prouvé livrable. Les bloquer sur le gate MV faisait qu'un lead
