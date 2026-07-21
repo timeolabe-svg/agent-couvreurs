@@ -122,8 +122,14 @@ export function isSlotAvailable(date: Date, availability: Availability): boolean
 
 export function findNextAvailableSlot(
   preferredDate: Date | null,
-  availability: Availability
+  availability: Availability,
+  takenTimes?: Array<Date | string>, // créneaux DÉJÀ pris par un RDV confirmé → à sauter
 ): Date {
+  // Créneaux occupés (à la minute près) : sans ça, deux prospects pouvaient être calés sur le
+  // MÊME créneau (impossible à honorer, le client doit décaler à la main).
+  const taken = new Set<number>(
+    (takenTimes ?? []).map(t => { const d = new Date(t); d.setSeconds(0, 0); return d.getTime() })
+  )
   const candidate = preferredDate ? new Date(preferredDate) : (() => {
     // Start from next working day at 10:00 (heure de Paris)
     const d = toParisWallClock()
@@ -165,7 +171,7 @@ export function findNextAvailableSlot(
 
       // Walk through slots in this day
       while (minutesOfDay(candidate) < endMin) {
-        if (isSlotAvailable(candidate, availability)) {
+        if (isSlotAvailable(candidate, availability) && !taken.has(candidate.getTime())) {
           return candidate
         }
         candidate.setMinutes(candidate.getMinutes() + slotMin)

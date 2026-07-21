@@ -444,7 +444,10 @@ async function processReply(params: {
       // message (le classifieur rate parfois "demain avant-midi" → il faut quand même caler au bon
       // moment). Le créneau retenu est TOUJOURS le plus tôt disponible à partir de là.
       parsedDate = (rawExtracted ? parseExtractedDate(rawExtracted) : null) ?? parseExtractedDate(analysisText)
-      candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg)
+      // Créneaux déjà occupés par un RDV confirmé → on ne double-book pas (sinon deux prospects
+      // sur le même horaire, impossible à honorer pour le client).
+      const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
+      candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg, busy.map(b => b.scheduled_at))
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
       results.push(`calcul créneau échoué: ${String(e).slice(0, 60)}`)
