@@ -91,19 +91,25 @@ export function stripQuotedReply(raw: string): string {
     .replace(/&rsquo;/gi, "'")
     .replace(/&quot;/gi, '"')
 
-  // Coupe au premier marqueur de citation / historique de conversation
+  // Coupe au premier marqueur de citation / historique de conversation.
+  // ⚠️ Les marqueurs ne doivent PAS exiger un saut de ligne : beaucoup de clients (iPhone) ou le
+  // parsing MIME aplatissent les retours à la ligne, et la citation arrive COLLÉE au texte
+  // ("Ok appelle moi Envoyé de mon iPhone > Le 21 juil...."). Si la coupe échoue, on analyse NOTRE
+  // propre pied de page qui contient « répondez simplement "Stop" » → FAUX OPT-OUT, et un lead
+  // chaud se retrouve blocklisté (cas LJR Couverture). Ces marqueurs sont donc newline-optionnels.
   const markers = [
-    /\n\s*Le\s[\s\S]{0,90}?\sa\s+écrit\s*:/i,        // "Le 15 juin 2026, X a écrit :"
-    /\n\s*Le\s(lun|mar|mer|jeu|ven|sam|dim)[\s\S]{0,90}?,/i, // "Le lun. 15 juin 2026, ... a"
-    /\nOn\s[\s\S]{0,90}?\swrote:/i,
+    /(?:^|[\s>])Le\s[\s\S]{0,90}?\sa\s+écrit\s*:/i,   // "Le 15 juin 2026, X a écrit :" (même collé)
+    /(?:^|[\s>])Le\s(lun|mar|mer|jeu|ven|sam|dim)[\s\S]{0,90}?,/i,
+    /(?:^|\s)On\s[\s\S]{0,90}?\swrote:/i,
     /-{2,}\s*(Original Message|Message d'origine)\s*-{2,}/i,
     /\n\s*De\s*:[\s\S]{0,250}?Envoyé\s*:/i,           // Outlook FR
     /\n\s*From:[\s\S]{0,250}?Sent:/i,                 // Outlook EN
     /\n_{5,}/,                                         // séparateur Outlook
+    />{1,}\s*Le\s/i,                                   // "> Le 21 juil..." collé au texte
     /\n>{1,}\s/,                                       // lignes citées ">"
-    /\nEnvoyé de mon /i,
-    /\nObtenez\s+Outlook/i,
-    /\nPour ne plus recevoir mes emails/i,            // notre propre ligne opt-out citée
+    /Envoy[ée]\s+de\s+mon\s+/i,                        // signature mobile, même sans saut de ligne
+    /Obtenez\s+Outlook/i,
+    /Pour ne plus recevoir mes emails/i,               // NOTRE footer cité → doit TOUJOURS couper
   ]
   let cutAt = text.length
   for (const m of markers) {

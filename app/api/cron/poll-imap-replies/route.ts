@@ -601,7 +601,16 @@ async function cancelSteps(email: string): Promise<number> {
 /** Détection DÉTERMINISTE d'un opt-out ("Stop", "désabonnez-moi"...) — indépendante de l'IA.
  *  Analysé sur le texte réel du prospect (cleanBody), pas sur notre footer cité. */
 function isExplicitOptOut(text: string): boolean {
-  const t = (text || '').trim().toLowerCase()
+  // ⚠️ FILET DE SÉCURITÉ : on retire NOTRE propre pied de page (« répondez simplement "Stop" ») et
+  // tout ce qui suit un marqueur de citation, AVANT d'analyser. Sinon, quand le découpage de la
+  // citation échoue, on prend notre propre "Stop" pour celui du prospect et on blockliste un lead
+  // chaud (cas LJR Couverture : "Ok appelle moi" → blocklisté). Apostrophes courbes normalisées.
+  const cleaned = (text || '')
+    .replace(/[’‘`´]/g, "'")
+    .split(/pour ne plus recevoir mes emails/i)[0]
+    .split(/envoy[ée]\s+de\s+mon\s+/i)[0]
+    .split(/>\s*le\s/i)[0]
+  const t = cleaned.trim().toLowerCase()
   if (/^stop\b/.test(t)) return true
   return /désabonn|désinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|écrire|solliciter)|ne plus recevoir (vos|de|d'|ces)?\s*(mail|e-?mail|message|sollicit)|retir(ez|er)[- ]?(moi|nous)?.{0,15}(liste|mailing|base|diffusion)|enlev(ez|er).{0,15}(liste|mailing|base|diffusion)|arrêtez de (m'|nous )?(envoyer|écrire|contacter|solliciter)/i.test(t)
 }
