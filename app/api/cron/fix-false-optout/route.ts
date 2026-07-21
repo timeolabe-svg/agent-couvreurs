@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const apply = new URL(req.url).searchParams.get('apply') === '1'
 
   const rows = (await sql`
-    SELECT DISTINCT ON (b.id) b.id AS bl_id, b.email, b.reason, c.company,
+    SELECT DISTINCT ON (b.id) b.id AS bl_id, b.email, b.reason, c.id AS contact_id, c.company,
            ir.classification, ir.subject, ir.body, ir.created_at
     FROM blocklist b
     JOIN contacts c ON LOWER(c.email) = LOWER(b.email)
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     WHERE b.reason = 'unsubscribe'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
     ORDER BY b.id, ir.created_at DESC
-  `) as Array<{ bl_id: string; email: string; reason: string; company: string | null; classification: string; subject: string | null; body: string; created_at: string }>
+  `) as Array<{ bl_id: string; email: string; reason: string; contact_id: string; company: string | null; classification: string; subject: string | null; body: string; created_at: string }>
 
   // Le VRAI texte du prospect : on coupe tout ce qui suit un marqueur de citation / notre footer.
   const realText = (r: { subject?: string | null; body?: string | null }) =>
@@ -42,7 +42,15 @@ export async function GET(req: Request) {
   const vraiRefus = (t: string) =>
     /^\s*stop\b/.test(t) || /d[ée]sabonn|d[ée]sinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|[ée]crire|solliciter)|pas int[ée]ress|retirez[- ]?(moi|nous)/.test(t)
 
-  const faux = rows.filter(r => !vraiRefus(realText(r)))
+  // ⚠️ SÉCURITÉ : on ne débloque QUE si AUCUNE de ses réponses (toutes classifications confondues,
+  // y compris les 'desinterest') ne contient un vrai refus. On ne réactive JAMAIS quelqu'un qui a
+  // réellement dit stop, même s'il avait été intéressé avant.
+  const contactIds = [...new Set(rows.map(r => r.contact_id))]
+  const toutes = contactIds.length > 0
+    ? (await sql`SELECT contact_id, subject, body FROM incoming_replies WHERE contact_id = ANY(${contactIds})`) as Array<{ contact_id: string; subject: string | null; body: string }>
+    : []
+  const aVraimentRefuse = new Set(toutes.filter(r => vraiRefus(realText(r))).map(r => r.contact_id))
+  const faux = rows.filter(r => !aVraimentRefuse.has(r.contact_id))
   if (!apply) {
     return NextResponse.json({
       dry_run: true, faux_optout: faux.length,
