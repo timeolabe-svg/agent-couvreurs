@@ -139,8 +139,11 @@ export async function GET(req: Request) {
         existingRdvSlot,
         fromEmail: ob?.from_email,
       })
-      // auto_reply → envoi auto (Partie A du poll) ; sinon → validation humaine dans l'app.
-      if (o.action_taken === 'auto_reply') {
+      // ENVOI AUTO PAR DÉFAUT (autonomie). On ne met en validation humaine QUE si la réponse avait
+      // été explicitement classée "à valider". Avant, un message déjà répondu passait en
+      // action_taken='replied' → la régénération partait en 'pending' et restait bloquée dans
+      // "À valider" au lieu d'être envoyée : le lead attendait une action manuelle.
+      if (o.action_taken !== 'draft_for_validation') {
         await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${o.id}, ${draft}, 'scheduled', NOW())`
       } else {
         await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status) VALUES (${o.id}, ${draft}, 'pending')`
