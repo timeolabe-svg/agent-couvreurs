@@ -460,8 +460,8 @@ async function processReply(params: {
       // Le prospect donne une AUTRE date précise → accord sur cette date → on cale.
       await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()}, status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
-    } else if (isAffirmativeConfirmation(cleanBody)) {
-      // "oui / ok / parfait" en réponse au créneau proposé → on cale AU créneau proposé.
+    } else if (isAffirmativeConfirmation(cleanBody) || isOpenCallRequest(cleanBody)) {
+      // "oui / ok / parfait", OU carte blanche ("appelez-moi quand vous voulez") → on cale AU créneau proposé.
       await sql`UPDATE rdv SET status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmedAt = new Date(proposedExisting.scheduled_at); confirmSlotStr = fmtSlot(confirmedAt); bookedNow = true
     } else if (candidateSlot) {
@@ -470,10 +470,13 @@ async function processReply(params: {
       proposeSlotStr = candidateSlotStr
     }
   } else if (isRdv && availabilityCfg && candidateSlot && contact?.id) {
-    if (parsedDate) {
-      // Le prospect a donné LUI-MÊME une date précise → accord → on cale directement.
+    const openCall = isOpenCallRequest(cleanBody)
+    if (parsedDate || openCall) {
+      // Soit il a donné une date précise, soit il a donné CARTE BLANCHE ("appelez-moi", "quand
+      // vous voulez"). Dans les deux cas il a dit oui à l'appel → on CALE au prochain créneau
+      // (pas de re-demande, sinon on perd le lead et rien n'arrive en agenda).
       await sql`INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, notes)
-        VALUES (${contact.id}, ${incomingReplyId}, ${candidateSlot.toISOString()}, ${availabilityCfg.slotDurationMin || 30}, 'confirmed', ${'RDV — créneau donné par le prospect.'})`
+        VALUES (${contact.id}, ${incomingReplyId}, ${candidateSlot.toISOString()}, ${availabilityCfg.slotDurationMin || 30}, 'confirmed', ${parsedDate ? 'RDV — créneau donné par le prospect.' : 'RDV — le prospect a demandé à être rappelé (carte blanche), calé au prochain créneau.'})`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
     } else {
       // Aucune date donnée → on PROPOSE un créneau (status 'proposed'), on NE cale PAS, aucune notif.
@@ -794,6 +797,17 @@ function parseExtractedDate(dateStr: string): Date | null {
 function fmtSlot(d: Date): string {
   return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
     + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+// Le prospect donne-t-il CARTE BLANCHE pour l'appel ? ("appelez-moi", "quand vous voulez",
+// "vous pouvez me contacter", + souvent son numéro) SANS préciser d'heure.
+// Dans ce cas il a déjà dit oui à l'appel : on CALE directement au prochain créneau (demain)
+// au lieu de re-demander une dispo. Avant, l'agent se contentait de proposer → aucun RDV en
+// agenda, aucune notif client, et le lead chaud restait invisible (cas Renov Habitat).
+function isOpenCallRequest(text: string): boolean {
+  const t = (text || '').toLowerCase()
+  if (/\b(non|pas maintenant|plus tard|rappelez plus tard|arr[êe]tez)\b/.test(t)) return false
+  return /(appel(ez|e|er)[- ]?moi|rappel(ez|e|er)[- ]?moi|veuillez m'?appeler|veiller m'?appeler|me contacter|contactez[- ]?moi|joignez[- ]?moi|vous pouvez m'?appeler|quand vous (voulez|voudrez|le souhaitez|souhaitez)|[àa] votre convenance|n'?importe quand|quand [çc]a vous arrange|je suis (dispo|disponible|joignable))/.test(t)
 }
 
 // Le prospect confirme-t-il un créneau proposé ? ("oui", "ok", "parfait", "ça marche"...).
