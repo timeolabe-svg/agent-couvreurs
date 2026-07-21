@@ -42,28 +42,18 @@ export async function PATCH(
       ? await db.select().from(incoming_replies).where(eq(incoming_replies.id, draft.incoming_reply_id))
       : [null]
 
-    const { sendReply } = await import('@/lib/instantly/client')
+    // ⚠️ On envoie par le MOTEUR MAISON (SMTP Gmail), pas par Instantly : Instantly ne sert plus
+    // qu'au warmup, donc l'ancien appel échouait systématiquement et la validation manuelle d'une
+    // réponse ne partait JAMAIS (échec silencieux côté "À valider").
+    const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
     const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
 
     try {
       if (incoming) {
-        // Retrouver la boîte gabin@ d'origine (eaccount requis par Instantly)
-        let eaccount: string | undefined
-        if (incoming.contact_id) {
-          const [orig] = await db
-            .select({ from_email: email_queue.from_email })
-            .from(email_queue)
-            .where(and(eq(email_queue.contact_id, incoming.contact_id), eq(email_queue.status, 'sent')))
-            .orderBy(sql`${email_queue.sent_at} desc`)
-            .limit(1)
-          eaccount = orig?.from_email
+        const r = await sendReplyEmail(incoming.id, updatedBody)
+        if (!r.ok) {
+          return NextResponse.json({ error: `Envoi échoué: ${(r.error ?? '').slice(0, 120)}` }, { status: 500 })
         }
-        await sendReply({
-          reply_to_id: incoming.instantly_reply_id ?? incoming.id,
-          body: updatedBody,
-          eaccount,
-          subject: incoming.subject ?? undefined,
-        })
       }
 
       await db
