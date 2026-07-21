@@ -59,6 +59,26 @@ export async function GET(req: Request) {
     LIMIT 5
   `) as Array<{ id: string; contact_id: string; body: string; subject: string | null; from_email: string; classification: string; action_taken: string | null }>
 
+  // ── PARTIE A-bis : rattrape les NON-RÉPONSES déjà envoyées ──
+  // Quand la génération IA échoue, on envoie un repli générique ("je reviens vers vous très vite").
+  // Ça évite le silence, MAIS le prospect n'a aucune réponse utile et rien ne repassait derrière :
+  // il restait bloqué avec un non-message (cas EDDIE JACKEL qui demandait comment remonter sur
+  // Google). On détecte ces envois et on régénère une VRAIE réponse.
+  const nonReponses = (await sql`
+    SELECT ir.id, ir.contact_id, ir.body, ir.subject, ir.from_email, ir.classification, ir.action_taken
+    FROM incoming_replies ir
+    JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
+    WHERE ir.created_at > NOW() - INTERVAL '30 days'
+      AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
+      AND rd.status = 'sent'
+      AND (rd.body ILIKE '%je reviens vers vous%' OR rd.body ILIKE '%meilleures conditions%' OR rd.body ILIKE '%je transmets%')
+      AND NOT EXISTS (SELECT 1 FROM reply_drafts rd2 WHERE rd2.incoming_reply_id = ir.id AND rd2.created_at > rd.created_at)
+      AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
+      AND ir.created_at = (SELECT MAX(ir2.created_at) FROM incoming_replies ir2 WHERE ir2.contact_id = ir.contact_id)
+    ORDER BY ir.created_at DESC
+    LIMIT 3
+  `) as typeof orphans
+
   // Le prospect a-t-il donné CARTE BLANCHE pour l'appel ? (objet + corps, apostrophes normalisées)
   const isOpenCallRequest = (text: string): boolean => {
     const t = (text || '').toLowerCase().replace(/[’‘`´]/g, "'")
@@ -66,7 +86,9 @@ export async function GET(req: Request) {
     return /(appel(ez|e|er)[- ]?moi|rappel(ez|e|er)[- ]?moi|veuillez m'?appeler|veiller m'?appeler|me contacter|contactez[- ]?moi|vous pouvez m'?appeler|quand vous (voulez|voudrez|le souhaitez|souhaitez)|[àa] votre convenance|n'?importe quand|quand [çc]a vous arrange|je suis (dispo|disponible|joignable)|(pouvez|pourriez|peux|peut)[- ]?(vous|tu)?\s*m'?(appeler|e (rappeler|contacter|joindre))|possible de m'?(appeler|e (rappeler|contacter))|j'?(aimerais|souhaite|voudrais) (qu'?on m'?appelle|[êe]tre (rappel[ée]|contact[ée])))/.test(t)
   }
 
-  for (const o of orphans) {
+  // Orphelins (aucune réponse) + non-réponses (réponse vide de sens) : même traitement.
+  const aTraiter = [...orphans, ...nonReponses.filter(n => !orphans.some(o => o.id === n.id))]
+  for (const o of aTraiter) {
     try {
       const [ct] = (await sql`SELECT id, name, company, city, sector FROM contacts WHERE id = ${o.contact_id}`) as Array<{ id: string; name: string | null; company: string; city: string | null; sector: string | null }>
       const sent = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${o.contact_id} AND status = 'sent' ORDER BY sent_at ASC`) as Array<{ body: string; sent_at: string | null }>
