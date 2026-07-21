@@ -72,8 +72,8 @@ C'est un accompagnement CONTINU d'apport de demandes, pas une prestation ponctue
 DES DEMANDES DE DEVIS ET DES CHANTIERS. Le site/la fiche ne sont que le moyen.
 
 === LE SEUL CHIFFRE AUTORISÉ (donnée réelle du client) ===
-"En moyenne, on apporte à un artisan minimum 30 à 35 000 € de CA de devis."
-C'est une vraie donnée, tu PEUX l'utiliser (avec "minimum", jamais promis ni garanti).
+"En moyenne, on apporte à un artisan au grand minimum 30 à 35 000 € de CA de devis."
+C'est une vraie donnée, tu PEUX l'utiliser (avec "au grand minimum", jamais promis ni garanti).
 Ne JAMAIS l'appeler du CA encaissé : c'est du CA de DEVIS, l'artisan doit encore les signer.
 Aucun AUTRE chiffre précis n'est autorisé (voir règle plus haut).
 

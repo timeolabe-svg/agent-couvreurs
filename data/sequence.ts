@@ -6,7 +6,7 @@
 // Offre réellement vendue : rendre l'artisan VISIBLE là où les gens cherchent, pour lui apporter
 // des DEMANDES DE DEVIS et des CHANTIERS. Accompagnement continu, 1er mois offert.
 // ⛔ Le mot "publicité" (et Google Ads/annonces) est banni : friction énorme côté artisan.
-// ⛔ Un seul chiffre autorisé : "minimum 30 à 35 000 € de CA de devis" (vraie donnée client).
+// ⛔ Un seul chiffre autorisé : "au grand minimum 30 à 35 000 € de CA de devis" (vraie donnée client).
 // Style imposé : pas de tiret cadratin, pas de deux-points décoratifs, pas de gras, texte brut.
 
 // Cadence validée : J+0 / J+2 / J+5 / J+8 / J+12 / J+16
@@ -76,7 +76,7 @@ ${sig}`,
       subject: reponse,
       body: `${hi}
 
-En moyenne, on apporte à un artisan minimum 30 à 35 000 € de CA de devis.
+En moyenne, on apporte à un artisan au grand minimum 30 à 35 000 € de CA de devis.
 
 Est-ce que votre planning est déjà plein plusieurs semaines à l'avance, ou vous pouvez encore encaisser quelques chantiers de plus ?
 
