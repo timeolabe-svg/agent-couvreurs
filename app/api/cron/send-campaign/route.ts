@@ -26,7 +26,10 @@ export const maxDuration = 60
 // Cible client : boîtes déjà chauffées → 35/boîte/jour (× 4 boîtes = 140/jour).
 const DAILY_CAP_PER_BOX = 35
 const MAX_PER_RUN = 8 // ~8 × 2s = 16s : tient sous les 30s de cron-job.org (offre gratuite). 8/run × 4 runs/h = large vs plafond 140/j
-const LIFETIME_CAP_PER_CONTACT = 4 // séquence = 4 étapes max, JAMAIS plus
+// Plafond à vie par contact. La séquence validée fait 6 mails (J+0/2/5/8/12/16) et un lead qui
+// répond peut recevoir jusqu'à 2 relances de conversation → 8 au maximum absolu, JAMAIS plus.
+// (Garde-fou anti-boucle hérité de l'incident des 130 mails : ne pas monter au-delà.)
+const LIFETIME_CAP_PER_CONTACT = 8
 // Les relances de CONVERSATION (step >= 20) vont à des gens qui ont RÉPONDU (ils les attendent,
 // n'affectent pas la réputation) → elles ont leur PROPRE plafond et passent même quand le plafond
 // cold (warmup) est atteint. Sinon un lead chaud silencieux attendait le lendemain pour être relancé.

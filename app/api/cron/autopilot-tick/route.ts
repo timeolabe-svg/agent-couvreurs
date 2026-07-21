@@ -144,7 +144,7 @@ export async function GET(request: NextRequest) {
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
   const { eq, and, or, gte, lte, sql } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
-  const { buildNeutralSequenceEmail } = await import('@/data/sequence')
+  const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
   let queued = 0
@@ -587,7 +587,9 @@ export async function GET(request: NextRequest) {
     for (const campaign of activeCampaigns) {
       const now = new Date()
       // Délais entre étapes (jours). Par défaut [0, 3, 7, 14].
-      const delays = ((campaign.sequence_delay_days as number[] | null) ?? [0, 3, 7, 14])
+      // Cadence VALIDÉE avec le client (J+0/2/5/8/12/16). On ignore volontairement la valeur en
+      // base : elle date de l'ancienne séquence 4 mails et casserait l'espacement validé.
+      const delays = SEQUENCE_DELAYS
 
       // Nouveaux contacts à préparer : ligne step 0 'pending', déjà auditée + email fiable.
       const pendingLeads = await db
@@ -695,35 +697,24 @@ export async function GET(request: NextRequest) {
           const variantId = weightedPick(VARIANT_IDS, variantWeights)
           const variantInstruction = MESSAGE_VARIANTS.find(v => v.id === variantId)?.instruction
 
-          let emails: Array<{ subject: string; body: string }> = []
-          try {
-            emails = await generateSequence(lead, inbox.email, inbox.senderName, variantInstruction)
-          } catch {
-            // Repli : email initial seul (sector-aware), sinon template NEUTRE adapté au métier
-            // (jamais le template couvreur figé à chiffres inventés — faux métier = faute grave).
-            try {
-              emails = [await generateEmail(lead, 'initial', inbox.email, inbox.senderName)]
-            } catch {
-              emails = [buildNeutralSequenceEmail(0, { firstName: lead.firstName, city: lead.city, sector: contact.sector ?? undefined, fromEmail: inbox.email, fromName: inbox.senderName })]
-            }
+          // SÉQUENCE FIGÉE (validée par le client) : plus de génération libre par l'IA. Elle
+          // réécrivait le pitch, inventait des chiffres et présentait une offre que Hdigiweb ne
+          // vend pas. On envoie les 6 mails validés, seules les variables changent (nom, métier,
+          // ville, boîte) + le défaut RÉEL de l'audit au mail 1 (omis si l'audit n'a rien de sûr).
+          const seqVars = {
+            firstName: lead.firstName,
+            city: lead.city,
+            sector: contact.sector ?? undefined,
+            fromEmail: inbox.email,
+            fromName: inbox.senderName,
+            auditHook: auditHookSentence(contact.audit_level, contact.audit_weaknesses),
           }
-
-          // CRITIQUE — garantir EXACTEMENT 4 emails NON VIDES.
-          // Le template Instantly a 4 étapes ({{body}}..{{body4}}). Si une relance
-          // manque ou a un body vide, Instantly envoie un mail VIDE au prospect.
-          // On comble chaque trou par le template officiel (jamais de vide).
-          const neutralVars = { firstName: lead.firstName, city: lead.city, sector: contact.sector ?? undefined, fromEmail: inbox.email, fromName: inbox.senderName }
+          const filled: Array<{ subject: string; body: string }> = Array.from(
+            { length: SEQUENCE_LENGTH },
+            (_, i) => buildHdigiwebSequence(i, seqVars),
+          )
           const isValid = (e?: { subject: string; body: string }) =>
             Boolean(e && e.body && e.body.trim().length >= 20 && e.subject && e.subject.trim().length > 0)
-          const filled: Array<{ subject: string; body: string }> = []
-          for (let i = 0; i < 4; i++) {
-            if (isValid(emails[i])) {
-              filled.push(emails[i])
-            } else {
-              // Trou de génération → repli NEUTRE adapté au métier (jamais le template couvreur figé).
-              filled.push(buildNeutralSequenceEmail(i, neutralVars))
-            }
-          }
           // L'email INITIAL doit absolument être valide, sinon on n'envoie pas
           // (le lead reste pending et sera retenté au prochain tick).
           if (!isValid(filled[0])) {
@@ -763,7 +754,7 @@ export async function GET(request: NextRequest) {
 
           // Étapes 1..3 (relances) : nouvelles lignes planifiées J+delays[i].
           for (let i = 1; i < emails.length; i++) {
-            const dayOffset = delays[i] ?? [0, 3, 7, 14][i] ?? i * 3
+            const dayOffset = delays[i] ?? SEQUENCE_DELAYS[i] ?? i * 3
             const when = new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000)
             await db.insert(email_queue).values({
               contact_id: contact.id,
