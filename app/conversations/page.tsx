@@ -114,7 +114,9 @@ export default function ConversationsPage() {
           </button>
         </div>
 
-        {/* Sous-onglets : Positives / Négatives / En attente */}
+        {/* Sous-onglets : Positives / Négatives / En attente / Échoué.
+            4 onglets dans 320px → libellé sur une seule ligne (nowrap) + compteur compact,
+            sinon "En attente" passait à la ligne et "Échoué" débordait. */}
         <div className="flex" style={{ borderBottom: '1px solid var(--color-border)' }}>
           {TABS.map(t => {
             const active = tab === t.key
@@ -122,16 +124,16 @@ export default function ConversationsPage() {
               <button
                 key={t.key}
                 onClick={() => setTab(t.key)}
-                className="flex-1 px-2 py-2.5 text-[12px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+                className="flex-1 min-w-0 px-1 py-2 flex flex-col items-center justify-center gap-0.5 transition-colors"
                 style={{
                   color: active ? t.color : 'var(--color-muted)',
                   borderBottom: active ? `2px solid ${t.color}` : '2px solid transparent',
                   background: active ? 'var(--color-surface-2)' : 'transparent',
                 }}
               >
-                {t.label}
+                <span className="text-[11px] font-medium whitespace-nowrap leading-none">{t.label}</span>
                 <span
-                  className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold leading-none"
+                  className="text-[10px] px-1.5 rounded-full font-semibold leading-tight"
                   style={{ background: active ? t.color + '22' : 'var(--color-surface-2)', color: active ? t.color : 'var(--color-muted-2)' }}
                 >
                   {counts[t.key]}
@@ -144,7 +146,10 @@ export default function ConversationsPage() {
         <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 && !loading && (
             <p className="text-[13px] p-4" style={{ color: 'var(--color-muted)' }}>
-              {tab === 'positive' ? 'Aucune réponse positive pour le moment.' : tab === 'negative' ? 'Aucune réponse négative.' : 'Rien en attente.'}
+              {tab === 'positive' ? 'Aucune réponse positive pour le moment.'
+                : tab === 'negative' ? 'Aucune réponse négative.'
+                : tab === 'failed' ? 'Aucune conversation épuisée.'
+                : 'Rien en attente.'}
             </p>
           )}
           {filtered.map(c => {
