@@ -47,7 +47,7 @@ export async function GET(req: Request) {
   // Fenêtre élargie à 30 j (les orphelins anciens restaient bloqués à vie sous 72h) et on ne
   // répond qu'au DERNIER message de chaque contact (jamais un message dépassé par la suite).
   const orphans = (await sql`
-    SELECT ir.id, ir.contact_id, ir.body, ir.from_email, ir.classification, ir.action_taken
+    SELECT ir.id, ir.contact_id, ir.body, ir.subject, ir.from_email, ir.classification, ir.action_taken
     FROM incoming_replies ir
     WHERE ir.created_at > NOW() - INTERVAL '30 days'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
@@ -57,7 +57,14 @@ export async function GET(req: Request) {
       AND ir.created_at = (SELECT MAX(ir2.created_at) FROM incoming_replies ir2 WHERE ir2.contact_id = ir.contact_id)
     ORDER BY ir.created_at DESC
     LIMIT 5
-  `) as Array<{ id: string; contact_id: string; body: string; from_email: string; classification: string; action_taken: string | null }>
+  `) as Array<{ id: string; contact_id: string; body: string; subject: string | null; from_email: string; classification: string; action_taken: string | null }>
+
+  // Le prospect a-t-il donné CARTE BLANCHE pour l'appel ? (objet + corps, apostrophes normalisées)
+  const isOpenCallRequest = (text: string): boolean => {
+    const t = (text || '').toLowerCase().replace(/[’‘`´]/g, "'")
+    if (/\b(non|pas maintenant|plus tard|arr[êe]tez)\b/.test(t)) return false
+    return /(appel(ez|e|er)[- ]?moi|rappel(ez|e|er)[- ]?moi|veuillez m'?appeler|veiller m'?appeler|me contacter|contactez[- ]?moi|vous pouvez m'?appeler|quand vous (voulez|voudrez|le souhaitez|souhaitez)|[àa] votre convenance|n'?importe quand|quand [çc]a vous arrange|je suis (dispo|disponible|joignable))/.test(t)
+  }
 
   for (const o of orphans) {
     try {
@@ -73,9 +80,26 @@ export async function GET(req: Request) {
       // Un RDV FUTUR déjà calé ? → la réponse doit le CONFIRMER (pas re-proposer). Un RDV passé
       // (créneau auto choisi il y a des jours, jamais honoré) est ignoré → on re-propose un moment.
       const [futureRdv] = (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${o.contact_id} AND status = 'confirmed' AND scheduled_at > NOW() ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }>
-      const existingRdvSlot = futureRdv?.scheduled_at
-        ? new Date(futureRdv.scheduled_at).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + ' à ' + new Date(futureRdv.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-        : undefined
+      const fmt = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }) + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+      let existingRdvSlot = futureRdv?.scheduled_at ? fmt(new Date(futureRdv.scheduled_at)) : undefined
+
+      // AUTONOMIE : si le prospect a demandé à être rappelé (carte blanche) et qu'aucun RDV n'est
+      // calé, on le CALE ici (au prochain créneau libre, jamais le jour même) et on notifie le
+      // client — sinon le lead restait "en attente" sans RDV, et il fallait vérifier à la main.
+      if (!existingRdvSlot && isOpenCallRequest(`${o.subject ?? ''}\n${cleanIncomingBody(o.body || '')}`)) {
+        try {
+          const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+          const availability = await getAvailability()
+          const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
+          const slot = findNextAvailableSlot(null, availability, busy.map(b => b.scheduled_at))
+          await sql`INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, notes)
+            VALUES (${o.contact_id}, ${o.id}, ${slot.toISOString()}, ${availability.slotDurationMin || 30}, 'confirmed', ${'RDV — le prospect a demandé à être rappelé (carte blanche), calé au prochain créneau.'})`
+          existingRdvSlot = fmt(slot)
+          repairs.push(`📅 RDV calé ${existingRdvSlot} → ${ct?.company ?? o.from_email}`)
+        } catch (e) {
+          repairs.push(`✗ RDV non calé ${o.from_email}: ${String(e).slice(0, 50)}`)
+        }
+      }
       const phoneMatch = cleanIncomingBody(o.body || '').match(/0[1-9]([\s. ]?\d{2}){4}/)
       const cleaned = cleanIncomingBody(o.body || '')
       const cleanBody = stripQuotedReply(cleaned) || cleaned
