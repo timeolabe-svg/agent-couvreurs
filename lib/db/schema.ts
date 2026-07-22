@@ -3,6 +3,7 @@ import {
   uuid,
   text,
   integer,
+  numeric,
   real,
   boolean,
   timestamp,
@@ -120,10 +121,15 @@ export const rdv = pgTable('rdv', {
   incoming_reply_id: uuid('incoming_reply_id').references(() => incoming_replies.id),
   scheduled_at: timestamp('scheduled_at').notNull(),
   duration_min: integer('duration_min').default(30),
-  status: text('status').default('confirmed'), // confirmed/cancelled/rescheduled/signed
+  status: text('status').default('confirmed'), // proposed/confirmed/cancelled/rescheduled/signed
   google_event_id: text('google_event_id'),
   google_meet_link: text('google_meet_link'),
   notes: text('notes'),
+  // Suivi de la commission de 5 % sur le CA apporté. Le client marque le RDV comme signé et
+  // renseigne le CA HT réellement ENCAISSÉ (pas facturé), cumulé au fil des encaissements.
+  ca_ht: numeric('ca_ht', { precision: 12, scale: 2 }),
+  signed_at: timestamp('signed_at'),
+  client_note: text('client_note'),
   created_at: timestamp('created_at').defaultNow(),
 })
 

@@ -27,6 +27,8 @@ interface RdvItem {
   google_event_id: string | null
   google_meet_link: string | null
   notes: string | null
+  ca_ht: string | null
+  signed_at: string | null
   created_at: string | null
   contact: RdvContact | null
   leadId?: string
@@ -109,8 +111,15 @@ export default function AgendaPage() {
   const [detailsCompany, setDetailsCompany] = useState('')
   const [detailsContactId, setDetailsContactId] = useState('')
 
-  const openDetails = useCallback(async (contactId: string, company: string) => {
+  // Suivi du client signé et du CA encaissé (base de la commission de 5 %).
+  const [detailsRdv, setDetailsRdv] = useState<RdvItem | null>(null)
+  const [caInput, setCaInput] = useState('')
+  const [savingCa, setSavingCa] = useState(false)
+  const [caError, setCaError] = useState<string | null>(null)
+
+  const openDetails = useCallback(async (contactId: string, company: string, item?: RdvItem) => {
     setDetailsOpen(true); setDetailsData(null); setDetailsLoading(true); setDetailsCompany(company); setDetailsContactId(contactId)
+    setDetailsRdv(item ?? null); setCaInput(item?.ca_ht != null ? String(item.ca_ht) : ''); setCaError(null)
     try {
       const res = await fetch(`/api/agenda/details?contactId=${encodeURIComponent(contactId)}`)
       setDetailsData(await res.json() as RdvDetails)
@@ -173,6 +182,35 @@ export default function AgendaPage() {
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Erreur inconnue')
     } finally { setCreating(false) }
+  }
+
+  // Enregistre "client signé" et le CA encaissé. Le CA est cumulatif : le client le complète au
+  // fil de ses encaissements, la commission suit automatiquement.
+  const saveClient = async (signe: boolean) => {
+    if (!detailsRdv) return
+    setSavingCa(true); setCaError(null)
+    try {
+      const res = await fetch(`/api/rdv/${detailsRdv.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: signe ? 'signed' : 'confirmed',
+          // On ne SUPPRIME pas le CA en annulant la signature : c'est une donnee saisie a la main.
+          // Tout ce qui calcule la commission filtre sur status = 'signed', donc un CA orphelin
+          // n'est jamais compte, et il est retrouve tel quel si le client re-signe.
+          ...(signe ? { caHt: caInput.trim() === '' ? null : caInput.trim() } : {}),
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json() as { error?: string }
+        throw new Error(err.error ?? `HTTP ${res.status}`)
+      }
+      const json = await res.json() as { rdv: RdvItem }
+      setDetailsRdv(json.rdv)
+      setCaInput(json.rdv.ca_ht != null ? String(json.rdv.ca_ht) : '')
+      await loadRdvs()
+    } catch (err) {
+      setCaError(err instanceof Error ? err.message : 'Erreur inconnue')
+    } finally { setSavingCa(false) }
   }
 
   const now = new Date()
@@ -328,7 +366,7 @@ export default function AgendaPage() {
                             <a href={r.google_meet_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px]" style={{ color: '#5f83ac' }}>Meet →</a>
                           )}
                           {r.contact_id && (
-                            <button onClick={() => void openDetails(r.contact_id!, company)} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: '#8f7bb5' }}>
+                            <button onClick={() => void openDetails(r.contact_id!, company, r)} className="flex items-center gap-1 text-[11px] font-medium" style={{ color: '#8f7bb5' }}>
                               <MessageSquare size={11} /> Conversation + fiche →
                             </button>
                           )}
@@ -368,7 +406,7 @@ export default function AgendaPage() {
                     {dayRdvs.slice(0, 3).map(({ r, state }) => {
                       const sm = STATE_META[state]
                       return (
-                        <button key={r.id} onClick={() => r.contact_id && void openDetails(r.contact_id, getRdvCompany(r))}
+                        <button key={r.id} onClick={() => r.contact_id && void openDetails(r.contact_id, getRdvCompany(r), r)}
                           className="text-left rounded px-1.5 py-0.5 truncate text-[10px]"
                           style={{ background: sm.color + '22', color: sm.color, borderLeft: `2px solid ${sm.color}` }}>
                           {new Date(r.scheduled_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} {getRdvCompany(r)}
@@ -480,6 +518,63 @@ export default function AgendaPage() {
               <div className="flex items-center gap-2 py-4">
                 <div className="w-4 h-4 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--color-border)', borderTopColor: '#8f7bb5' }} />
                 <span className="text-[12px]" style={{ color: 'var(--color-muted)' }}>Chargement (résumé IA en cours)…</span>
+              </div>
+            )}
+            {detailsRdv && (
+              <div className="rounded-lg p-3 mb-4" style={{ background: 'rgba(92,155,130,0.06)', border: '1px solid rgba(92,155,130,0.25)' }}>
+                <p className="text-[11px] font-semibold mb-2" style={{ color: '#5c9b82' }}>CE PROSPECT EST DEVENU CLIENT ?</p>
+                {detailsRdv.status !== 'signed' ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button onClick={() => void saveClient(true)} disabled={savingCa}
+                      className="px-3 py-1.5 rounded text-[12px] font-medium"
+                      style={{ background: '#5c9b82', color: '#fff', opacity: savingCa ? 0.6 : 1 }}>
+                      {savingCa ? 'Enregistrement…' : 'Oui, marquer comme signé'}
+                    </button>
+                    <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                      Vous pourrez ensuite renseigner le chiffre d&apos;affaires encaissé.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[12px]" style={{ color: 'var(--color-text)' }}>
+                        Client signé{detailsRdv.signed_at ? ` le ${new Date(detailsRdv.signed_at).toLocaleDateString('fr-FR')}` : ''}
+                      </span>
+                      <button onClick={() => void saveClient(false)} disabled={savingCa}
+                        className="text-[11px] underline" style={{ color: 'var(--color-muted)' }}>
+                        annuler
+                      </button>
+                    </div>
+                    <div className="flex items-end gap-2 flex-wrap">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                          CA HT encaissé avec ce client (cumulé, en €)
+                        </span>
+                        <input value={caInput} onChange={(e) => setCaInput(e.target.value)}
+                          inputMode="decimal" placeholder="ex : 12 500"
+                          className="px-2 py-1.5 rounded text-[12px] w-44"
+                          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />
+                      </label>
+                      <button onClick={() => void saveClient(true)} disabled={savingCa}
+                        className="px-3 py-1.5 rounded text-[12px] font-medium"
+                        style={{ background: '#5f83ac', color: '#fff', opacity: savingCa ? 0.6 : 1 }}>
+                        {savingCa ? 'Enregistrement…' : 'Enregistrer'}
+                      </button>
+                    </div>
+                    {detailsRdv.ca_ht != null && Number(detailsRdv.ca_ht) > 0 && (
+                      <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
+                        Commission correspondante (5 %) :{' '}
+                        <strong style={{ color: 'var(--color-text)' }}>
+                          {(Number(detailsRdv.ca_ht) * 0.05).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                        </strong>
+                      </p>
+                    )}
+                    <p className="text-[11px]" style={{ color: 'var(--color-muted-2)' }}>
+                      Indiquez le montant réellement encaissé, hors taxes. Complétez-le au fil des règlements.
+                    </p>
+                  </div>
+                )}
+                {caError && <p className="text-[11px] mt-2" style={{ color: '#c15353' }}>{caError}</p>}
               </div>
             )}
             {!detailsLoading && detailsData && (

@@ -82,6 +82,7 @@ export async function GET(request: NextRequest) {
     ...r,
     scheduled_at: r.scheduled_at.toISOString(),
     created_at: r.created_at?.toISOString() ?? null,
+    signed_at: r.signed_at?.toISOString() ?? null,
     contact: c
       ? {
           id: c.id,

@@ -132,6 +132,18 @@ export async function GET(request: NextRequest) {
     periodStart ? gte(rdv.created_at, periodStart) : undefined,
   ))
 
+  // CA apporté et commission de 5 % (facture FA-2026-07-03). On somme UNIQUEMENT les RDV
+  // réellement marqués 'signed' : un CA saisi puis dé-signé ne doit jamais être compté.
+  const [caRow] = await db
+    .select({ total: sql<string>`COALESCE(SUM(${rdv.ca_ht}), 0)` })
+    .from(rdv)
+    .where(and(
+      eq(rdv.status, 'signed'),
+      periodStart ? gte(rdv.created_at, periodStart) : undefined,
+    ))
+  const caApporte = Number(caRow?.total ?? 0)
+  const commission = +(caApporte * 0.05).toFixed(2)
+
   const replyRate = emailsSent > 0 ? +(Math.min(replies, emailsSent) / emailsSent * 100).toFixed(1) : 0
   const revenue = rdvCount * PRIX_PAR_RDV
   const conversionRate = emailsSent > 0 ? +(rdvCount / emailsSent * 100).toFixed(2) : 0
@@ -254,6 +266,8 @@ export async function GET(request: NextRequest) {
     bounces,
     rdvCount,
     revenue,
+    caApporte,
+    commission,
     conversionRate,
     topCities,
     dailyActivity,

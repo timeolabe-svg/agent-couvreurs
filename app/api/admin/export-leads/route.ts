@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
           SELECT DISTINCT ON (lower(c.email))
             c.email, c.company, c.name, c.phone, c.website, c.city, c.sector,
             COALESCE(c.google_reviews_count, 0) AS avis, c.google_rating AS note,
-            c.audit_level, c.audit_score, NULL AS rdv_status
+            c.audit_level, c.audit_score, c.email_confidence_score AS confiance, c.source, NULL AS rdv_status
           FROM contacts c
           WHERE COALESCE(c.google_reviews_count, 0) < 20
             AND ${exclusions}
