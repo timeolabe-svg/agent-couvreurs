@@ -30,6 +30,27 @@ export async function GET(request: NextRequest) {
     const { db } = await import('@/lib/db')
     const { sql } = await import('drizzle-orm')
 
+    // Répartition par métier : sert à répondre factuellement à la question "est-ce que tel
+    // secteur est déjà couvert, et à quel volume ?" sans avoir à supposer.
+    if (type === 'repartition') {
+      const r = await db.execute(sql`
+        SELECT c.sector,
+               COUNT(*)::int                                         AS prospects,
+               COUNT(*) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles_20avis,
+               COUNT(DISTINCT eq.contact_id) FILTER (WHERE eq.status = 'sent')::int  AS contactes,
+               COUNT(DISTINCT ir.contact_id)::int                    AS ont_repondu,
+               COUNT(DISTINCT rv.contact_id)::int                    AS rdv
+        FROM contacts c
+        LEFT JOIN email_queue eq     ON eq.contact_id = c.id
+        LEFT JOIN incoming_replies ir ON ir.contact_id = c.id
+        LEFT JOIN rdv rv              ON rv.contact_id = c.id AND rv.status <> 'proposed'
+        GROUP BY c.sector
+        ORDER BY 2 DESC
+      `)
+      const rows = (r as unknown as { rows?: unknown[] }).rows ?? (r as unknown as unknown[])
+      return NextResponse.json({ ok: true, type, repartition: rows })
+    }
+
     // Exclusions communes : opt-out, déjà répondu, email absent.
     const exclusions = sql`
       c.email IS NOT NULL AND c.email <> ''
