@@ -36,6 +36,13 @@ export const contacts = pgTable('contacts', {
   audit_weaknesses: text('audit_weaknesses').array(),
   audit_cms: text('audit_cms'),
   audit_done: boolean('audit_done').default(false),
+  // Suivi des tentatives MillionVerifier. Sans ça, la requête de validation (ORDER BY
+  // created_at ASC) retente indéfiniment les MÊMES contacts les plus anciens si leur domaine
+  // échoue systématiquement (timeout, ip_blocked) — ils bloquent alors TOUTE la file, y compris
+  // les secteurs plus récents. mv_last_attempt_at fait tourner la priorité : un contact qui vient
+  // d'échouer passe en fin de file plutôt que d'être retenté immédiatement.
+  mv_last_attempt_at: timestamp('mv_last_attempt_at'),
+  mv_attempts: integer('mv_attempts').default(0),
   created_at: timestamp('created_at').defaultNow(),
   updated_at: timestamp('updated_at').defaultNow(),
 }, (table) => ({

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
+import { getPausedSectors } from '@/lib/experiments'
 
 // Laisse Vercel exécuter jusqu'à 60s (la génération de plusieurs séquences peut être longue).
 export const maxDuration = 60
@@ -142,7 +143,7 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
-  const { eq, and, or, gte, lte, sql } = await import('drizzle-orm')
+  const { eq, and, or, gte, lte, sql, notInArray } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
@@ -584,6 +585,11 @@ export async function GET(request: NextRequest) {
       .from(campaigns)
       .where(eq(campaigns.status, 'active'))
 
+    // Secteurs en pause ("mets en pause les couvreurs") : on ne démarre PAS de nouvelle
+    // séquence (step 0) pour ces contacts, même s'ils sont déjà scrapés et en attente. Les
+    // relances déjà engagées (steps ≥ 1, gérées par send-campaign) ne sont pas concernées.
+    const pausedSectors = await getPausedSectors()
+
     for (const campaign of activeCampaigns) {
       const now = new Date()
       // Délais entre étapes (jours). Par défaut [0, 3, 7, 14].
@@ -592,6 +598,10 @@ export async function GET(request: NextRequest) {
       const delays = SEQUENCE_DELAYS
 
       // Nouveaux contacts à préparer : ligne step 0 'pending', déjà auditée + email fiable.
+      // ⚠️ L'exclusion des secteurs en pause doit être dans la requête SQL, AVANT le LIMIT — un
+      // filtrage après coup (en JS) risquerait de vider tout le lot si les 8 premières lignes
+      // par ordre naturel tombaient sur le secteur en pause, privant les AUTRES secteurs de leur
+      // tour alors qu'ils ont des contacts prêts au-delà de cette fenêtre.
       const pendingLeads = await db
         .select({
           queue: email_queue,
@@ -620,6 +630,9 @@ export async function GET(request: NextRequest) {
             // MIN_GOOGLE_REVIEWS avis Google. En dessous, l'entreprise est trop peu établie
             // et le RDV ne se transforme pas. Filtre demandé explicitement par le client.
             gte(contacts.google_reviews_count, MIN_GOOGLE_REVIEWS),
+            // SECTEUR EN PAUSE : ne jamais démarrer une nouvelle séquence dessus (les relances
+            // déjà engagées, steps ≥ 1, ne passent pas par cette requête et continuent).
+            ...(pausedSectors.length > 0 ? [notInArray(contacts.sector, pausedSectors)] : []),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)

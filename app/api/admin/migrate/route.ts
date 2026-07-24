@@ -22,6 +22,14 @@ export async function GET(request: NextRequest) {
 
   const migrations: Array<{ nom: string; run: () => Promise<unknown> }> = [
     {
+      nom: 'contacts: add mv_last_attempt_at',
+      run: () => db.execute(sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mv_last_attempt_at TIMESTAMP`),
+    },
+    {
+      nom: 'contacts: add mv_attempts',
+      run: () => db.execute(sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS mv_attempts INTEGER DEFAULT 0`),
+    },
+    {
       // Suivi de la commission de 5 % sur le CA apporté (facture FA-2026-07-03) : le client
       // marque le RDV comme signé et renseigne le CA HT encaissé, au fil des encaissements.
       nom: 'rdv: add ca_ht',

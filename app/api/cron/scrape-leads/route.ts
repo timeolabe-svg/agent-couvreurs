@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
 import { SECTOR_QUERIES, SECTORS, REGIONS, CITIES_BY_REGION } from '@/lib/scrape-targets'
-import { WEIGHTS_KEYS, weightedPick, getWeights } from '@/lib/experiments'
+import { WEIGHTS_KEYS, weightedPick, getWeights, getPausedSectors } from '@/lib/experiments'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -92,7 +92,11 @@ export async function GET(req: Request) {
   // (plancher de poids). Puis terme + ville tirés au hasard dans le secteur/région choisis.
   const sectorWeights = await getWeights(WEIGHTS_KEYS.sector)
   const regionWeights = await getWeights(WEIGHTS_KEYS.region)
-  const sector = weightedPick(SECTORS, sectorWeights)
+  // Secteurs en PAUSE (ex: "mets en pause les couvreurs") : retirés du tirage, pas juste
+  // sous-pondérés — un poids à 0 ne suffit pas, weightedPick garde un plancher d'exploration.
+  const pausedSectors = await getPausedSectors()
+  const activeSectors = SECTORS.filter(s => !pausedSectors.includes(s))
+  const sector = weightedPick(activeSectors.length > 0 ? activeSectors : SECTORS, sectorWeights)
   const region = weightedPick(REGIONS, regionWeights)
   const termsForSector = SECTOR_QUERIES.filter(q => q.sector === sector)
   const queryDef = termsForSector[Math.floor(Math.random() * termsForSector.length)] ?? SECTOR_QUERIES[0]

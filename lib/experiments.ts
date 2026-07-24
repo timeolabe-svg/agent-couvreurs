@@ -76,6 +76,45 @@ export async function getWeights(key: string): Promise<Record<string, number>> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PAUSE DE SECTEUR — distinct du poids d'exploration.
+//
+// weightedPick garde volontairement un PLANCHER (MIN_WEIGHT) sur chaque secteur : mettre le
+// poids d'un secteur à 0 ne l'exclut donc jamais complètement, il continue d'être tiré de temps
+// en temps ("jamais d'abandon total", voulu pour l'exploration normale). C'est le comportement
+// souhaité tant qu'on VEUT explorer un secteur en continu, mais pas quand le client demande
+// explicitement d'arrêter tout nouveau contact sur un secteur ("mets en pause les couvreurs").
+// D'où une liste d'EXCLUSION séparée, à vérifier AVANT weightedPick (retire le secteur du tirage
+// plutôt que de le sous-pondérer) : c'est la seule façon de garantir zéro nouveau contact.
+// ⚠️ Un secteur en pause n'affecte QUE les NOUVEAUX contacts (scraping) et les envois du step 0
+// (premier contact) : les relances déjà engagées (steps ≥ 1) et les réponses des prospects
+// continuent normalement — l'invariant "zéro lead perdu" n'a pas de raison de s'arrêter parce
+// qu'on ne démarche plus de nouveaux prospects du secteur.
+const SECTOR_PAUSED_KEY = 'sector_paused'
+
+export async function getPausedSectors(): Promise<string[]> {
+  try {
+    const { db } = await import('@/lib/db')
+    const { agent_config } = await import('@/lib/db/schema')
+    const { eq } = await import('drizzle-orm')
+    const [row] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, SECTOR_PAUSED_KEY)).limit(1)
+    if (!row?.value) return []
+    const parsed = JSON.parse(row.value)
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+export async function setPausedSectors(sectors: string[], updatedBy = 'admin'): Promise<void> {
+  const { db } = await import('@/lib/db')
+  const { agent_config } = await import('@/lib/db/schema')
+  const value = JSON.stringify(sectors)
+  await db.insert(agent_config)
+    .values({ key: SECTOR_PAUSED_KEY, value, updated_by: updatedBy })
+    .onConflictDoUpdate({ target: agent_config.key, set: { value, updated_by: updatedBy, updated_at: new Date() } })
+}
+
 // Écrit une map de poids dans agent_config (JSON). Utilisé par le cron mensuel.
 export async function setWeights(key: string, weights: Record<string, number>, updatedBy = 'self_learning'): Promise<void> {
   const { db } = await import('@/lib/db')
