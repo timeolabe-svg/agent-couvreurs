@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
-  const { eq, and, or, gte, lte, sql, notInArray } = await import('drizzle-orm')
+  const { eq, and, or, gte, lte, sql, notInArray, isNull } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
@@ -632,7 +632,13 @@ export async function GET(request: NextRequest) {
             gte(contacts.google_reviews_count, MIN_GOOGLE_REVIEWS),
             // SECTEUR EN PAUSE : ne jamais démarrer une nouvelle séquence dessus (les relances
             // déjà engagées, steps ≥ 1, ne passent pas par cette requête et continuent).
-            ...(pausedSectors.length > 0 ? [notInArray(contacts.sector, pausedSectors)] : []),
+            // ⚠️ `NOT IN` avec Postgres exclut SILENCIEUSEMENT toute ligne où la colonne vaut
+            // NULL (NULL NOT IN (...) = NULL = "false" dans un WHERE) : sans le OR isNull, un
+            // contact sans secteur classé ("inconnu", 11 en base) ne pourrait plus jamais
+            // démarrer de séquence dès qu'un SEUL secteur est en pause, sans aucune raison.
+            ...(pausedSectors.length > 0
+              ? [or(isNull(contacts.sector), notInArray(contacts.sector, pausedSectors))!]
+              : []),
           )
         )
         .limit(EMAILS_PER_CAMPAIGN_PER_TICK)
