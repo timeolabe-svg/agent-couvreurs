@@ -34,9 +34,10 @@ export async function GET(req: Request) {
   }
 
   const started = Date.now()
+  try {
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
-  const { eq, and, sql } = await import('drizzle-orm')
+  const { eq, and, sql, notInArray, isNull, or } = await import('drizzle-orm')
   const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
 
   // Campagne active (pour rattacher les email_queue)
@@ -52,11 +53,25 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, scraping_paused: true })
   }
   // 2) Réserve suffisante : leads frais en attente (pending step 0). >= seuil → pas de scraping.
-  const [reserveRow] = await db.select({ n: sql<number>`count(*)::int` }).from(email_queue)
-    .where(and(eq(email_queue.campaign_id, activeCampaign.id), eq(email_queue.status, 'pending'), eq(email_queue.sequence_step, 0)))
+  // ⚠️ INCIDENT 2026-07-27 : cette réserve comptait TOUS les secteurs, y compris ceux mis en
+  // pause. Un secteur en pause n'est plus jamais promu par autopilot-tick (cf. lib/experiments.ts)
+  // → ses leads 'pending' restent coincés pour toujours et gonflent la réserve indéfiniment,
+  // bloquant le scraping du secteur qu'on vient précisément de prioriser. On ne compte donc que
+  // les leads des secteurs ACTIFS (OR isNull : même piège NULL que dans autopilot-tick, un
+  // contact sans secteur classé ne doit jamais être exclu par erreur).
+  const pausedSectors = await getPausedSectors()
+  const [reserveRow] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(email_queue)
+    .innerJoin(contacts, eq(email_queue.contact_id, contacts.id))
+    .where(and(
+      eq(email_queue.campaign_id, activeCampaign.id),
+      eq(email_queue.status, 'pending'),
+      eq(email_queue.sequence_step, 0),
+      ...(pausedSectors.length > 0 ? [or(isNull(contacts.sector), notInArray(contacts.sector, pausedSectors))!] : []),
+    ))
   const reserve = Number(reserveRow?.n ?? 0)
   if (reserve >= SCRAPE_PIPELINE_THRESHOLD) {
-    return NextResponse.json({ ok: true, skipped: true, reason: `réserve pleine (${reserve} leads ≥ ${SCRAPE_PIPELINE_THRESHOLD}) — économie API`, reserve })
+    return NextResponse.json({ ok: true, skipped: true, reason: `réserve pleine (${reserve} leads actifs ≥ ${SCRAPE_PIPELINE_THRESHOLD}) — économie API`, reserve })
   }
   // 3) Throttle : au plus 1 scrape / SCRAPE_MIN_INTERVAL_MIN (évite de consommer un crédit pour rien).
   const [lastRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'last_scrape_at'))
@@ -76,7 +91,7 @@ export async function GET(req: Request) {
       value = CASE
         WHEN (agent_config.value::jsonb->>'date') = ${todayKey}
           THEN jsonb_build_object('date', ${todayKey}::text, 'count', ((agent_config.value::jsonb->>'count')::int + ${PLACES_REQ_PER_RUN}))::text
-        ELSE jsonb_build_object('date', ${todayKey}::text, 'count', ${PLACES_REQ_PER_RUN})::text
+        ELSE jsonb_build_object('date', ${todayKey}::text, 'count', ${PLACES_REQ_PER_RUN}::int)::text
       END,
       updated_at = now()
     RETURNING (value::jsonb->>'count')::int AS count
@@ -94,7 +109,6 @@ export async function GET(req: Request) {
   const regionWeights = await getWeights(WEIGHTS_KEYS.region)
   // Secteurs en PAUSE (ex: "mets en pause les couvreurs") : retirés du tirage, pas juste
   // sous-pondérés — un poids à 0 ne suffit pas, weightedPick garde un plancher d'exploration.
-  const pausedSectors = await getPausedSectors()
   const activeSectors = SECTORS.filter(s => !pausedSectors.includes(s))
   const sector = weightedPick(activeSectors.length > 0 ? activeSectors : SECTORS, sectorWeights)
   const region = weightedPick(REGIONS, regionWeights)
@@ -192,4 +206,15 @@ export async function GET(req: Request) {
     queued,
     skipped,
   })
+  } catch (err) {
+    // Plus jamais de 500 muet : sans ce filet, un échec silencieux ressemble à "aucun résultat"
+    // et se debug à l'aveugle depuis cron-job.org (cf. leçon 48 du skill).
+    console.error('[scrape-leads] erreur', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    return NextResponse.json({
+      error: String(e?.message ?? err).slice(-800),
+      cause: e?.cause?.message,
+      code: e?.code,
+    }, { status: 500 })
+  }
 }
