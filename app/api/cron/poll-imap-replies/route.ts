@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
-import { isExplicitOptOut, isRgpdRequestOrComplaint } from '@/lib/rgpd'
+import { isExplicitOptOut, isRgpdRequestOrComplaint, isPressionSignalee } from '@/lib/rgpd'
 import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
@@ -404,6 +404,21 @@ async function processReply(params: {
     } catch { /* alerte non bloquante */ }
     results.push(`🛑 demande RGPD (${rgpd.motif}) → blocklist + alerte ${from}`)
     return { processed: true, classification: 'desinterest' }
+  }
+
+  // ── MÉCONTENTEMENT SUR LA PRESSION D'ENVOI (leçon 106, cas réel du 27/07) ──
+  // « ne pas leur écrire trois mails sur le même sujet en quelques heures » : ni un "stop", ni une
+  // demande RGPD, donc le contact n'était pas blocklisté — et une RELANCE DE CONVERSATION lui est
+  // repartie APRÈS sa plainte. Devoir écrire "stop" après s'être plaint du nombre de mails, c'est
+  // exactement ce qui transforme un agacé en plaignant.
+  // On ne blockliste PAS (il n'a pas demandé à ne plus jamais être contacté, et le lead reste
+  // commercialement ouvert) : on ARRÊTE tout ce qui est automatique. Réponse à ce message : oui.
+  // Relances de séquence et de conversation : plus jamais.
+  if (contact?.id && isPressionSignalee(cleanBody)) {
+    await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS pression_signalee_at TIMESTAMPTZ`.catch(() => {})
+    await sql`UPDATE contacts SET pression_signalee_at = NOW() WHERE id = ${contact.id} AND pression_signalee_at IS NULL`.catch(() => {})
+    await cancelSteps(from)
+    results.push(`🤐 pression signalée par ${from} → aucune relance automatique (réponse à ce message uniquement)`)
   }
 
   // ── Changement d'adresse : le prospect indique une nouvelle adresse mail ──

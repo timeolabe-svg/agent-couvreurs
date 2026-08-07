@@ -83,6 +83,10 @@ async function runCron(req: Request) {
 
   sql = (await import('@/lib/db')).sql
 
+  // Colonne « pression signalée » (idempotent) : les requêtes de sélection ci-dessous la filtrent,
+  // elle doit donc exister même si poll-imap-replies n'a encore jamais rencontré le cas.
+  await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS pression_signalee_at TIMESTAMPTZ`
+
   const [campaign] = (await sql`SELECT id FROM campaigns WHERE status = 'active' LIMIT 1`) as Array<{ id: string }>
   if (!campaign) return NextResponse.json({ ok: true, reason: 'aucune campagne active' })
 
@@ -243,6 +247,10 @@ async function runCron(req: Request) {
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
       AND NOT EXISTS (SELECT 1 FROM rdv r2 WHERE r2.contact_id = c.id AND r2.status = 'confirmed')
       AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status IN ('pending','queued','sending'))
+      -- Leçon 106 / cas réel du 27/07 : un contact qui s'est plaint du NOMBRE de mails ne reçoit
+      -- plus aucune relance automatique, même s'il n'a jamais écrit "stop". Devoir se désabonner
+      -- après s'être plaint de la pression d'envoi, c'est ce qui déclenche le signalement.
+      AND c.pression_signalee_at IS NULL
       -- La balle doit être dans NOTRE camp (le prospect n'a pas répondu depuis la proposition) :
       -- s'il a répondu, le poll gère déjà la conversation, on ne double-relance pas.
       AND NOT EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id AND ir.created_at > r.created_at)
@@ -323,6 +331,10 @@ async function runCron(req: Request) {
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
       AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status = 'confirmed')
       AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status IN ('pending','queued','sending'))
+      -- Leçon 106 / cas réel du 27/07 : un contact qui s'est plaint du NOMBRE de mails ne reçoit
+      -- plus aucune relance automatique, même s'il n'a jamais écrit "stop". Devoir se désabonner
+      -- après s'être plaint de la pression d'envoi, c'est ce qui déclenche le signalement.
+      AND c.pression_signalee_at IS NULL
     LIMIT 200
   `) as Array<{ id: string; email: string; company: string; name: string | null; city: string | null; sector: string | null; website: string | null; owner_box: string | null; last_subject: string | null; last_out: string; last_in: string; last_classification: string | null; convo_relances: number }>
 

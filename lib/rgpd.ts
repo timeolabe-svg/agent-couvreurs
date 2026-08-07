@@ -75,6 +75,38 @@ export function isRgpdRequestOrComplaint(text: string): { match: boolean; motif:
 }
 
 /**
+ * MÉCONTENTEMENT SUR LA PRESSION D'ENVOI — plus faible qu'un opt-out, mais c'est LE signal qui
+ * précède le signalement (leçon 106).
+ *
+ * ⚠️ CAS RÉEL (Hdigiweb, 27/07/26) : « La première façon de faire gagner du temps aux artisans
+ * serait de ne pas leur écrire trois mails sur le même sujet en quelques heures, vous ne
+ * croyez pas ? ». Ce n'est ni un "stop", ni une demande RGPD : le contact n'a donc PAS été
+ * blocklisté. Sa séquence a bien été annulée (il avait répondu), mais une **relance de
+ * conversation lui est repartie ensuite** — exactement le comportement qui transforme un agacé
+ * en plaignant. Se plaindre du NOMBRE de mails et devoir en plus écrire "stop" pour être
+ * tranquille, c'est indéfendable.
+ *
+ * Politique retenue : on répond une dernière fois (poliment, c'est une objection légitime), mais
+ * on n'ENGAGE plus rien — aucune relance de séquence, aucune relance de conversation. On ne
+ * blockliste pas non plus : le contact n'a pas demandé à ne plus jamais être contacté, et un
+ * blocage silencieux effacerait un lead qui reste commercialement ouvert.
+ */
+export function isPressionSignalee(text: string): boolean {
+  const t = stripOurFooterAndQuotes(text).trim().toLowerCase()
+  return [
+    // Quantité de mails citée explicitement (chiffres ET lettres : "3 mails", "trois mails").
+    /\b(\d+|deux|trois|quatre|cinq|plusieurs|autant de)\s+(e-?)?mails?\b/,
+    /\b(\d+|deux|trois|quatre|cinq|plusieurs)\s+(messages?|relances?|fois)\b/,
+    // Reproche direct sur la fréquence / l'insistance.
+    /trop de (mails?|messages?|relances?|sollicitations?)/,
+    /arr[êe]tez de (m'|nous )?(envoyer|[ée]crire|relancer|solliciter)/,
+    /vous (m'|nous )?(avez )?(d[ée]j[àa] )?(re)?[ée]criv?(ez|é)|cessez de/,
+    /votre insistance|vous insistez|[àa] quel rythme|combien de (mails?|fois)/,
+    /(m'|nous )?(en)?voyer (le )?m[êe]me (mail|message)|le m[êe]me sujet/,
+  ].some(re => re.test(t))
+}
+
+/**
  * Bloc légal ajouté à CHAQUE mail de prospection (art. 13/14 RGPD : la personne doit savoir d'où
  * viennent ses données, qui traite, et comment s'y opposer — surtout quand les données n'ont PAS
  * été collectées auprès d'elle, ce qui est le cas d'un scraping de sources publiques).
