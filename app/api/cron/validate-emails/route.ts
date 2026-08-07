@@ -20,7 +20,9 @@ export const maxDuration = 60
 // l'incident MillionVerifier labegaria du 27/07, cf. leçon 77). Resserré : timeout par appel 8s
 // (AbortSignal) + budget 16s → pire cas ~24s + updates SQL, marge confortable.
 const BATCH = 5
-const TIME_BUDGET_MS = 16000
+// ⚠️ Ramené de 16000 à 13000 le 07/08 : le nettoyage de la file zombie (requête CTE) tourne
+// APRÈS la boucle, donc en dehors du budget. Mesuré 22,9s sur 30s de coupe — marge trop mince.
+const TIME_BUDGET_MS = 13000
 
 // ⚠️ INCIDENT 2026-07-24 : la sélection triait uniquement par created_at ASC. Un domaine qui
 // échoue systématiquement chez MillionVerifier (timeout, ip_blocked) reste alors éligible pour
