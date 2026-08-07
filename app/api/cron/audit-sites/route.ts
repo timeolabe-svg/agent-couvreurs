@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { pingHeartbeat } from '@/lib/heartbeat'
 
 export const dynamic = 'force-dynamic'
 // Laisse Vercel finir même si plusieurs sites sont lents.
@@ -11,11 +12,40 @@ export const maxDuration = 60
 // contact. L'envoi (autopilot-tick) n'enverra QUE des contacts audités → chaque
 // mail pourra attaquer un vrai défaut au lieu d'être générique.
 
-const BATCH = 5              // contacts audités par passage (réduit : par-site plus long ci-dessous)
-const PER_SITE_TIMEOUT = 12000 // ms max par site : > pire cas interne de auditWebsite (fetch 2×5s // checkSSL 2×5s ≈ 10s), sinon la course coupe un audit sain et fabrique un faux défaut
-const TIME_BUDGET_MS = 45000  // budget total (marge sous maxDuration 60s : 45s + 1 site 12s = 57s)
+// ⚠️ TIMEOUT (06/08) : le budget était calé sur maxDuration Vercel (60s) alors que la vraie
+// contrainte est la coupe DURE de cron-job.org à 30s. Pire cas ancien : 45s de budget + 12s pour
+// le dernier site = 57s → « Échec » côté ordonnanceur alors que Vercel finissait le travail.
+// Le budget est vérifié AVANT chaque site : pire cas = TIME_BUDGET_MS + PER_SITE_TIMEOUT.
+const BATCH = 3               // contacts audités par passage (le cron tourne souvent, la file s'écoule)
+const PER_SITE_TIMEOUT = 10000 // ms max par site : > pire cas interne de auditWebsite (fetch 2×5s // checkSSL 2×5s), sinon on coupe un audit sain et on fabrique un faux défaut
+const TIME_BUDGET_MS = 15000  // 15s + 10s (dernier site) = 25s, marge sûre sous la coupe 30s
 
+/**
+ * ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48, absente ici jusqu'au 06/08).
+ * Les try/catch n'existaient qu'À L'INTÉRIEUR de la boucle d'audit : une exception survenue
+ * ailleurs (SQL, import, Neon indisponible) remontait en 500 au corps VIDE, et cron-job.org
+ * n'affichait qu'« Échec (Erreur HTTP) » sans motif. On expose donc toujours la vraie erreur,
+ * et on pose le heartbeat dans les DEUX cas (succès comme échec).
+ */
 export async function GET(req: Request) {
+  try {
+    const res = await runCron(req)
+    await pingHeartbeat('audit-sites', res.status < 400).catch(() => {})
+    return res
+  } catch (err) {
+    console.error('[audit-sites]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    await pingHeartbeat('audit-sites', false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({
+      ok: false,
+      error: String(e.message ?? err).slice(0, 300),
+      cause: e.cause?.message?.slice(0, 200),
+      code: e.code,
+    }, { status: 500 })
+  }
+}
+
+async function runCron(req: Request) {
   const cronAuth = checkCronAuth(req)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
   if (!process.env.DATABASE_URL) {

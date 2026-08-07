@@ -21,6 +21,10 @@ export interface SequenceVars {
   fromName?: string | null
   /** Phrase du défaut RÉEL constaté sur son site/sa fiche (mail 1). Vide si l'audit n'a rien de sûr. */
   auditHook?: string | null
+  /** Réglages RÉELS de /parametres (Mon agence). Absents = signature minimale (nom/agence/email). */
+  agencyNom?: string | null
+  agencyTelephone?: string | null
+  agencySite?: string | null
 }
 
 /** Construit la phrase d'ouverture concrète à partir de l'audit. Renvoie null si aucun défaut
@@ -49,7 +53,10 @@ export function buildHdigiwebSequence(step: number, v: SequenceVars): { subject:
   const nom = (v.firstName && v.firstName.trim() && !v.firstName.includes('@')) ? ` M. ${v.firstName.trim()}` : ''
   const hi = `Bonjour${nom},`
   const box = v.fromEmail || 'contact@hdigiweb.fr'
-  const sig = `Bien à vous,\n\n${v.fromName || 'Gabin'}\nHdigiweb\n${box}`
+  const sigLines = [v.fromName || 'Gabin', v.agencyNom || 'Hdigiweb', box]
+  if (v.agencyTelephone) sigLines.push(v.agencyTelephone)
+  if (v.agencySite) sigLines.push(v.agencySite.replace(/^https?:\/\//, ''))
+  const sig = `Bien à vous,\n\n${sigLines.join('\n')}`
   const objet = `Votre visibilité quand on cherche un ${metier} à ${ville}`
   const reponse = `Re: ${objet}`
   // Phrase d'audit uniquement si on a un défaut RÉEL, sinon on l'omet (jamais de défaut inventé).
@@ -134,9 +141,7 @@ Si ça vous intéresse dans les prochaines semaines, répondez simplement à cet
 
 Au plaisir d'échanger,
 
-${v.fromName || 'Gabin'}
-Hdigiweb
-${box}`,
+${sigLines.join('\n')}`,
     },
   ]
 

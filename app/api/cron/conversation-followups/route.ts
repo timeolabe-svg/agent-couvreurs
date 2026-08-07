@@ -1,9 +1,28 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { pingHeartbeat } from '@/lib/heartbeat'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { detectInventedFacts } from '@/lib/anti-invention'
+import { alertIndependent } from '@/lib/alert'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
+
+/**
+ * ⚠️ GARDE-FOU ANTI-INVENTION — ce cron est le SECOND chemin par lequel un texte généré par l'IA
+ * part vers un vrai prospect (le premier étant poll-imap-replies). Un garde-fou posé sur un seul
+ * chemin donne une fausse impression de contrôle. Ici, les relances sont mises en file
+ * directement en 'queued' : il n'y a AUCUNE relecture humaine possible en aval. Donc à la
+ * moindre donnée factuelle inventée (téléphone, lien, email, chiffre) ou mot interdit, on
+ * N'ENFILE RIEN et on alerte : le contact reste éligible et sera régénéré au prochain run.
+ * @returns true si le texte est propre et peut partir.
+ */
+async function texteSur(body: string, qui: string, site?: string | null): Promise<boolean> {
+  const v = await detectInventedFacts(body, { prospectSite: site })
+  if (!v.suspect) return true
+  await alertIndependent('Relance bloquee (donnee inventee)', `${qui}\n${v.details.join('\n')}`).catch(() => {})
+  return false
+}
 
 let sql!: NeonQueryFunction<false, false>
 
@@ -20,13 +39,47 @@ let sql!: NeonQueryFunction<false, false>
 
 const SILENCE_DAYS = 3
 const MAX_CONVO_RELANCES = 2
-const MAX_PER_RUN = 20
+// ⚠️ TIMEOUT 06/08 : ce cron faisait 34s (coupe cron-job.org = 30s) → "Échec" à chaque run.
+// Cause : les relances sont devenues CONTEXTUELLES (1 appel Gemini de 3-5s chacune) et la
+// re-proposition de RDV en ajoute autant, alors que MAX_PER_RUN valait encore 20 (hérité de
+// l'époque où le texte était un template figé, donc gratuit en temps). 20 × 4s = 80s.
+// ⇒ Budget temps mur vérifié AVANT chaque appel IA + plafonds bas. Le cron tourne souvent,
+// la file s'écoule au fil de l'eau (leçon 30 : chaque endpoint doit répondre sous 30s).
+const MAX_PER_RUN = 3
+const MAX_RDV_REPROPOSES_PER_RUN = 2
+const TIME_BUDGET_MS = 20_000
 
+/**
+ * ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48, absente ici jusqu'au 06/08).
+ * Ce cron n'avait que des try/catch DANS ses boucles : toute exception survenue en dehors
+ * (requête SQL lente, Neon indisponible, import qui échoue) remontait en 500 au corps VIDE.
+ * Depuis cron-job.org on ne voyait qu'« Échec (Erreur HTTP) » sans le moindre motif — impossible
+ * à diagnostiquer, et le heartbeat n'était jamais posé. On renvoie donc TOUJOURS la vraie erreur.
+ */
 export async function GET(req: Request) {
+  try {
+    return await runCron(req)
+  } catch (err) {
+    console.error('[conversation-followups]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    await pingHeartbeat('conversation-followups', false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({
+      ok: false,
+      error: String(e.message ?? err).slice(0, 300),
+      cause: e.cause?.message?.slice(0, 200),
+      code: e.code,
+    }, { status: 500 })
+  }
+}
+
+async function runCron(req: Request) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
   if (process.env.SEND_PAUSED === '1') return NextResponse.json({ ok: true, paused: true })
+
+  const runStart = Date.now()
+  const budgetDepasse = () => Date.now() - runStart > TIME_BUDGET_MS
 
   sql = (await import('@/lib/db')).sql
 
@@ -37,6 +90,16 @@ export async function GET(req: Request) {
   // Trou possible dans le poll : le message entrant est enregistré (dédup) puis la
   // génération du brouillon échoue (budget/IA) → la réponse ne serait JAMAIS traitée
   // et la conversation mourrait en silence. Cette passe régénère le brouillon.
+  // Kill-switch de validation (même source de vérité que poll-imap-replies) : env REQUIRE_VALIDATION=1
+  // OU agent_config.require_validation='true' → toute réponse générée attend une relecture humaine.
+  const requireValidation = await (async () => {
+    if (process.env.REQUIRE_VALIDATION === '1') return true
+    try {
+      const r = (await sql`SELECT value FROM agent_config WHERE key = 'require_validation' LIMIT 1`) as Array<{ value: string }>
+      return String(r[0]?.value ?? '').toLowerCase() === 'true'
+    } catch { return false }
+  })()
+
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
   const { stripQuotedReply } = await import('@/lib/reply-agent/classifier')
   const { cleanIncomingBody } = await import('@/lib/decode-body')
@@ -89,8 +152,11 @@ export async function GET(req: Request) {
   // Orphelins (aucune réponse) + non-réponses (réponse vide de sens) : même traitement.
   const aTraiter = [...orphans, ...nonReponses.filter(n => !orphans.some(o => o.id === n.id))]
   for (const o of aTraiter) {
+    // Chaque réparation = 1 classification + 1 génération Gemini (+ audit site) : on ne DÉMARRE
+    // pas un traitement si le budget est déjà consommé. Le reste passe au run suivant.
+    if (budgetDepasse()) { repairs.push('⏱ budget atteint — réparations restantes au prochain run'); break }
     try {
-      const [ct] = (await sql`SELECT id, name, company, city, sector FROM contacts WHERE id = ${o.contact_id}`) as Array<{ id: string; name: string | null; company: string; city: string | null; sector: string | null }>
+      const [ct] = (await sql`SELECT id, name, company, city, sector, website FROM contacts WHERE id = ${o.contact_id}`) as Array<{ id: string; name: string | null; company: string; city: string | null; sector: string | null; website: string | null }>
       const sent = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${o.contact_id} AND status = 'sent' ORDER BY sent_at ASC`) as Array<{ body: string; sent_at: string | null }>
       const recv = (await sql`SELECT body, created_at FROM incoming_replies WHERE contact_id = ${o.contact_id} ORDER BY created_at ASC`) as Array<{ body: string; created_at: string | null }>
       const history = [
@@ -143,7 +209,12 @@ export async function GET(req: Request) {
       // été explicitement classée "à valider". Avant, un message déjà répondu passait en
       // action_taken='replied' → la régénération partait en 'pending' et restait bloquée dans
       // "À valider" au lieu d'être envoyée : le lead attendait une action manuelle.
-      if (o.action_taken !== 'draft_for_validation') {
+      // ⚠️ Le kill-switch de validation s'applique AUSSI ici : c'est le SECOND chemin par lequel
+      // une réponse peut partir sans relecture (passe de réparation). Un kill-switch posé sur un
+      // seul chemin donne une fausse impression de contrôle — incident LabegarIA.
+      // Anti-invention : un brouillon suspect ne peut PAS partir seul, il passe en validation.
+      const draftSur = await texteSur(draft, `réparation ${o.from_email}`, ct?.website)
+      if (o.action_taken !== 'draft_for_validation' && !requireValidation && draftSur) {
         await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${o.id}, ${draft}, 'scheduled', NOW())`
       } else {
         await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status) VALUES (${o.id}, ${draft}, 'pending')`
@@ -154,9 +225,90 @@ export async function GET(req: Request) {
     }
   }
 
+  // ── PARTIE B : RDV PROPOSÉS EXPIRÉS — relance pour VALIDER une date (audit 02/08, demande
+  // Timéo). Un créneau proposé ("lundi 9h, ça vous va ?") resté sans réponse jusqu'à être PASSÉ
+  // mourait en silence : le rdv restait 'proposed' à une date révolue pour toujours, et rien ne
+  // repartait chercher la confirmation. Ici : on recalcule un créneau FUTUR, on met à jour la
+  // ligne rdv (toujours 'proposed' — jamais confirmé sans un oui), et on met en file UNE relance
+  // qui propose ce nouveau créneau en question oui/non. Placée AVANT la sélection des candidats
+  // de la Partie C : la ligne mise en file ici exclut le contact de la relance générique du même
+  // run (pas de double relance).
+  const expiredProposed = (await sql`
+    SELECT r.id AS rdv_id, r.contact_id, c.email, c.name, c.company, c.city, c.sector, c.website,
+      (SELECT eq.from_email FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status = 'sent' AND eq.from_email IS NOT NULL ORDER BY eq.sent_at DESC LIMIT 1) AS owner_box,
+      (SELECT eq.subject FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status = 'sent' AND eq.subject IS NOT NULL ORDER BY eq.sent_at DESC LIMIT 1) AS last_subject,
+      (SELECT COUNT(*) FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status = 'sent')::int AS convo_relances
+    FROM rdv r JOIN contacts c ON c.id = r.contact_id
+    WHERE r.status = 'proposed' AND r.scheduled_at < NOW() - INTERVAL '1 day'
+      AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+      AND NOT EXISTS (SELECT 1 FROM rdv r2 WHERE r2.contact_id = c.id AND r2.status = 'confirmed')
+      AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status IN ('pending','queued','sending'))
+      -- La balle doit être dans NOTRE camp (le prospect n'a pas répondu depuis la proposition) :
+      -- s'il a répondu, le poll gère déjà la conversation, on ne double-relance pas.
+      AND NOT EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id AND ir.created_at > r.created_at)
+    LIMIT 5
+  `) as Array<{ rdv_id: string; contact_id: string; email: string; name: string | null; company: string; city: string | null; sector: string | null; website: string | null; owner_box: string | null; last_subject: string | null; convo_relances: number }>
+
+  let rdvReproposes = 0
+  for (const x of expiredProposed) {
+    if (x.convo_relances >= MAX_CONVO_RELANCES || !x.owner_box) continue
+    if (rdvReproposes >= MAX_RDV_REPROPOSES_PER_RUN || budgetDepasse()) break
+    rdvReproposes++
+    try {
+      const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
+      const availability = await getAvailability()
+      const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
+      const slot = findNextAvailableSlot(null, availability, busy.map(b => b.scheduled_at))
+      const slotStr = slot.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+        + ' à ' + slot.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+      await sql`UPDATE rdv SET scheduled_at = ${slot.toISOString()} WHERE id = ${x.rdv_id}`
+
+      const sentH = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${x.contact_id} AND status = 'sent' ORDER BY sent_at ASC`) as Array<{ body: string; sent_at: string | null }>
+      const recvH = (await sql`SELECT body, created_at FROM incoming_replies WHERE contact_id = ${x.contact_id} ORDER BY created_at ASC`) as Array<{ body: string; created_at: string | null }>
+      const history = [
+        ...sentH.map(m => ({ role: 'sent' as const, body: m.body, ts: m.sent_at ? new Date(m.sent_at).getTime() : 0 })),
+        ...recvH.map(m => ({ role: 'received' as const, body: cleanIncomingBody(m.body || ''), ts: m.created_at ? new Date(m.created_at).getTime() : 0 })),
+      ].sort((a, b) => a.ts - b.ts)
+        .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+
+      const body = await generateReplyResponse({
+        classification: 'rdv_request',
+        originalEmailBody: sentH.length ? sentH[sentH.length - 1].body : '',
+        replyBody: recvH.length ? cleanIncomingBody(recvH[recvH.length - 1].body || '') : '',
+        contactName: x.name ?? x.email,
+        contactCompany: x.company ?? x.email,
+        contactCity: x.city ?? '',
+        contactSector: x.sector ?? undefined,
+        conversationHistory: history,
+        proposedSlot: slotStr,
+        isFollowUp: true,
+        fromEmail: x.owner_box,
+      })
+      if (!(await texteSur(body, `re-proposition RDV ${x.email}`, x.website))) {
+        repairs.push(`⛔ re-proposition bloquée (donnée inventée) → ${x.email}`)
+        continue
+      }
+      const subject = x.last_subject ? (x.last_subject.startsWith('Re:') ? x.last_subject : `Re: ${x.last_subject}`) : 'Re: votre visibilité sur Google'
+      await sql`
+        INSERT INTO email_queue (contact_id, campaign_id, sequence_step, from_email, subject, body, status, scheduled_at)
+        VALUES (${x.contact_id}, ${campaign.id}, ${20 + x.convo_relances}, ${x.owner_box}, ${subject}, ${body}, 'queued', NOW())
+      `
+      repairs.push(`📅 RDV expiré re-proposé ${slotStr} → ${x.email}`)
+    } catch (e) {
+      repairs.push(`✗ re-proposition ${x.email}: ${String(e).slice(0, 60)}`)
+    }
+  }
+
+  // ⚠️ NE PAS « clôturer » les créneaux 'proposed' passés en leur donnant un autre statut.
+  // Piège vérifié le 07/08 : le dashboard, /api/rdv, rdv-list et export-leads comptent les VRAIS
+  // rendez-vous avec `status <> 'proposed'`. Tout autre statut (même 'expired') les ferait
+  // basculer dans le compteur de RDV réels et INVENTERAIT des rendez-vous qui n'ont jamais eu
+  // lieu. Ils restent donc 'proposed' : correctement exclus partout, et listés par deep-audit
+  // (section rdv_proposes_expires) comme « à rappeler à la main ».
+
   // Candidats : conversations réelles, silencieuses après NOTRE dernier message.
   const rows = (await sql`
-    SELECT c.id, c.email, c.company, c.name,
+    SELECT c.id, c.email, c.company, c.name, c.city, c.sector, c.website,
       (SELECT eq.from_email FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status = 'sent' AND eq.from_email IS NOT NULL ORDER BY eq.sent_at DESC LIMIT 1) AS owner_box,
       (SELECT eq.subject FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status = 'sent' AND eq.subject IS NOT NULL ORDER BY eq.sent_at DESC LIMIT 1) AS last_subject,
       GREATEST(
@@ -164,6 +316,7 @@ export async function GET(req: Request) {
         COALESCE((SELECT MAX(rd.sent_at) FROM reply_drafts rd JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id WHERE ir.contact_id = c.id AND rd.status = 'sent'), TIMESTAMP 'epoch')
       ) AS last_out,
       COALESCE((SELECT MAX(ir.created_at) FROM incoming_replies ir WHERE ir.contact_id = c.id), TIMESTAMP 'epoch') AS last_in,
+      (SELECT ir2.classification FROM incoming_replies ir2 WHERE ir2.contact_id = c.id ORDER BY ir2.created_at DESC LIMIT 1) AS last_classification,
       (SELECT COUNT(*) FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status = 'sent')::int AS convo_relances
     FROM contacts c
     WHERE EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id AND ir.classification IN ('interest','question','objection','rdv_request'))
@@ -171,7 +324,7 @@ export async function GET(req: Request) {
       AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status = 'confirmed')
       AND NOT EXISTS (SELECT 1 FROM email_queue eq WHERE eq.contact_id = c.id AND eq.sequence_step >= 20 AND eq.status IN ('pending','queued','sending'))
     LIMIT 200
-  `) as Array<{ id: string; email: string; company: string; name: string | null; owner_box: string | null; last_subject: string | null; last_out: string; last_in: string; convo_relances: number }>
+  `) as Array<{ id: string; email: string; company: string; name: string | null; city: string | null; sector: string | null; website: string | null; owner_box: string | null; last_subject: string | null; last_out: string; last_in: string; last_classification: string | null; convo_relances: number }>
 
   const now = Date.now()
   const cutoff = now - SILENCE_DAYS * 86400000
@@ -186,52 +339,58 @@ export async function GET(req: Request) {
 
   let queued = 0
   const results: string[] = []
+  // ⚠️ AVANT : relance codée en dur, TOUJOURS le même pitch générique ("1er mois offert"), sans
+  // aucun rapport avec ce qui avait été RÉELLEMENT expliqué dans la conversation. Signalé après
+  // qu'une relance a ignoré une réponse détaillée (fiche Google) déjà envoyée quelques jours plus
+  // tôt, en resservant le pitch générique comme si de rien n'était. Fix : passer par le MÊME
+  // générateur IA contextuel que la Partie A (réparations), avec `isFollowUp: true` (déjà prévu
+  // pour ça dans generateReplyResponse : bref, change d'angle, ne reformule pas l'argumentaire
+  // précédent) et l'historique COMPLET de la conversation, pour que la relance reste dans le fil
+  // de ce qui a VRAIMENT été dit, plutôt qu'un pitch de secours identique pour tout le monde.
   for (const r of due) {
+    if (budgetDepasse()) { results.push('⏱ budget atteint — relances restantes au prochain run'); break }
     const step = 20 + r.convo_relances // 20 puis 21
-    const name = (r.name && r.name.trim()) ? `M. ${r.name.trim().split(/\s+/).slice(-1)[0]}` : ''
-    const greeting = name ? `Bonjour ${name},` : 'Bonjour,'
     const subject = r.last_subject ? (r.last_subject.startsWith('Re:') ? r.last_subject : `Re: ${r.last_subject}`) : 'Re: votre visibilité sur Google'
-    const body = r.convo_relances === 0
-      ? `${greeting}
-
-Je reviens vers vous, je n'ai pas eu de retour. Avez-vous eu le temps d'y réfléchir ?
-
-Pour rappel, le premier mois est offert, sans engagement : vous testez et vous voyez ce que ça donne avant de payer quoi que ce soit.
-
-Quelques minutes pour en parler, plutôt en début ou en fin de semaine ?
-
-Bien à vous,
-
-Gabin
-Hdigiweb
-${r.owner_box}
----
-Pour ne plus recevoir mes emails, répondez simplement "Stop".`
-      : `${greeting}
-
-Dernier message de ma part. Si vous voulez tester sans risque, le premier mois reste offert et sans engagement, vous ne payez que si les résultats vous convainquent.
-
-Un mot de votre part et on lance ça.
-
-Bien à vous,
-
-Gabin
-Hdigiweb
-${r.owner_box}
----
-Pour ne plus recevoir mes emails, répondez simplement "Stop".`
-
     try {
+      const sent = (await sql`SELECT body, sent_at FROM email_queue WHERE contact_id = ${r.id} AND status = 'sent' ORDER BY sent_at ASC`) as Array<{ body: string; sent_at: string | null }>
+      const recv = (await sql`SELECT body, created_at FROM incoming_replies WHERE contact_id = ${r.id} ORDER BY created_at ASC`) as Array<{ body: string; created_at: string | null }>
+      const history = [
+        ...sent.map(x => ({ role: 'sent' as const, body: x.body, ts: x.sent_at ? new Date(x.sent_at).getTime() : 0 })),
+        ...recv.map(x => ({ role: 'received' as const, body: cleanIncomingBody(x.body || ''), ts: x.created_at ? new Date(x.created_at).getTime() : 0 })),
+      ].sort((a, b) => a.ts - b.ts)
+        .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+
+      const body = await generateReplyResponse({
+        classification: (r.last_classification as 'interest' | 'question' | 'objection' | 'rdv_request') ?? 'interest',
+        originalEmailBody: sent.length ? sent[sent.length - 1].body : '',
+        replyBody: recv.length ? cleanIncomingBody(recv[recv.length - 1].body || '') : '',
+        contactName: r.name ?? r.email,
+        contactCompany: r.company ?? r.email,
+        contactCity: r.city ?? '',
+        contactSector: r.sector ?? undefined,
+        conversationHistory: history,
+        isFollowUp: true,
+        fromEmail: r.owner_box ?? undefined,
+      })
+
+      if (!(await texteSur(body, `relance conversation ${r.email}`, r.website))) {
+        results.push(`⛔ relance bloquée (donnée inventée) → ${r.email}`)
+        continue
+      }
       await sql`
         INSERT INTO email_queue (contact_id, campaign_id, sequence_step, from_email, subject, body, status, scheduled_at)
         VALUES (${r.id}, ${campaign.id}, ${step}, ${r.owner_box}, ${subject}, ${body}, 'queued', NOW())
       `
       queued++
-      results.push(`↻ relance conversation → ${r.email} (relance ${r.convo_relances + 1}/${MAX_CONVO_RELANCES})`)
+      results.push(`↻ relance conversation (contextuelle) → ${r.email} (relance ${r.convo_relances + 1}/${MAX_CONVO_RELANCES})`)
     } catch (e) {
       results.push(`✗ ${r.email}: ${String(e).slice(0, 60)}`)
     }
   }
+
+  // Heartbeat : figurait dans EXPECTED de heartbeat-check sans jamais pinger (angle mort, audit 02/08).
+  const { pingHeartbeat } = await import('@/lib/heartbeat')
+  await pingHeartbeat('conversation-followups', true, `dus=${due.length} mis_en_file=${queued}`)
 
   return NextResponse.json({ ok: true, candidats: rows.length, dus: due.length, mis_en_file: queued, réparations: repairs, results })
 }

@@ -12,11 +12,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { pingHeartbeat } from '@/lib/heartbeat'
+import { isExplicitOptOut, isRgpdRequestOrComplaint } from '@/lib/rgpd'
 import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
 import { toParisWallClock } from '@/lib/availability'
 import { cleanIncomingBody, decodeQuotedPrintable } from '@/lib/decode-body'
+import { detectInventedFacts } from '@/lib/anti-invention'
+import { alertIndependent } from '@/lib/alert'
 
 // Client SQL brut, assigné dynamiquement dans le handler (évite d'évaluer neon()
 // au build, où DATABASE_URL est absent — cause d'échec de "collect page data").
@@ -25,8 +29,8 @@ let sql!: NeonQueryFunction<false, false>
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const GLOBAL_DEADLINE_MS = 23_000 // cron-job.org (gratuit) coupe à 30s → on répond AVANT (23s + 6s/boîte max ≈ 29s)
-const PER_BOX_TIMEOUT_MS = 6_000
+const GLOBAL_DEADLINE_MS = 21_000 // cron-job.org (gratuit) coupe à 30s → on répond AVANT (21s + 8s/boîte max ≈ 29s)
+const PER_BOX_TIMEOUT_MS = 8_000 // marge pour le fetch groupé des enveloppes (jusqu-à 180 messages en 1 aller-retour)
 const MAX_MSGS_PER_BOX = 180  // le warmup remplit vite la boîte : à 70, une vraie réponse un peu ancienne (ex. répondue tôt puis noyée sous le warmup) sortait de la fenêtre et n'était jamais lue. On élargit.
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
@@ -39,7 +43,25 @@ function randomDelayMs(): number {
   return (4 + Math.floor(Math.random() * 9)) * 60 * 1000 // 4-12 min
 }
 
-export async function GET(req: NextRequest) { return POST(req) }
+/**
+ * ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48) — indispensable ICI plus qu'ailleurs : c'est le cron
+ * qui garantit « zéro lead perdu ». Sans elle, une exception (IMAP, SQL, Gemini) remonte en 500
+ * au corps VIDE : cron-job.org n'affiche qu'« Erreur HTTP » sans motif, le heartbeat n'est jamais
+ * posé (donc le cron paraît juste "muet"), et pendant ce temps des réponses de prospects ne sont
+ * plus lues. On expose donc toujours la vraie erreur ET on marque l'échec au heartbeat.
+ */
+export async function GET(req: NextRequest) {
+  try {
+    const res = await POST(req)
+    await pingHeartbeat("poll-imap-replies", res.status < 400).catch(() => {})
+    return res
+  } catch (err) {
+    console.error('[poll-imap-replies]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    await pingHeartbeat("poll-imap-replies", false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({ ok: false, error: String(e.message ?? err).slice(0, 300), cause: e.cause?.message?.slice(0, 200), code: e.code }, { status: 500 })
+  }
+}
 
 export async function POST(req: NextRequest) {
   const auth = checkCronAuth(req)
@@ -155,20 +177,47 @@ async function processBox(box: { email: string; password: string }, started: num
       const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX).reverse()
       results.push(`[${box.email}] ${uids.length} messages récents`)
 
+      // ⚠️ AUDIT 07/08 — les 3 boîtes timeoutaient à 6s À CHAQUE RUN (« ⏱/❌ timeout box »).
+      // Cause : la boucle faisait TROIS allers-retours réseau PAR MESSAGE (fetchOne enveloppe,
+      // SELECT dédup, SELECT contacts) sur 90 à 125 messages, soit ~300 allers-retours pour 6s
+      // de budget. En pratique, seuls les ~15 messages les plus récents étaient réellement
+      // examinés ; une vraie réponse noyée sous le warmup pouvait n'être JAMAIS lue (violation
+      // directe de l'invariant « zéro lead perdu »).
+      // Fix : on PRÉ-CHARGE en 3 requêtes au total (1 IMAP + 2 SQL) au lieu de 3 × N. Le corps
+      // du message, lui, reste chargé à la demande — uniquement pour les vraies réponses.
+      const envs = new Map<number, { from: string; subject: string; messageId: string }>()
+      try {
+        for await (const msg of client.fetch(uids.join(','), { envelope: true })) {
+          const e = msg.envelope
+          if (!e) continue
+          envs.set(msg.seq, {
+            from: (e.from?.[0]?.address ?? '').toLowerCase(),
+            subject: e.subject ?? '',
+            messageId: e.messageId ?? `imap-${box.email}-${msg.seq}`,
+          })
+        }
+      } catch { /* repli : on continuera avec ce qui a été chargé */ }
+
+      const tousMessageIds = [...envs.values()].map(v => 'imap:' + v.messageId)
+      const tousFroms = [...new Set([...envs.values()].map(v => v.from).filter(Boolean))]
+      const dejaTraites = new Set(
+        ((await sql`SELECT instantly_reply_id AS id FROM incoming_replies WHERE instantly_reply_id = ANY(${tousMessageIds})`) as Array<{ id: string }>)
+          .map(r => r.id)
+      )
+      const contactsConnus = new Set(
+        ((await sql`SELECT LOWER(email) AS email FROM contacts WHERE LOWER(email) = ANY(${tousFroms})`) as Array<{ email: string }>)
+          .map(r => r.email)
+      )
+
       for (const uid of uids) {
         if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push(`⏱ budget atteint pendant ${box.email}`); break }
-        // Enveloppe d'abord (léger) → on filtre avant de télécharger le corps.
-        let env
-        try { env = await client.fetchOne(uid, { envelope: true }) } catch { continue }
-        if (!env || !env.envelope) continue
-        const from = (env.envelope.from?.[0]?.address ?? '').toLowerCase()
-        const subject = env.envelope.subject ?? ''
-        const messageId = env.envelope.messageId ?? `imap-${box.email}-${uid}`
+        const env = envs.get(uid)
+        if (!env) continue
+        const { from, subject, messageId } = env
         if (!from) continue
 
         // Dédup par Message-ID : déjà traité ? on saute (jamais de 2e réponse).
-        const already = (await sql`SELECT 1 FROM incoming_replies WHERE instantly_reply_id = ${'imap:' + messageId} LIMIT 1`) as Array<unknown>
-        if (already.length > 0) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+        if (dejaTraites.has('imap:' + messageId)) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
 
         const fetchBody = async (): Promise<string> => {
           const src = await client.fetchOne(uid, { source: true }).catch(() => null)
@@ -198,9 +247,9 @@ async function processBox(box: { email: string; password: string }, started: num
         // Si l'expéditeur est inconnu mais que le SUJET correspond à un email qu'on a réellement
         // ENVOYÉ (email_queue), c'est une vraie réponse depuis une autre adresse → on la relie au
         // bon contact au lieu de la jeter (sinon lead chaud perdu en silence — cas BJM).
-        const known = (await sql`SELECT 1 FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Array<unknown>
+        const known = contactsConnus.has(from)
         let contactHint: string | undefined
-        if (known.length === 0) {
+        if (!known) {
           const baseSubject = subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim()
           if (baseSubject.length > 8) {
             const m = (await sql`SELECT contact_id FROM email_queue WHERE LOWER(subject) = LOWER(${baseSubject}) AND status = 'sent' AND contact_id IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ contact_id: string }>
@@ -247,10 +296,10 @@ async function processReply(params: {
   if (seen.length > 0) return null
 
   // Contact : par contactHint (réponse depuis une autre adresse, résolue par le sujet) sinon par email.
-  type Contact = { id: string; email: string; name: string | null; company: string | null; city: string | null; sector: string | null; phone: string | null }
+  type Contact = { id: string; email: string; name: string | null; company: string | null; city: string | null; sector: string | null; phone: string | null; website: string | null }
   const contactRows = contactHint
-    ? (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE id = ${contactHint} LIMIT 1`) as Contact[]
-    : (await sql`SELECT id, email, name, company, city, sector, phone FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Contact[]
+    ? (await sql`SELECT id, email, name, company, city, sector, phone, website FROM contacts WHERE id = ${contactHint} LIMIT 1`) as Contact[]
+    : (await sql`SELECT id, email, name, company, city, sector, phone, website FROM contacts WHERE LOWER(email) = LOWER(${from}) LIMIT 1`) as Contact[]
   let contact: Contact | undefined = contactRows[0]
   if (contactHint && contact) results.push(`↪ réponse depuis autre adresse (${from}) reliée à ${contact.company ?? contact.email}`)
 
@@ -330,6 +379,30 @@ async function processReply(params: {
     if (contact?.id) await cancelSteps(from)
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'blocklist', reason: 'opt-out explicite', company: contact?.company ?? from })}::jsonb)`
     results.push(`⛔ opt-out explicite → blocklist ${from}`)
+    return { processed: true, classification: 'desinterest' }
+  }
+
+  // ── DEMANDE RGPD / PLAINTE (prioritaire, traitement RENFORCÉ) ──
+  // Incident réel LabegarIA (plainte CNIL) : une demande d'effacement ou une accusation de spam
+  // partait au classifieur IA, pouvait être lue comme une simple objection commerciale, et
+  // recevoir une RÉPONSE AUTOMATIQUE de vente. C'est ce qui transforme un mécontentement en
+  // plainte. Ici : arrêt immédiat, AUCUNE réponse automatique (le RGPD impose une réponse
+  // humaine documentée sous 1 mois), et alerte immédiate sur le canal indépendant.
+  const rgpd = isRgpdRequestOrComplaint(cleanBody)
+  if (rgpd.match) {
+    await blocklistOnce(from, `rgpd_${rgpd.motif}`)
+    if (contact?.id) await cancelSteps(from)
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'rgpd_request', reason: rgpd.motif, company: contact?.company ?? from })}::jsonb)`
+    // Tâche urgente : une demande RGPD exige une réponse HUMAINE, tracée, sous 1 mois.
+    await sql`INSERT INTO urgent_tasks (type, title, description) VALUES ('rgpd', ${`[RGPD] ${rgpd.motif} — ${from}`}, ${`Demande RGPD reçue de ${from} (${contact?.company ?? 'contact inconnu'}).\nMotif détecté : ${rgpd.motif}.\nContact BLOCKLISTÉ et file annulée automatiquement.\n\nACTION HUMAINE REQUISE : répondre sous 1 mois et documenter la suppression.\n\nExtrait du message :\n${cleanBody.slice(0, 500)}`})`.catch(() => {})
+    try {
+      const { alertIndependent } = await import('@/lib/alert')
+      await alertIndependent(
+        `DEMANDE RGPD (${rgpd.motif}) — ${from}`,
+        `Un prospect a exercé un droit RGPD ou signalé un abus.\n\nDe : ${from}\nEntreprise : ${contact?.company ?? 'inconnue'}\nMotif : ${rgpd.motif}\n\nLe contact est déjà blocklisté et sa file d'envoi annulée.\nAUCUNE réponse automatique n'a été envoyée (obligatoire).\n\nTu dois répondre toi-même sous 1 mois et documenter le traitement.\n\nExtrait :\n${cleanBody.slice(0, 600)}`,
+      )
+    } catch { /* alerte non bloquante */ }
+    results.push(`🛑 demande RGPD (${rgpd.motif}) → blocklist + alerte ${from}`)
     return { processed: true, classification: 'desinterest' }
   }
 
@@ -436,6 +509,7 @@ async function processReply(params: {
   let parsedDate: Date | null = null
   let candidateSlot: Date | null = null
   let candidateSlotStr: string | undefined
+  let allowToday = false
   if (isRdv) {
     try {
       const { getAvailability, findNextAvailableSlot } = await import('@/lib/availability')
@@ -448,7 +522,7 @@ async function processReply(params: {
       // sur le même horaire, impossible à honorer pour le client).
       const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
       // Le jour même n'est autorisé QUE si le prospect le demande explicitement.
-      const allowToday = /aujourd'?hui|ce soir|dans la journ[ée]e|maintenant|tout de suite|d[èe]s que possible/i.test(analysisText.replace(/[’‘`´]/g, "'"))
+      allowToday = /aujourd'?hui|ce soir|dans la journ[ée]e|maintenant|tout de suite|d[èe]s que possible/i.test(analysisText.replace(/[’‘`´]/g, "'"))
       candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg, busy.map(b => b.scheduled_at), allowToday)
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
@@ -465,13 +539,25 @@ async function processReply(params: {
   let confirmedAt: Date | null = null    // date réelle du RDV calé (pour la notif client)
   let bookedNow = false                  // on vient de passer 'confirmed' → notif client
 
+  // ⚠️ Une carte blanche ("appelez-moi maintenant") qui porte une urgence temporelle NON compatible
+  // avec le créneau DÉJÀ proposé (ex : proposé pour lundi, mais le message dit "maintenant"/"ce
+  // matin") ne vaut PAS acceptation de ce créneau précis — le prospect exprime une urgence
+  // nouvelle, pas un oui à une date qu'il n'a peut-être même plus en tête. Vécu : "vous pouvez
+  // m'appeler dès maintenant" a confirmé silencieusement un créneau "lundi 9h" proposé plus tôt,
+  // alors que la réponse envoyée au prospect PROPOSAIT toujours une nouvelle date (jamais un oui) —
+  // le statut en base mentait par rapport au texte réellement envoyé, et excluait à tort ce
+  // contact des relances de confirmation (cf. conversation-followups).
+  const openCallConflitUrgence = (existing: { scheduled_at: string }) =>
+    allowToday && !isSameUTCDay(new Date(existing.scheduled_at), new Date())
+
   if (proposedExisting) {
     if (parsedDate && candidateSlot) {
       // Le prospect donne une AUTRE date précise → accord sur cette date → on cale.
       await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()}, status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
-    } else if (isAffirmativeConfirmation(analysisText) || isOpenCallRequest(analysisText)) {
-      // "oui / ok / parfait", OU carte blanche ("appelez-moi quand vous voulez") → on cale AU créneau proposé.
+    } else if (isAffirmativeConfirmation(analysisText) || (isOpenCallRequest(analysisText) && !openCallConflitUrgence(proposedExisting))) {
+      // "oui / ok / parfait", OU carte blanche SANS urgence incompatible ("appelez-moi quand vous
+      // voulez") → on cale AU créneau proposé.
       await sql`UPDATE rdv SET status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmedAt = new Date(proposedExisting.scheduled_at); confirmSlotStr = fmtSlot(confirmedAt); bookedNow = true
     } else if (candidateSlot) {
@@ -481,10 +567,22 @@ async function processReply(params: {
     }
   } else if (isRdv && availabilityCfg && candidateSlot && contact?.id) {
     const openCall = isOpenCallRequest(analysisText)
-    if (parsedDate || openCall) {
+    // ⚠️ Le prospect a demandé une URGENCE ("appelez-moi maintenant/dès que possible/ce matin")
+    // MAIS le créneau calculé n'est PAS le jour même (le run cron traite le message avec un
+    // décalage, "maintenant" est déjà passé) : on ne peut PAS honorer ce qui a été demandé. Cette
+    // urgence-là n'est PAS un accord sur un créneau ultérieur que le prospect n'a jamais vu — le
+    // confirmer silencieusement mentait par rapport à la réponse envoyée (qui, elle, PROPOSE
+    // correctement "lundi 9h, ça vous va ?", une vraie question). Résultat vécu : RDV marqué
+    // 'confirmed' en base pour un créneau jamais validé par le prospect, ce qui l'excluait à tort
+    // de conversation-followups (aucune relance n'allait jamais chercher sa vraie confirmation).
+    // Une carte blanche SANS urgence temporelle ("quand vous voulez", "à votre convenance") reste
+    // auto-confirmée normalement : le prospect accepte alors VRAIMENT n'importe quel créneau.
+    const urgenceNonHonoree = allowToday && !isSameUTCDay(candidateSlot, new Date())
+    if (parsedDate || (openCall && !urgenceNonHonoree)) {
       // Soit il a donné une date précise, soit il a donné CARTE BLANCHE ("appelez-moi", "quand
-      // vous voulez"). Dans les deux cas il a dit oui à l'appel → on CALE au prochain créneau
-      // (pas de re-demande, sinon on perd le lead et rien n'arrive en agenda).
+      // vous voulez") ET le créneau retenu respecte bien ce qu'il a demandé. Dans les deux cas il
+      // a dit oui à l'appel → on CALE au prochain créneau (pas de re-demande, sinon on perd le
+      // lead et rien n'arrive en agenda).
       await sql`INSERT INTO rdv (contact_id, incoming_reply_id, scheduled_at, duration_min, status, notes)
         VALUES (${contact.id}, ${incomingReplyId}, ${candidateSlot.toISOString()}, ${availabilityCfg.slotDurationMin || 30}, 'confirmed', ${parsedDate ? 'RDV — créneau donné par le prospect.' : 'RDV — le prospect a demandé à être rappelé (carte blanche), calé au prochain créneau.'})`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
@@ -541,7 +639,34 @@ async function processReply(params: {
   }
 
   // ── Brouillon de réponse ──
-  if (classification.action === 'auto_reply') {
+  // ⚠️ KILL-SWITCH DE VALIDATION (incident LabegarIA : « les messages à valider partaient sans
+  // mon accord »). Avant, la décision auto/validation appartenait ENTIÈREMENT au classifieur IA,
+  // et le réglage `auto_reply_enabled` visible dans l'UI n'était lu NULLE PART (cf. leçon 59).
+  // Il n'existait donc AUCUN moyen d'exiger une relecture humaine. Désormais : si
+  // REQUIRE_VALIDATION=1 (env) ou agent_config.require_validation='true', TOUTE réponse passe en
+  // 'pending' et attend une validation manuelle, quoi qu'en dise l'IA.
+  const requireValidation = await (async () => {
+    if (process.env.REQUIRE_VALIDATION === '1') return true
+    try {
+      const r = (await sql`SELECT value FROM agent_config WHERE key = 'require_validation' LIMIT 1`) as Array<{ value: string }>
+      return String(r[0]?.value ?? '').toLowerCase() === 'true'
+    } catch { return false }
+  })()
+
+  // ⚠️ GARDE-FOU ANTI-INVENTION (incident 31/07 : l'agent a répondu « mon numéro est le
+  // 06 12 34 56 78 » — un numéro d'exemple halluciné — en AUTOMATIQUE à un vrai prospect).
+  // Un prompt n'est pas un garde-fou : on RELIT le texte généré et, à la moindre donnée
+  // factuelle non vérifiable (téléphone/lien/email/chiffre inventé, mot interdit), la réponse
+  // ne part JAMAIS seule — elle bascule en validation humaine avec le motif.
+  const invention = await detectInventedFacts(draftBody, { prospectPhone: contactPhone, prospectSite: contact?.website })
+  if (invention.suspect) {
+    await alertIndependent(
+      'Reponse bloquee (donnee inventee)',
+      `${contact?.company ?? from}\n${invention.details.join('\n')}`
+    ).catch(() => {})
+  }
+
+  if (classification.action === 'auto_reply' && !requireValidation && !invention.suspect) {
     // L'agent répond seul → envoi programmé avec délai humain (4-12 min), envoyé par la Partie A.
     await sql`INSERT INTO reply_drafts (incoming_reply_id, body, status, send_after) VALUES (${incomingReplyId}, ${draftBody}, 'scheduled', ${new Date(Date.now() + randomDelayMs()).toISOString()})`
   } else {
@@ -598,22 +723,10 @@ async function cancelSteps(email: string): Promise<number> {
   } catch { return 0 }
 }
 
-/** Détection DÉTERMINISTE d'un opt-out ("Stop", "désabonnez-moi"...) — indépendante de l'IA.
- *  Analysé sur le texte réel du prospect (cleanBody), pas sur notre footer cité. */
-function isExplicitOptOut(text: string): boolean {
-  // ⚠️ FILET DE SÉCURITÉ : on retire NOTRE propre pied de page (« répondez simplement "Stop" ») et
-  // tout ce qui suit un marqueur de citation, AVANT d'analyser. Sinon, quand le découpage de la
-  // citation échoue, on prend notre propre "Stop" pour celui du prospect et on blockliste un lead
-  // chaud (cas LJR Couverture : "Ok appelle moi" → blocklisté). Apostrophes courbes normalisées.
-  const cleaned = (text || '')
-    .replace(/[’‘`´]/g, "'")
-    .split(/pour ne plus recevoir mes emails/i)[0]
-    .split(/envoy[ée]\s+de\s+mon\s+/i)[0]
-    .split(/>\s*le\s/i)[0]
-  const t = cleaned.trim().toLowerCase()
-  if (/^stop\b/.test(t)) return true
-  return /désabonn|désinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|écrire|solliciter)|ne plus recevoir (vos|de|d'|ces)?\s*(mail|e-?mail|message|sollicit)|retir(ez|er)[- ]?(moi|nous)?.{0,15}(liste|mailing|base|diffusion)|enlev(ez|er).{0,15}(liste|mailing|base|diffusion)|arrêtez de (m'|nous )?(envoyer|écrire|contacter|solliciter)/i.test(t)
-}
+// ⚠️ La détection d'opt-out ET la détection des demandes RGPD vivent désormais dans `lib/rgpd.ts`
+// (importées en haut de ce fichier) : elles doivent être IDENTIQUES partout où on lit une réponse,
+// et testables isolément. L'ancienne copie locale ratait 8 formulations critiques sur 12
+// (« supprimez mes données », « je porte plainte à la CNIL », « je m'oppose »…) — audit du 06/08.
 
 /** Adresse technique (daemon/postmaster) qu'il ne faut JAMAIS blocklister comme un prospect. */
 function isDaemonAddress(email: string): boolean {
@@ -819,6 +932,13 @@ function parseExtractedDate(dateStr: string): Date | null {
 function fmtSlot(d: Date): string {
   return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
     + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+}
+
+// Même jour calendaire (UTC, cohérent avec le stockage des scheduled_at). Sert à détecter quand
+// une demande d'urgence ("appelez-moi maintenant") n'a PAS pu être honorée le jour même — le
+// créneau calculé a glissé à un jour ultérieur que le prospect n'a jamais explicitement accepté.
+function isSameUTCDay(a: Date, b: Date): boolean {
+  return a.getUTCFullYear() === b.getUTCFullYear() && a.getUTCMonth() === b.getUTCMonth() && a.getUTCDate() === b.getUTCDate()
 }
 
 // Le prospect donne-t-il CARTE BLANCHE pour l'appel ? ("appelez-moi", "quand vous voulez",

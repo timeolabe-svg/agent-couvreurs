@@ -84,7 +84,7 @@ function isJunkEmail(email: string): boolean {
 // 90 = mailto: explicite (l'entreprise a publié son email comme lien cliquable)
 // 70 = préfixe pro reconnu (contact@, devis@...) sur le domaine du site
 // 40 = email deviné par regex générique (peu fiable)
-async function scrapeEmailFromWebsite(
+export async function scrapeEmailFromWebsite(
   websiteUrl: string
 ): Promise<{ email: string; confidence: number } | null> {
   try {
@@ -157,6 +157,14 @@ export async function scrapeGooglePlaces(params: {
   maxResults?: number
   maxPages?: number     // pagination Google (1 page = ~20 résultats)
   deadlineMs?: number   // budget temps max (évite les timeouts cron 30s)
+  /** Avis Google minimum (lu GRATUITEMENT dans le Text Search) : en dessous, on ne paie NI le
+   *  Place Details NI le scrape email — le critère client (≥20 avis) l'écartera de toute façon. */
+  minReviews?: number
+  /** Filtre de dédup AVANT paiement : reçoit les place_ids du Text Search, renvoie ceux DÉJÀ en
+   *  base — exclus avant tout appel Place Details. Avant ce filtre, on payait un Details (+ scrape
+   *  email web) pour chaque doublon re-croisé par les combos ville/terme (audit 03/08 : la grande
+   *  majorité des requêtes payées partaient dans des doublons, d'où ~10 nouveaux/jour à peine). */
+  excludeKnownIds?: (placeIds: string[]) => Promise<Set<string>>
 }): Promise<PlaceLead[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
   if (!apiKey) {
@@ -165,7 +173,7 @@ export async function scrapeGooglePlaces(params: {
 
   const startedAt = Date.now()
   // 1 page par défaut (pas de pagination = pas de sleep 2.1s) + budget temps 14s
-  const { sector, city, radius = 20000, maxResults = 15, maxPages = 1, deadlineMs = 7000 } = params
+  const { sector, city, radius = 20000, maxResults = 15, maxPages = 1, deadlineMs = 7000, minReviews = 0, excludeKnownIds } = params
 
   // Step 1: Text Search avec pagination (capter un max de couvreurs par ville)
   const query = encodeURIComponent(`${sector} ${city}`)
@@ -194,10 +202,27 @@ export async function scrapeGooglePlaces(params: {
 
     allResults.push(...textSearchData.results)
     nextPageToken = textSearchData.next_page_token
-    if (!nextPageToken || allResults.length >= maxResults) break
+    // On ne s'arrête plus sur le compte BRUT : une page est payée entière de toute façon, et les
+    // filtres ci-dessous (avis/doublons) vont en écarter une partie — maxResults plafonne les
+    // Details payés, maxPages plafonne les Text Search payés.
+    if (!nextPageToken) break
   }
 
-  const results = allResults.slice(0, maxResults)
+  // ── FILTRES AVANT PAIEMENT (audit 03/08) — le Text Search donne GRATUITEMENT place_id et
+  // user_ratings_total : on écarte ici les < minReviews avis ET les doublons déjà en base, AVANT
+  // de payer le moindre Place Details. Avant, chaque doublon re-croisé coûtait 1 Details + un
+  // scrape email web pour être jeté à l'INSERT → rendement par euro divisé par 3-5.
+  let candidates = allResults
+  if (minReviews > 0) {
+    candidates = candidates.filter(p => (p.user_ratings_total ?? 0) >= minReviews)
+  }
+  if (excludeKnownIds && candidates.length > 0) {
+    try {
+      const known = await excludeKnownIds(candidates.map(p => p.place_id))
+      candidates = candidates.filter(p => !known.has(p.place_id))
+    } catch { /* filtre indisponible → on continue sans (comportement historique) */ }
+  }
+  const results = candidates.slice(0, maxResults)
 
   // Step 2: Place Details for each result
   const leads: PlaceLead[] = []
@@ -206,7 +231,11 @@ export async function scrapeGooglePlaces(params: {
     // Budget temps : on arrête proprement pour ne jamais dépasser le timeout cron
     if (Date.now() - startedAt > deadlineMs) break
     try {
-      const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=name,formatted_address,formatted_phone_number,website,rating,user_ratings_total&key=${apiKey}`
+      // ⚠️ COÛT (03/08) : on ne demande QUE website + téléphone (bucket "Contact Data"). Les
+      // autres champs (nom, adresse, note, nb d'avis) sont DÉJÀ fournis GRATUITEMENT par le Text
+      // Search — les redemander ici facturait en plus le bucket "Atmosphere" (~20% du Details
+      // pour rien). L'email, lui, ne coûte RIEN à Google : on le scrape nous-mêmes sur le site.
+      const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${place.place_id}&fields=formatted_phone_number,website&key=${apiKey}`
       const detailsResp = await fetch(detailsUrl)
 
       if (!detailsResp.ok) continue
@@ -215,7 +244,7 @@ export async function scrapeGooglePlaces(params: {
       if (detailsData.status !== 'OK') continue
 
       const details = detailsData.result
-      const { city: extractedCity, postalCode } = extractCityAndPostalCode(details.formatted_address)
+      const { city: extractedCity, postalCode } = extractCityAndPostalCode(place.formatted_address)
 
       // Step 3: Try to scrape email from website (avec score de confiance)
       let email: string | null = null
@@ -230,14 +259,15 @@ export async function scrapeGooglePlaces(params: {
 
       leads.push({
         googlePlaceId: place.place_id,
-        name: details.name,
-        address: details.formatted_address,
+        // Nom/adresse/note/avis : depuis le Text Search (gratuits), plus depuis le Details (payant).
+        name: place.name,
+        address: place.formatted_address,
         city: extractedCity,
         postalCode,
         phone: details.formatted_phone_number ?? null,
         website: details.website ?? null,
-        rating: details.rating ?? null,
-        reviewsCount: details.user_ratings_total ?? null,
+        rating: place.rating ?? null,
+        reviewsCount: place.user_ratings_total ?? null,
         sector,
         email,
         emailConfidence,

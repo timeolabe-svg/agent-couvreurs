@@ -66,6 +66,8 @@ export async function GET(request: NextRequest) {
     const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_DELAYS, SEQUENCE_LENGTH } =
       await import('@/data/sequence')
     const { getInboxSenderName } = await import('@/lib/instantly/inbox-rotation')
+    const { getAgencyInfo } = await import('@/lib/agency-signature')
+    const agency = await getAgencyInfo()
 
     // Uniquement ce qui n'est PAS encore parti, et uniquement la séquence FROIDE :
     // les steps >= 20 sont les relances de conversation, elles ont leur propre texte.
@@ -82,6 +84,9 @@ export async function GET(request: NextRequest) {
       fromEmail,
       fromName: getInboxSenderName(fromEmail),
       auditHook: auditHookSentence(c.audit_level, c.audit_weaknesses),
+      agencyNom: agency.nom,
+      agencyTelephone: agency.telephone,
+      agencySite: agency.site,
     })
 
     // ── 1. Réécriture du contenu des lignes en file ──────────────────────────

@@ -3,7 +3,9 @@
  *
  * MOTEUR D'ENVOI MAISON — remplace Instantly pour l'ENVOI (Instantly = warmup only).
  * Lit la file email_queue (mails dus), envoie via les boîtes Google chauffées
- * (SMTP smtp.gmail.com), plafond DAILY_CAP_PER_BOX/boîte/jour. Aucune limite de leads.
+ * (SMTP smtp.gmail.com). Trois enveloppes indépendantes/jour : nouveaux contacts (garanti,
+ * NEW_CAP_PER_BOX/boîte), relances de séquence (RELANCE_CAP_PER_BOX, garde-fou large) et
+ * relances de conversation (CONVO_DAILY_CAP, global). Aucune limite de leads.
  *
  * PROTECTIONS ANTI-BOUCLE (leçon du bug "130 mails à un contact") :
  *  - kill-switch SEND_PAUSED=1 (coupe tout envoi instantanément)
@@ -19,21 +21,37 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { getGmailBoxes, sendFromBox, type GmailBox } from '@/lib/gmail-sender'
 import { getInboxSenderName } from '@/lib/instantly/inbox-rotation'
+import { blocLegalRgpd } from '@/lib/rgpd'
+import { pingHeartbeat } from '@/lib/heartbeat'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-// Cible client : boîtes déjà chauffées → 35/boîte/jour (× 4 boîtes = 140/jour).
-const DAILY_CAP_PER_BOX = 35
-const MAX_PER_RUN = 8 // ~8 × 2s = 16s : tient sous les 30s de cron-job.org (offre gratuite). 8/run × 4 runs/h = large vs plafond 140/j
+// ⚠️ TROIS ENVELOPPES TOTALEMENT INDÉPENDANTES (demande explicite : "160 entreprises contactées
+// par jour SANS compter les relances, et si 300 relances à faire, fait les 300 en plus"). Une
+// enveloppe pleine ne mange JAMAIS la capacité d'une autre — sinon on retombe dans le bug du
+// 27/07 (140 mails envoyés, 0 nouveau contact, tout mangé par les relances).
+// 1) NOUVEAUX CONTACTS (step 0) : cible garantie, jamais réduite par les relances.
+const NEW_CAP_PER_BOX = 40 // × 4 boîtes = 160/jour
+// 2) RELANCES DE SÉQUENCE (step 1-19) : PAS de plafond métier — juste un garde-fou technique très
+// large. Boîtes = Google Workspace (domaines custom hdigiweb-*.com, pas du Gmail grand public),
+// limite réelle Google très supérieure à ce plafond. Sert seulement à éviter un bug qui enverrait
+// un volume infini en boucle.
+const RELANCE_CAP_PER_BOX = 150 // × 4 boîtes = 600/jour de marge — largement au-dessus du besoin réel
+// 3) RELANCES DE CONVERSATION (step >= 20) : gens qui ont RÉPONDU, risque quasi nul, plafond
+// global séparé (pas per-boîte, peu de volume en pratique).
+const CONVO_DAILY_CAP = 30
+const MAX_PER_RUN = 8 // Runs fréquents (5-10 min) → débit total largement suffisant même bridé par TIME_BUDGET_MS ci-dessous.
+// ⚠️ L'envoi est SÉQUENTIEL (un mail SMTP après l'autre) : un seul envoi lent (jusqu'à ~8s au
+// pire avec les timeouts nodemailer resserrés, cf. gmail-sender.ts) peut, cumulé, dépasser la
+// coupe dure de 30s de cron-job.org avant même d'atteindre MAX_PER_RUN. Budget temps mur : on
+// arrête proprement AVANT le prochain envoi si on approche la coupe, la ligne reste 'sending'
+// et sera récupérée par le REAPER (>15 min) au prochain run — jamais de renvoi en double.
+const TIME_BUDGET_MS = 15_000 // 20s était trop haut : 20s + un envoi SMTP lent (socketTimeout 8s + retry) dépassait la coupe 30s de cron-job.org. 15s + ~8s = ~23s, marge sûre.
 // Plafond à vie par contact. La séquence validée fait 6 mails (J+0/2/5/8/12/16) et un lead qui
 // répond peut recevoir jusqu'à 2 relances de conversation → 8 au maximum absolu, JAMAIS plus.
 // (Garde-fou anti-boucle hérité de l'incident des 130 mails : ne pas monter au-delà.)
 const LIFETIME_CAP_PER_CONTACT = 8
-// Les relances de CONVERSATION (step >= 20) vont à des gens qui ont RÉPONDU (ils les attendent,
-// n'affectent pas la réputation) → elles ont leur PROPRE plafond et passent même quand le plafond
-// cold (warmup) est atteint. Sinon un lead chaud silencieux attendait le lendemain pour être relancé.
-const CONVO_DAILY_CAP = 30
 
 interface ClaimedRow {
   id: string
@@ -45,7 +63,24 @@ interface ClaimedRow {
   from_email: string
 }
 
+/**
+ * ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48). Le try interne de runCron ne couvre PAS ce qui le
+ * précède (lecture des secteurs en pause, import de la lib DB) : une erreur là remontait en 500
+ * au corps vide, sans motif visible depuis cron-job.org et sans heartbeat posé.
+ */
 export async function GET(req: NextRequest) {
+  try {
+    const res = await runCron(req)
+    await pingHeartbeat("send-campaign", res.status < 400).catch(() => {})
+    return res
+  } catch (err) {
+    console.error('[send-campaign]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    await pingHeartbeat("send-campaign", false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({ ok: false, error: String(e.message ?? err).slice(0, 300), cause: e.cause?.message?.slice(0, 200), code: e.code }, { status: 500 })
+  }
+}
+async function runCron(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
@@ -61,6 +96,18 @@ export async function GET(req: NextRequest) {
 
   const { sql } = await import('@/lib/db')
 
+  // SECTEURS EN PAUSE — verrou aussi au niveau de l'ENVOI (audit 02/08) : la pause n'était
+  // vérifiée qu'à la promotion (autopilot-tick). Un step-0 déjà 'queued' AVANT la pause, ou
+  // débloqué plus tard (validation MV tardive), serait parti quand même. Ceinture + bretelles :
+  // le claim ci-dessous exclut les step-0 des secteurs en pause (relances steps ≥ 1 non touchées,
+  // conformément à la règle "la pause ne bloque QUE les nouveaux contacts").
+  let pausedSectors: string[] = []
+  try {
+    const { getPausedSectors } = await import('@/lib/experiments')
+    pausedSectors = await getPausedSectors()
+  } catch { /* pas de pause configurée */ }
+
+  const started = Date.now()
   try {
     const boxes = getGmailBoxes()
     if (boxes.length === 0) {
@@ -70,35 +117,33 @@ export async function GET(req: NextRequest) {
     // Colonnes de traçage (idempotent).
     await sql`ALTER TABLE email_queue ADD COLUMN IF NOT EXISTS sent_via TEXT`
 
-    // Capacité restante par boîte aujourd'hui.
+    // Capacité restante par boîte aujourd'hui, PAR ENVELOPPE (nouveaux vs relances de séquence).
+    // Les deux compteurs sont indépendants : le sent_via + sequence_step de chaque mail déjà
+    // envoyé aujourd'hui détermine dans QUELLE enveloppe il a été décompté.
     const sentToday = (await sql`
-      SELECT sent_via, COUNT(*)::int AS n
+      SELECT sent_via,
+        SUM(CASE WHEN sequence_step = 0 THEN 1 ELSE 0 END)::int AS new_sent,
+        SUM(CASE WHEN sequence_step BETWEEN 1 AND 19 THEN 1 ELSE 0 END)::int AS relance_sent
       FROM email_queue
       WHERE status = 'sent' AND sent_at::date = CURRENT_DATE AND sent_via IS NOT NULL
       GROUP BY sent_via
-    `) as Array<{ sent_via: string; n: number }>
-    const usedByBox = new Map(sentToday.map(r => [r.sent_via, r.n]))
-    const capacity = new Map(boxes.map(b => [b.email, DAILY_CAP_PER_BOX - (usedByBox.get(b.email) ?? 0)]))
-    const totalCapacity = [...capacity.values()].reduce((s, c) => s + Math.max(0, c), 0)
+    `) as Array<{ sent_via: string; new_sent: number; relance_sent: number }>
+    const newSentByBox = new Map(sentToday.map(r => [r.sent_via, r.new_sent]))
+    const relanceSentByBox = new Map(sentToday.map(r => [r.sent_via, r.relance_sent]))
+    const capNew = new Map(boxes.map(b => [b.email, NEW_CAP_PER_BOX - (newSentByBox.get(b.email) ?? 0)]))
+    const capRelance = new Map(boxes.map(b => [b.email, RELANCE_CAP_PER_BOX - (relanceSentByBox.get(b.email) ?? 0)]))
+    const totalNewCap = [...capNew.values()].reduce((s, c) => s + Math.max(0, c), 0)
+    const totalRelanceCap = [...capRelance.values()].reduce((s, c) => s + Math.max(0, c), 0)
 
     const results: string[] = []
-    results.push(`Boîtes: ${boxes.length} | capacité restante aujourd'hui: ${totalCapacity}`)
+    results.push(`Boîtes: ${boxes.length} | nouveaux dispo aujourd'hui: ${totalNewCap} | relances dispo: ${totalRelanceCap}`)
 
-    // Plafond SÉPARÉ pour les relances de conversation (step >= 20) : elles passent même si le cold
-    // est saturé (destinataire = a répondu, faible risque). On compte celles déjà parties aujourd'hui.
+    // Plafond SÉPARÉ pour les relances de conversation (step >= 20) : elles passent même si les
+    // deux autres enveloppes sont saturées (destinataire = a répondu, faible risque).
     const [{ convoSent }] = (await sql`SELECT COUNT(*)::int AS "convoSent" FROM email_queue WHERE status = 'sent' AND sent_at::date = CURRENT_DATE AND sequence_step >= 20`) as Array<{ convoSent: number }>
     const convoCapacity = Math.max(0, CONVO_DAILY_CAP - (convoSent ?? 0))
-    let convoOnly = false
-    if (totalCapacity <= 0) {
-      if (convoCapacity <= 0) {
-        return NextResponse.json({ ok: true, sent: 0, results: [...results, 'Plafond quotidien atteint (cold ET relances de conversation)'] })
-      }
-      // Cold saturé mais on autorise ENCORE les relances de conversation. On injecte leur capacité
-      // dans les boîtes pour que la sélection de boîte fonctionne (la requête ne réclamera QUE des step>=20).
-      convoOnly = true
-      const per = Math.max(1, Math.ceil(convoCapacity / boxes.length))
-      for (const b of boxes) capacity.set(b.email, per)
-      results.push(`Plafond cold atteint → relances de conversation uniquement (${convoCapacity} dispo aujourd'hui)`)
+    if (totalNewCap <= 0 && totalRelanceCap <= 0 && convoCapacity <= 0) {
+      return NextResponse.json({ ok: true, sent: 0, results: [...results, 'Plafond quotidien atteint (nouveaux, relances ET conversation)'] })
     }
 
     // REAPER : une ligne coincée en 'sending' > 15 min = le run qui l'a réclamée a crashé.
@@ -115,18 +160,45 @@ export async function GET(req: NextRequest) {
     // CLAIM ATOMIQUE : sort les lignes 'queued' → 'sending' en UNE requête (UPDATE ... WHERE id IN (SELECT)).
     // Une ligne passée en 'sending' ne peut PLUS être re-sélectionnée par un run concurrent
     // ni par une réexécution après timeout → zéro renvoi en boucle.
-    const limit = Math.min(MAX_PER_RUN, convoOnly ? convoCapacity : totalCapacity)
+    const limit = MAX_PER_RUN
     const claimed = (await sql`
       UPDATE email_queue SET status = 'sending', sent_at = NOW()
       WHERE id IN (
-        SELECT eq.id
+        -- ⚠️ DISTINCT ON (contact_id) : le NOT EXISTS anti-clustering ci-dessous vérifie l'état de
+        -- la table AVANT cette requête, donc il ne voit PAS les autres lignes réclamées dans LE
+        -- MÊME lot. Sans ce DISTINCT ON, un contact avec 3 relances en retard (aucune 'sent'
+        -- aujourd'hui pour l'instant) passait les 3 en même temps dans un seul UPDATE — vécu le
+        -- 28/07 (3-4 mails au même contact à quelques secondes d'intervalle, MALGRÉ la garde anti-
+        -- clustering déjà en place). Ce DISTINCT ON garantit AU PLUS UNE ligne par contact PAR LOT,
+        -- quel que soit le nombre d'étapes en retard.
+        -- ⚠️ Postgres interdit FOR UPDATE combiné à DISTINCT/DISTINCT ON dans la MÊME requête :
+        -- le verrou (FOR UPDATE SKIP LOCKED) reste isolé dans la sous-requête candidates la plus
+        -- interne (simple SELECT filtré, sans DISTINCT) ; le DISTINCT ON s'applique ENSUITE, sur le
+        -- résultat déjà verrouillé, dans une requête sans clause de verrou (pas nécessaire ni permis).
+        SELECT picked.id FROM (
+          SELECT DISTINCT ON (candidates.contact_id) candidates.id, candidates.sequence_step, candidates.scheduled_at
+          FROM (
+        SELECT eq.id, eq.contact_id, eq.sequence_step, eq.scheduled_at
         FROM email_queue eq
         JOIN contacts c ON c.id = eq.contact_id
         WHERE eq.status = 'queued'
           AND eq.scheduled_at <= NOW()
           AND c.email IS NOT NULL
-          -- Mode "relances de conversation uniquement" (plafond cold saturé) : on ne réclame QUE les step>=20.
-          AND (${!convoOnly} OR eq.sequence_step >= 20)
+          -- Chaque ligne ne peut être réclamée QUE si SON enveloppe a encore de la place :
+          -- nouveaux (step 0) / relances de séquence (step 1-19) / relances de conversation (step >= 20).
+          AND (
+            (eq.sequence_step = 0 AND ${totalNewCap} > 0)
+            OR (eq.sequence_step BETWEEN 1 AND 19 AND ${totalRelanceCap} > 0)
+            OR (eq.sequence_step >= 20 AND ${convoCapacity} > 0)
+          )
+          -- SECTEUR EN PAUSE (verrou envoi, audit 02/08) : un step-0 d'un secteur en pause ne part
+          -- JAMAIS, même s'il était déjà en file avant la pause ou débloqué par une validation MV
+          -- tardive. COALESCE(..., false) = NULL-safe : un contact sans secteur classé n'est pas
+          -- bloqué par erreur (piège NULL NOT IN, leçon 72). Les relances (steps >= 1) passent.
+          AND NOT (
+            eq.sequence_step = 0
+            AND COALESCE(c.sector IN (SELECT jsonb_array_elements_text(${JSON.stringify(pausedSectors)}::jsonb)), false)
+          )
           -- ANTI-RÉPÉTITION : jamais de relance FROIDE (steps 0-3) à un contact qui a déjà
           -- répondu. EXCEPTION : les relances de CONVERSATION (steps >= 20) visent justement
           -- des gens qui ont répondu puis se sont tus → elles doivent passer.
@@ -158,6 +230,16 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM email_queue s
             WHERE s.contact_id = eq.contact_id AND s.sequence_step = eq.sequence_step AND s.status = 'sent'
           )
+          -- ANTI-CLUSTERING : jamais 2 mails au MÊME contact le MÊME jour. Un contact qui a
+          -- accumulé plusieurs relances en retard (scheduled_at dans le passé sur 2-3 steps à la
+          -- fois — ça arrive dès qu'un backlog s'accumule) ne doit PAS les recevoir toutes le même
+          -- jour à quelques heures d'intervalle : le prospect le vit comme un harcèlement (vécu
+          -- le 27/07 : 3 relances à 09h30/09h56/12h13 → plainte explicite du prospect). Chaque
+          -- étape en retard part le jour suivant, pas le jour même que la précédente.
+          AND NOT EXISTS (
+            SELECT 1 FROM email_queue s5
+            WHERE s5.contact_id = eq.contact_id AND s5.status = 'sent' AND s5.sent_at::date = CURRENT_DATE
+          )
           -- ANTI-DOUBLON INTRA-RUN : si DEUX lignes 'queued' existent pour le même (contact, étape)
           -- (double enqueue / backfill / requeue), aucune n'est encore 'sent' → sans ce garde les
           -- deux seraient réclamées dans le même lot et envoyées. On ne garde que la plus ancienne
@@ -172,13 +254,24 @@ export async function GET(req: NextRequest) {
             SELECT COUNT(*) FROM email_queue s2
             WHERE s2.contact_id = eq.contact_id AND s2.status = 'sent'
           ) < ${LIFETIME_CAP_PER_CONTACT}
-        ORDER BY eq.scheduled_at ASC
+          -- VERROU DE FILE (anti-double-envoi entre runs concurrents) : chaque ligne 'queued' est
+          -- verrouillée le temps du claim ; un run parallèle SKIP LOCKED la saute au lieu de la
+          -- réclamer aussi. Sans ça, deux runs (cron qui se chevauche / rejeu après timeout) peuvent
+          -- sélectionner le MÊME lot puis l'envoyer chacun → double envoi (l'incident des 130 mails).
+          FOR UPDATE OF eq SKIP LOCKED
+          ) candidates
+          -- PRIORITÉ AUX NOUVEAUX CONTACTS (step 0) : sans ça, les relances (step 1-3), mises en
+          -- file plus tôt, passaient TOUJOURS devant (tri scheduled_at ASC) et pouvaient épuiser
+          -- tout le plafond du jour avant qu'un seul nouveau prospect ne soit contacté (constaté :
+          -- 140 mails envoyés un jour donné, 0 en step 0). Un step 0 prêt passe donc toujours en
+          -- premier ; les relances ne prennent que la capacité restante. DISTINCT ON impose un tri
+          -- par contact_id EN PREMIER (règle Postgres) ; la priorité step0/scheduled_at départage
+          -- ENSUITE quelle ligne du contact est retenue.
+          ORDER BY candidates.contact_id, (candidates.sequence_step = 0) DESC, candidates.scheduled_at ASC
+        ) picked
+        -- Tri final (post-dédoublonnage par contact) + plafond du lot.
+        ORDER BY (picked.sequence_step = 0) DESC, picked.scheduled_at ASC
         LIMIT ${limit}
-        -- VERROU DE FILE (anti-double-envoi entre runs concurrents) : chaque ligne 'queued' est
-        -- verrouillée le temps du claim ; un run parallèle SKIP LOCKED la saute au lieu de la
-        -- réclamer aussi. Sans ça, deux runs (cron qui se chevauche / rejeu après timeout) peuvent
-        -- sélectionner le MÊME lot puis l'envoyer chacun → double envoi (l'incident des 130 mails).
-        FOR UPDATE OF eq SKIP LOCKED
       )
       RETURNING id, subject, body, sequence_step, campaign_id, contact_id, from_email
     `) as ClaimedRow[]
@@ -195,13 +288,29 @@ export async function GET(req: NextRequest) {
     let sent = 0, skipped = 0, failed = 0
 
     // Sélection de boîte : PRÉFÈRE la boîte assignée (from_email) — signature = enveloppe.
-    const pickBox = (preferred: string): GmailBox | null => {
-      const pref = boxes.find(b => b.email.toLowerCase() === preferred.toLowerCase() && (capacity.get(b.email) ?? 0) > 0)
+    // capMap = null pour les relances de conversation (pas de plafond per-boîte, juste le global convoCapacity).
+    const pickBox = (preferred: string, capMap: Map<string, number> | null): GmailBox | null => {
+      if (!capMap) return boxes.find(b => b.email.toLowerCase() === preferred.toLowerCase()) ?? boxes[0] ?? null
+      const pref = boxes.find(b => b.email.toLowerCase() === preferred.toLowerCase() && (capMap.get(b.email) ?? 0) > 0)
       if (pref) return pref
-      return boxes.find(b => (capacity.get(b.email) ?? 0) > 0) ?? null
+      return boxes.find(b => (capMap.get(b.email) ?? 0) > 0) ?? null
     }
 
-    for (const row of claimed) {
+    let convoRemaining = convoCapacity
+
+    for (let i = 0; i < claimed.length; i++) {
+      const row = claimed[i]
+      // BUDGET TEMPS MUR : un envoi SMTP de plus risquerait de dépasser la coupe 30s de
+      // cron-job.org. On s'arrête AVANT et on remet EXPLICITEMENT les lignes non traitées en
+      // 'queued' (on sait avec certitude qu'aucun sendFromBox n'a été tenté dessus — contrairement
+      // au REAPER qui suppose un crash et attend 15 min par précaution, ici l'arrêt est volontaire
+      // et sûr : reprise dès le prochain run, sans attendre).
+      if (Date.now() - started > TIME_BUDGET_MS) {
+        const rest = claimed.slice(i)
+        await sql`UPDATE email_queue SET status = 'queued' WHERE id = ANY(${rest.map(r => r.id)})`
+        results.push(`⏱ budget temps atteint — ${rest.length} ligne(s) remise(s) en file (reprises au run suivant)`)
+        break
+      }
       const contact = contactMap.get(row.contact_id)
       if (!contact?.email) {
         await sql`UPDATE email_queue SET status = 'failed' WHERE id = ${row.id}`
@@ -212,12 +321,21 @@ export async function GET(req: NextRequest) {
         skipped++; continue
       }
 
-      let box = pickBox(row.from_email)
-      if (!box) {
-        // Plus de capacité : on remet la ligne en file (elle n'a PAS été envoyée).
+      // Enveloppe de CETTE ligne — indépendante des deux autres (une pleine ne bloque pas les autres).
+      const bucket: 'new' | 'relance' | 'convo' = row.sequence_step === 0 ? 'new' : row.sequence_step >= 20 ? 'convo' : 'relance'
+      if (bucket === 'convo' && convoRemaining <= 0) {
         await sql`UPDATE email_queue SET status = 'queued' WHERE id = ${row.id}`
-        results.push('Plus de capacité en cours de run — ligne remise en file')
-        break
+        continue
+      }
+      const capMap = bucket === 'new' ? capNew : bucket === 'relance' ? capRelance : null
+
+      let box = pickBox(row.from_email, capMap)
+      if (!box) {
+        // Plus de capacité DANS CETTE ENVELOPPE : on remet la ligne en file, mais on continue
+        // avec les lignes suivantes (une autre enveloppe peut encore avoir de la place).
+        await sql`UPDATE email_queue SET status = 'queued' WHERE id = ${row.id}`
+        results.push(`Plus de capacité (${bucket}) — ligne remise en file`)
+        continue
       }
 
       // 1) Corrige une salutation "Bonjour ENTREPRISE," / "Bonjour VISION," → "Bonjour,".
@@ -231,9 +349,15 @@ export async function GET(req: NextRequest) {
         if (isCompany || isAllCaps) finalBody = finalBody.replace(/^\s*Bonjour\s+[^,\n]+,/i, 'Bonjour,')
       }
 
-      // 2) Opt-out garanti sur CHAQUE mail (RGPD + délivrabilité).
-      if (!/stop|désabonn|désinscri|ne plus recevoir|unsubscribe/i.test(finalBody)) {
-        finalBody = `${finalBody}\n\n---\nPour ne plus recevoir mes emails, répondez simplement "Stop".`
+      // 2) MENTION LÉGALE RGPD garantie sur CHAQUE mail (art. 14 : les données ne viennent PAS de
+      // la personne — elles sont scrapées de sources publiques — donc on DOIT l'informer de leur
+      // origine et de son droit d'opposition. L'ancien pied de page ne disait que "répondez Stop",
+      // ce qui couvre l'opt-out mais PAS l'obligation d'information : c'est ce manquement qui rend
+      // une plainte CNIL difficile à défendre (incident LabegarIA, août 2026).
+      if (!/coordonnées professionnelles proviennent/i.test(finalBody)) {
+        // On retire un éventuel ancien pied de page "Stop" seul pour ne pas empiler deux blocs.
+        finalBody = finalBody.replace(/\n*---\nPour ne plus recevoir mes emails[^\n]*\n?/i, '\n')
+        finalBody = `${finalBody.trimEnd()}\n\n${blocLegalRgpd()}`
       }
 
       const senderName = getInboxSenderName(box.email)
@@ -242,8 +366,8 @@ export async function GET(req: NextRequest) {
       // Boîte HS (535 BadCredentials) → désactivée ce run, retry ailleurs.
       if (!r.ok && /BadCredentials|Invalid login|535/.test(r.error ?? '')) {
         results.push(`⚠ boîte HS: ${box.email} (mdp d'application invalide) — désactivée ce run`)
-        capacity.set(box.email, 0)
-        const alt = boxes.find(b => (capacity.get(b.email) ?? 0) > 0)
+        if (capMap) capMap.set(box.email, 0)
+        const alt = capMap ? boxes.find(b => (capMap.get(b.email) ?? 0) > 0) : boxes.find(b => b.email !== box!.email)
         if (alt) {
           box = alt
           r = await sendFromBox(alt, { to: contact.email, subject: row.subject, text: finalBody, senderName: getInboxSenderName(alt.email) })
@@ -252,7 +376,8 @@ export async function GET(req: NextRequest) {
 
       if (r.ok) {
         await sql`UPDATE email_queue SET status = 'sent', sent_at = NOW(), sent_via = ${box.email}, body = ${finalBody} WHERE id = ${row.id}`
-        capacity.set(box.email, (capacity.get(box.email) ?? 1) - 1)
+        if (capMap) capMap.set(box.email, (capMap.get(box.email) ?? 1) - 1)
+        else convoRemaining--
         sent++
         results.push(`✓ step ${row.sequence_step} → ${contact.email} via ${box.email}`)
         try {

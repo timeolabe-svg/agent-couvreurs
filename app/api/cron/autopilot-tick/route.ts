@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
 import { getPausedSectors } from '@/lib/experiments'
+import { getAgencyInfo } from '@/lib/agency-signature'
 
 // Laisse Vercel exécuter jusqu'à 60s (la génération de plusieurs séquences peut être longue).
 export const maxDuration = 60
@@ -133,7 +134,25 @@ const OCCITANIE_CITIES = [
   'Ajaccio', 'Bastia', 'Porto-Vecchio', 'Calvi',
 ]
 
+/**
+ * ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48). Ce cron REMPLIT la file : s'il tombe en silence, plus
+ * aucun nouveau contact n'entre dans le pipeline et rien ne le signale (les envois continuent sur
+ * le stock existant, donc aucune alerte "0 mail envoyé" ne se déclenche). Les try/catch internes
+ * ne couvraient ni la lecture de config initiale ni l'injection des orphelins.
+ */
 export async function GET(request: NextRequest) {
+  try {
+    return await runTickHandler(request)
+  } catch (err) {
+    console.error('[autopilot-tick]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    const { pingHeartbeat } = await import('@/lib/heartbeat')
+    await pingHeartbeat('autopilot-tick', false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({ ok: false, error: String(e.message ?? err).slice(0, 300), cause: e.cause?.message?.slice(0, 200), code: e.code }, { status: 500 })
+  }
+}
+
+async function runTickHandler(request: NextRequest) {
   const cronAuth = checkCronAuth(request)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
 
@@ -147,6 +166,19 @@ export async function GET(request: NextRequest) {
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
+
+  // ── RATTRAPAGE AUTOMATIQUE DES ORPHELINS (leçon 69/83) ──
+  // Un contact qualifié sans ligne email_queue est invisible pour TOUT le pipeline (validation,
+  // promotion, envoi) : il dort à vie sans erreur. Constaté deux fois (273 puis 73 contacts).
+  // On l'exécute ici plutôt que dans un endpoint manuel : plus aucun lead ne peut rester bloqué.
+  let orphelinsInjectes = 0
+  try {
+    const { enqueueOrphanContacts } = await import('@/lib/enqueue-orphans')
+    const r = await enqueueOrphanContacts(60)
+    orphelinsInjectes = r.inserted
+  } catch (e) {
+    console.error('[autopilot-tick] injection orphelins échouée (non bloquant)', e)
+  }
 
   let queued = 0
   let campaignsProcessed = 0
@@ -720,6 +752,7 @@ export async function GET(request: NextRequest) {
           // réécrivait le pitch, inventait des chiffres et présentait une offre que Hdigiweb ne
           // vend pas. On envoie les 6 mails validés, seules les variables changent (nom, métier,
           // ville, boîte) + le défaut RÉEL de l'audit au mail 1 (omis si l'audit n'a rien de sûr).
+          const agency = await getAgencyInfo()
           const seqVars = {
             firstName: lead.firstName,
             city: lead.city,
@@ -727,6 +760,9 @@ export async function GET(request: NextRequest) {
             fromEmail: inbox.email,
             fromName: inbox.senderName,
             auditHook: auditHookSentence(contact.audit_level, contact.audit_weaknesses),
+            agencyNom: agency.nom,
+            agencyTelephone: agency.telephone,
+            agencySite: agency.site,
           }
           const filled: Array<{ subject: string; body: string }> = Array.from(
             { length: SEQUENCE_LENGTH },
@@ -805,6 +841,8 @@ export async function GET(request: NextRequest) {
     }
   } catch (err) {
     console.error('[autopilot-tick] Fatal error in email sending', err)
+    const { pingHeartbeat } = await import('@/lib/heartbeat')
+    await pingHeartbeat('autopilot-tick', false, String(err).slice(0, 300))
     return NextResponse.json({
       queued,
       campaigns_processed: campaignsProcessed,
@@ -815,8 +853,15 @@ export async function GET(request: NextRequest) {
     })
   }
 
+  // Heartbeat : ce cron figure dans la liste EXPECTED de heartbeat-check mais ne pingait jamais
+  // (last_run_at restait NULL → surveillance silencieusement inopérante, angle mort détecté à
+  // l'audit du 02/08). Ping en fin de run, succès comme échec.
+  const { pingHeartbeat } = await import('@/lib/heartbeat')
+  await pingHeartbeat('autopilot-tick', true, `queued=${queued}`)
+
   return NextResponse.json({
     queued,
+    orphelins_injectes: orphelinsInjectes,
     campaigns_processed: campaignsProcessed,
     leads_scraped: leadsScraped,
     scraped_city: scrapedCity || null,

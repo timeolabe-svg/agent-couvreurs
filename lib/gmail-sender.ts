@@ -63,9 +63,13 @@ function buildTransport(box: GmailBox) {
     // TIMEOUTS EXPLICITES : sans ça, les défauts nodemailer se comptent en minutes → une seule
     // boîte Gmail qui pend pouvait faire sauter le budget 30s du cron (send-campaign / poll Partie A)
     // et tronquer tout le run. On borne chaque phase pour échouer vite et passer à la boîte suivante.
-    connectionTimeout: 8000,
-    greetingTimeout: 6000,
-    socketTimeout: 10000,
+    // ⚠️ 2026-07-27 : resserré (8/6/10s → 5/5/8s) après un "Échec délai d'attente" cron-job.org sur
+    // send-campaign — l'envoi est SÉQUENTIEL (MAX_PER_RUN mails l'un après l'autre) : un seul envoi
+    // lent au pire cas ancien (jusqu'à 10s) combiné à un autre pouvait à lui seul dépasser la coupe
+    // dure de 30s. Cf. leçon 77 d'agent-cold-email-blueprint (dimensionner sur le pire cas, pas la moyenne).
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
+    socketTimeout: 8000,
   })
 }
 

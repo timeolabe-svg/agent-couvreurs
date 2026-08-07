@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { pingHeartbeat } from '@/lib/heartbeat'
 import { isFakeEmail } from '@/lib/fake-email'
 import { SECTOR_QUERIES, SECTORS, REGIONS, CITIES_BY_REGION } from '@/lib/scrape-targets'
 import { WEIGHTS_KEYS, weightedPick, getWeights, getPausedSectors } from '@/lib/experiments'
@@ -12,20 +13,42 @@ export const maxDuration = 60
 // nouveaux contacts (audit_done=false → seront audités par audit-sites), et on met
 // en file d'envoi ceux dont l'email est fiable. Léger, jamais de timeout.
 
-const SCRAPE_MAX_RESULTS = 12
-const TIME_BUDGET_MS = 45000
+// ⚠️ 03/08 : le palier agressif (400 req/jour ≈ 12-16 €/jour) a été ANNULÉ par Timéo dans
+// l'heure ("impossible pour moi de payer aussi cher, stop") — retour au budget historique
+// 120 req/jour (≈ 3-5 €/jour max). On GARDE en revanche le fix de rendement (filtres
+// avis+doublons AVANT de payer les Place Details, cf. scrapeGooglePlaces) : lui fait
+// ÉCONOMISER — chaque requête payée n'achète plus que des candidats neufs et qualifiés.
+// Ne remonter le plafond QU'avec un accord explicite de Timéo sur le coût chiffré.
+const SCRAPE_MAX_RESULTS = 12  // Details payés max par run (tous des candidats NEUFS ≥20 avis)
+const SCRAPE_MAX_PAGES = 2     // Text Search paginé (2 pages = jusqu'à 40 résultats bruts, 2 req)
+// ⚠️ 20s et non 45s : la contrainte réelle est la coupe DURE de cron-job.org à 30s, pas le
+// maxDuration Vercel (60s). À 45s, un run qui allait au bout était compté « Échec » côté
+// ordonnanceur alors que Vercel finissait le travail — même bug que audit-sites (06/08).
+const TIME_BUDGET_MS = 20000
 
 // ─── FREINS COÛT GOOGLE PLACES (API payante ~0,03-0,04 €/requête) ───
 // Ne JAMAIS payer pour scraper alors qu'on a déjà des leads en réserve.
-const SCRAPE_PIPELINE_THRESHOLD = 100 // ne scrape QUE s'il reste < 100 leads frais en attente
+const SCRAPE_PIPELINE_THRESHOLD = 100 // ne scrape QUE s'il reste < 100 leads promouvables en attente
 const SCRAPE_MIN_INTERVAL_MIN = 30    // throttle : au plus 1 scrape / 30 min
-// IMPORTANT : un run = 1 Text Search + jusqu'à SCRAPE_MAX_RESULTS Place Details = ~13 requêtes
-// FACTURÉES, pas 1. On réserve donc le VRAI volume de requêtes, et le plafond compte des REQUÊTES
-// (pas des runs) — sinon "30/jour" = en réalité ~390 requêtes/jour = facture qui grimpe.
-const PLACES_REQ_PER_RUN = SCRAPE_MAX_RESULTS + 1 // pire cas d'un run (conservateur = bon pour la facture)
-const DAILY_PLACES_REQ_CAP = 120                  // plafond DUR de REQUÊTES Places / jour (~9 runs). Large vu le stock de 2000+ leads
+// IMPORTANT : un run = SCRAPE_MAX_PAGES Text Search + jusqu'à SCRAPE_MAX_RESULTS Place Details =
+// ~14 requêtes FACTURÉES au pire. On réserve le VRAI volume, le plafond compte des REQUÊTES.
+const PLACES_REQ_PER_RUN = SCRAPE_MAX_RESULTS + SCRAPE_MAX_PAGES // pire cas d'un run
+const DAILY_PLACES_REQ_CAP = 120  // plafond DUR : ≈ 3-5 €/jour MAX, budget validé par Timéo
 
+/** ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48) : jamais de 500 muet, toujours le motif réel. */
 export async function GET(req: Request) {
+  try {
+    const res = await runCron(req)
+    await pingHeartbeat("scrape-leads", res.status < 400).catch(() => {})
+    return res
+  } catch (err) {
+    console.error('[scrape-leads]', err)
+    const e = err as { message?: string; cause?: { message?: string }; code?: string }
+    await pingHeartbeat("scrape-leads", false, String(e.message ?? err).slice(0, 300)).catch(() => {})
+    return NextResponse.json({ ok: false, error: String(e.message ?? err).slice(0, 300), cause: e.cause?.message?.slice(0, 200), code: e.code }, { status: 500 })
+  }
+}
+async function runCron(req: Request) {
   const cronAuth = checkCronAuth(req)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
@@ -37,7 +60,7 @@ export async function GET(req: Request) {
   try {
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
-  const { eq, and, sql, notInArray, isNull, or } = await import('drizzle-orm')
+  const { eq, and, sql, notInArray, isNull, or, gte, inArray } = await import('drizzle-orm')
   const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
 
   // Campagne active (pour rattacher les email_queue)
@@ -60,6 +83,10 @@ export async function GET(req: Request) {
   // les leads des secteurs ACTIFS (OR isNull : même piège NULL que dans autopilot-tick, un
   // contact sans secteur classé ne doit jamais être exclu par erreur).
   const pausedSectors = await getPausedSectors()
+  // ⚠️ AUDIT 02/08 : ne compter que les leads PROMOUVABLES. 44/46 pending terrassier avaient
+  // < 20 avis Google (critère client : jamais promus par autopilot-tick) — des morts-vivants qui
+  // occupaient la moitié du seuil de 100 en permanence et freinaient le scraping de VRAIS leads.
+  // Même logique que la promotion : ≥ 20 avis, et rotation MV pas épuisée (mv_attempts < 5).
   const [reserveRow] = await db.select({ n: sql<number>`count(*)::int` })
     .from(email_queue)
     .innerJoin(contacts, eq(email_queue.contact_id, contacts.id))
@@ -67,15 +94,21 @@ export async function GET(req: Request) {
       eq(email_queue.campaign_id, activeCampaign.id),
       eq(email_queue.status, 'pending'),
       eq(email_queue.sequence_step, 0),
+      gte(contacts.google_reviews_count, 20),
+      or(isNull(contacts.mv_attempts), sql`${contacts.mv_attempts} < 5`)!,
       ...(pausedSectors.length > 0 ? [or(isNull(contacts.sector), notInArray(contacts.sector, pausedSectors))!] : []),
     ))
+  // ?force=1 : saute les freins de CONFORT (réserve pleine, throttle) pour tester ou débloquer
+  // manuellement. Le plafond DUR de requêtes Places du jour (garde-fou COÛT) reste actif : le
+  // forçage ne peut jamais faire déraper la facture.
+  const force = new URL(req.url).searchParams.get('force') === '1'
   const reserve = Number(reserveRow?.n ?? 0)
-  if (reserve >= SCRAPE_PIPELINE_THRESHOLD) {
+  if (!force && reserve >= SCRAPE_PIPELINE_THRESHOLD) {
     return NextResponse.json({ ok: true, skipped: true, reason: `réserve pleine (${reserve} leads actifs ≥ ${SCRAPE_PIPELINE_THRESHOLD}) — économie API`, reserve })
   }
   // 3) Throttle : au plus 1 scrape / SCRAPE_MIN_INTERVAL_MIN (évite de consommer un crédit pour rien).
   const [lastRow] = await db.select({ value: agent_config.value }).from(agent_config).where(eq(agent_config.key, 'last_scrape_at'))
-  if (lastRow?.value) {
+  if (!force && lastRow?.value) {
     const ageMin = (now.getTime() - new Date(lastRow.value).getTime()) / 60000
     if (ageMin >= 0 && ageMin < SCRAPE_MIN_INTERVAL_MIN) {
       return NextResponse.json({ ok: true, skipped: true, reason: `throttle (${ageMin.toFixed(0)}/${SCRAPE_MIN_INTERVAL_MIN} min)` })
@@ -102,6 +135,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, skipped: true, reason: `plafond requêtes Places atteint (${placesToday}/${DAILY_PLACES_REQ_CAP})` })
   }
 
+  const results: string[] = []
+  const g = (r: unknown) => (r as { rows?: unknown[] }).rows ?? (r as unknown[])
+
   // SÉLECTION PONDÉRÉE (auto-apprentissage) : l'agent scrape davantage les secteurs
   // et régions qui répondent le mieux, tout en continuant d'explorer les autres
   // (plancher de poids). Puis terme + ville tirés au hasard dans le secteur/région choisis.
@@ -113,13 +149,83 @@ export async function GET(req: Request) {
   const sector = weightedPick(activeSectors.length > 0 ? activeSectors : SECTORS, sectorWeights)
   const region = weightedPick(REGIONS, regionWeights)
   const termsForSector = SECTOR_QUERIES.filter(q => q.sector === sector)
-  const queryDef = termsForSector[Math.floor(Math.random() * termsForSector.length)] ?? SECTOR_QUERIES[0]
   const citiesInRegion = CITIES_BY_REGION[region] ?? []
-  const city = citiesInRegion[Math.floor(Math.random() * citiesInRegion.length)] ?? 'Paris'
+
+  // ⚠️ COUVERTURE (04/08) : terme et ville étaient tirés AU HASARD → sur 206 villes × ~30 termes,
+  // le hasard repasse constamment sur les mêmes combos déjà épuisés pendant que des zones
+  // entières ne sont jamais visitées. Résultat : on paie des recherches qui ne ramènent que des
+  // entreprises déjà en base (le stock de nouveaux leads stagne). On mémorise donc chaque combo
+  // (secteur, terme, ville) avec sa date de dernier passage et son rendement, et on choisit
+  // TOUJOURS le combo jamais fait — sinon le plus ancien, en écartant ceux déjà épuisés
+  // (0 nouveau lead au dernier passage ET revisité récemment). Même principe que la rotation de
+  // la leçon 71 : un tri qui garantit que tout le territoire finit par être couvert.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS scrape_combos (
+      sector TEXT NOT NULL,
+      term TEXT NOT NULL,
+      city TEXT NOT NULL,
+      last_scraped_at TIMESTAMPTZ,
+      times_scraped INT NOT NULL DEFAULT 0,
+      last_new_leads INT,
+      total_new_leads INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (sector, term, city)
+    )
+  `)
+
+  let queryDef = termsForSector[Math.floor(Math.random() * termsForSector.length)] ?? SECTOR_QUERIES[0]
+  let city = citiesInRegion[Math.floor(Math.random() * citiesInRegion.length)] ?? 'Paris'
+
+  if (termsForSector.length > 0 && citiesInRegion.length > 0) {
+    // Tous les combos possibles pour ce (secteur, région) — puis on retire ceux déjà connus pour
+    // trouver un combo VIERGE en priorité.
+    const combosPossibles: Array<{ term: string; city: string }> = []
+    for (const t of termsForSector) for (const c of citiesInRegion) combosPossibles.push({ term: t.term, city: c })
+
+    const connus = g(await db.execute(sql`
+      SELECT term, city, last_scraped_at, last_new_leads
+      FROM scrape_combos WHERE sector = ${sector}
+    `)) as Array<{ term: string; city: string; last_scraped_at: string | null; last_new_leads: number | null }>
+    const clefsConnues = new Set(connus.map(c => `${c.term}|${c.city}`))
+
+    const vierges = combosPossibles.filter(c => !clefsConnues.has(`${c.term}|${c.city}`))
+    if (vierges.length > 0) {
+      // Priorité absolue : une zone jamais explorée (100% de chances de trouver du nouveau).
+      const choisi = vierges[Math.floor(Math.random() * vierges.length)]
+      queryDef = { term: choisi.term, sector }
+      city = choisi.city
+      results.push(`combo VIERGE (${vierges.length} restants sur ${combosPossibles.length})`)
+    } else {
+      // Tout est déjà exploré : on reprend le plus ancien, en écartant les combos épuisés
+      // (dernier passage sans aucun nouveau lead et revu il y a moins de 30 jours).
+      const candidats = connus
+        .filter(c => !(c.last_new_leads === 0 && c.last_scraped_at && Date.now() - new Date(c.last_scraped_at).getTime() < 30 * 86400000))
+        .sort((a, b) => new Date(a.last_scraped_at ?? 0).getTime() - new Date(b.last_scraped_at ?? 0).getTime())
+      const choisi = candidats[0] ?? connus[0]
+      if (choisi) {
+        queryDef = { term: choisi.term, sector }
+        city = choisi.city
+        results.push(`combo recyclé (le plus ancien, ${candidats.length} non épuisés)`)
+      }
+    }
+  }
 
   let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
   try {
-    rawLeads = await scrapeGooglePlaces({ sector: queryDef.term, city, maxResults: SCRAPE_MAX_RESULTS })
+    rawLeads = await scrapeGooglePlaces({
+      sector: queryDef.term, city,
+      maxResults: SCRAPE_MAX_RESULTS,
+      maxPages: SCRAPE_MAX_PAGES,
+      deadlineMs: 20000,
+      // RENDEMENT (audit 03/08) : filtres AVANT paiement — on ne paie un Place Details ni pour
+      // un < 20 avis (critère client, gratuit dans le Text Search) ni pour un doublon déjà en base.
+      minReviews: 20,
+      excludeKnownIds: async (placeIds: string[]) => {
+        const rows = await db.select({ id: contacts.google_place_id })
+          .from(contacts)
+          .where(inArray(contacts.google_place_id, placeIds))
+        return new Set(rows.map(r => r.id).filter((x): x is string => Boolean(x)))
+      },
+    })
   } catch (err) {
     console.error('[scrape-leads] Google Places échoué :', err)
   }
@@ -196,6 +302,19 @@ export async function GET(req: Request) {
     }
   }
 
+  // MÉMORISATION DU COMBO : date de passage + rendement réel. C'est ce qui permet à la rotation
+  // de savoir quelles zones sont vierges, lesquelles sont épuisées (0 nouveau) et lesquelles
+  // méritent d'être revisitées plus tard.
+  await db.execute(sql`
+    INSERT INTO scrape_combos (sector, term, city, last_scraped_at, times_scraped, last_new_leads, total_new_leads)
+    VALUES (${queryDef.sector}, ${queryDef.term}, ${city}, NOW(), 1, ${inserted}, ${inserted})
+    ON CONFLICT (sector, term, city) DO UPDATE SET
+      last_scraped_at = NOW(),
+      times_scraped = scrape_combos.times_scraped + 1,
+      last_new_leads = ${inserted},
+      total_new_leads = scrape_combos.total_new_leads + ${inserted}
+  `).catch(() => {})
+
   return NextResponse.json({
     sector: queryDef.sector,
     term: queryDef.term,
@@ -205,6 +324,7 @@ export async function GET(req: Request) {
     inserted,
     queued,
     skipped,
+    rotation: results,
   })
   } catch (err) {
     // Plus jamais de 500 muet : sans ce filet, un échec silencieux ressemble à "aucun résultat"

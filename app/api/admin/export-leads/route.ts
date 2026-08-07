@@ -33,10 +33,14 @@ export async function GET(request: NextRequest) {
     // Répartition par métier : sert à répondre factuellement à la question "est-ce que tel
     // secteur est déjà couvert, et à quel volume ?" sans avoir à supposer.
     if (type === 'repartition') {
+      // ⚠️ FAN-OUT CARTÉSIEN corrigé (03/08) : les LEFT JOIN multipliaient chaque contact par ses
+      // lignes de file/réponses → COUNT(*) comptait contact × mails (1170 "prospects" affichés
+      // pour 357 réels). COUNT(DISTINCT c.id) partout — même classe de bug que les dashboards
+      // lents déjà corrigés (pré-agrégation), il gonflait TOUTES les répartitions depuis le début.
       const r = await db.execute(sql`
         SELECT c.sector,
-               COUNT(*)::int                                         AS prospects,
-               COUNT(*) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles_20avis,
+               COUNT(DISTINCT c.id)::int                             AS prospects,
+               COUNT(DISTINCT c.id) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles_20avis,
                COUNT(DISTINCT eq.contact_id) FILTER (WHERE eq.status = 'sent')::int  AS contactes,
                COUNT(DISTINCT ir.contact_id)::int                    AS ont_repondu,
                COUNT(DISTINCT rv.contact_id)::int                    AS rdv

@@ -46,6 +46,13 @@ Tu n'es pas là pour vendre à tout prix, si ce n'est pas le bon moment tu le di
 - Toujours finir par "Bien à vous," avant la signature
 - Jamais de liste à puces
 - Jamais répéter ce que le prospect vient de dire
+- ⛔ INTERDICTION ABSOLUE D'INVENTER UNE DONNÉE FACTUELLE. Tu n'écris JAMAIS un numéro de
+  téléphone, une adresse email, un lien ou une adresse postale qui ne figure pas TEL QUEL dans la
+  signature fournie ci-dessous. (Incident réel : un prospect a demandé un numéro, la réponse
+  automatique lui a donné "06 12 34 56 78", un numéro d'exemple inventé.) Si le prospect demande
+  un numéro et qu'AUCUN téléphone n'apparaît dans ta signature : ne prétends pas en avoir un,
+  propose simplement de le rappeler toi ("Je peux vous rappeler demain matin, ça vous va ?").
+  Un texte relit automatiquement ta réponse : toute donnée inventée bloque l'envoi.
 - CRITIQUE : nos emails de prospection sont du texte pur, SANS aucune pièce jointe ni document. Si un prospect mentionne ne pas avoir reçu de document, NE JAMAIS inventer qu'un document a été envoyé. Clarifier simplement : "Mon email était juste une prise de contact, pas d'envoi de document prévu."
 
 === RÈGLE APPELS TÉLÉPHONIQUES (CRITIQUE) ===
@@ -57,6 +64,16 @@ Tu es Gabin, de Hdigiweb. C'est TOI qui rappelles le prospect (ou l'équipe, mai
 - NE demande JAMAIS "avez-vous répondu à mon appel ?" / "avez-vous pu me joindre ?" : tu n'as passé aucun appel.
 - NE répète JAMAIS et n'accuse JAMAIS réception du "oui"/"ok"/"d'accord" (INTERDIT : "j'ai bien noté votre oui", "comme vous l'avez confirmé"). Si le prospect confirme juste par un mot, réponds très brièvement sans citer sa réponse.
 - Si un RDV est DÉJÀ fixé (contexte "RDV DÉJÀ CALÉ") : NE propose PAS un nouveau créneau, NE ré-explique PAS l'offre. Confirme l'existant en UNE phrase courte (sans répéter son numéro).
+
+=== RÈGLE CANAL DEMANDÉ (CRITIQUE) ===
+Si le prospect demande EXPLICITEMENT de continuer PAR MAIL/ÉCRIT (ex : "pouvez-vous m'expliquer
+par mail", "je préfère par écrit", "envoyez-moi ça par email", "pas par téléphone") : NE PROPOSE
+PAS d'appel dans CETTE réponse. Réponds à sa question avec une VRAIE explication concrète et
+utile (les leviers précis adaptés à son métier : catégories de la fiche Google, avis récents,
+posts réguliers, site clair côté mobile...), pas un paragraphe vague de 2 lignes suivi d'un pivot
+vers un rappel. Termine par une question ouverte sur SON contexte, ou laisse la porte ouverte à
+un appel PLUS TARD seulement si tu sens un vrai intérêt confirmé, jamais dans le même message qui
+vient d'ignorer sa demande explicite de rester par écrit.
 
 === APPROCHE WARM-UP (CRITIQUE) ===
 Quand un prospect montre de l'intérêt ou pose une question, l'objectif premier est de COMPRENDRE sa situation spécifique.
@@ -90,10 +107,19 @@ RÈGLES : jamais de promesse bidon ni de chiffre inventé. Susciter l'intérêt,
 Exemple ton (prix) : "Je comprends, c'est un vrai sujet. Juste pour situer : quand vous dites trop cher, c'est par rapport à un budget précis ou parce que vous n'avez pas encore vu ce que ça peut rapporter ? Je pose la question parce qu'on offre le premier mois, justement pour que vous jugiez sur les devis réels que ça génère avant de payer quoi que ce soit. Si ça ne ramène rien, vous ne perdez rien."`
 
     case 'question':
-      return `STRATÉGIE QUESTION (indice croustillant + RDV) :
+      return `STRATÉGIE QUESTION (RÉPONSE DÉTAILLÉE d'abord, appel en option légère) :
 RÉPONDS TOUJOURS, jamais "je reviens vers vous" ou "je vous répondrai plus tard" (interdit, ça casse tout).
-Donne UN indice CONCRET et croustillant qui répond vraiment à sa question (1-2 leviers précis adaptés à SON métier : ex. optimiser les catégories exactes de sa fiche Google, récolter des avis récents, poster régulièrement, corriger les infos NAP), assez pour montrer que tu sais de quoi tu parles et lui donner envie, MAIS garde le détail complet et le plan sur-mesure pour l'appel.
-Puis enchaîne direct sur un rappel au PLUS TÔT : "Le mieux c'est que je vous montre ça en direct sur votre fiche, 10 min. Demain matin ça vous va ?". Une seule question. Jamais de liste à puces.`
+⚠️ Ne garde PAS le détail "pour l'appel" par défaut : beaucoup de prospects n'ont pas le temps ou
+l'envie d'un appel, et une réponse creuse qui renvoie systématiquement à un rappel se lit comme de
+l'esquive. Réponds à sa question avec de VRAIS leviers concrets et complets, adaptés à SON métier
+(ex : les catégories exactes à corriger sur sa fiche Google, comment récolter des avis récents,
+la fréquence de posts, les infos NAP à corriger, ce qui cloche sur son site) — assez pour qu'il
+comprenne réellement la réponse SANS avoir besoin de l'appel pour ça.
+Termine par une question ouverte sur SON contexte (pas une liste à puces). Tu PEUX glisser une
+ouverture légère vers un appel SEULEMENT si elle reste secondaire et facultative dans la phrase
+("si vous préférez qu'on regarde ça ensemble en direct, dites-le-moi") — jamais comme LA seule
+suite proposée, et jamais si sa question sous-entend qu'il préfère l'écrit (cf. RÈGLE CANAL
+DEMANDÉ ci-dessus, où l'appel est carrément exclu).`
 
     case 'interest':
       return `STRATÉGIE INTÉRÊT (indice croustillant + RDV au plus tôt) :
@@ -224,10 +250,19 @@ ${buildStrategyGuidance(params.classification)}
 Rédige la réponse. JSON uniquement :
 {"body": "..."}`
 
-  // Signature dynamique : la boîte qui suit la conversation (pas l'adresse hardcodée).
-  const system = params.fromEmail
-    ? SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, params.fromEmail)
-    : SYSTEM_PROMPT
+  // Signature dynamique : la boîte qui suit la conversation (pas l'adresse hardcodée) + les VRAIS
+  // réglages d'agence (téléphone, site) au lieu du bloc figé "Gabin/Hdigiweb/email" qui ne
+  // contenait aucun moyen de rappel. Un lead avait signalé l'absence de signature complète.
+  const emailInSig = params.fromEmail || 'gabin@hdigiweb-agence.com'
+  let system = SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, emailInSig)
+  try {
+    const { getAgencyInfo } = await import('@/lib/agency-signature')
+    const agency = await getAgencyInfo()
+    const sigLines = ['Signature :', 'Gabin', agency.nom, emailInSig]
+    if (agency.telephone) sigLines.push(agency.telephone)
+    if (agency.site) sigLines.push(agency.site.replace(/^https?:\/\//, ''))
+    system = system.replace(`Signature :\nGabin\nHdigiweb\n${emailInSig}`, sigLines.join('\n'))
+  } catch { /* non-bloquant : signature minimale en repli */ }
 
   // ⚠️ RÈGLE ABSOLUE : cette fonction ne DOIT JAMAIS jeter. Un hoquet Gemini (vide, 429,
   // timeout) tuait tout processReply → aucun brouillon → le lead CHAUD (qui a donné son
@@ -241,25 +276,30 @@ Rédige la réponse. JSON uniquement :
     return fixSig(cleanEmailText(parsed.body))
   } catch (err) {
     console.error('[generator] génération IA échouée → repli déterministe:', String(err).slice(0, 120))
-    return fixSig(cleanEmailText(buildFallbackReply(params)))
+    return fixSig(cleanEmailText(await buildFallbackReply(params)))
   }
 }
 
 // Repli DÉTERMINISTE (zéro IA) — garantit qu'une réponse part même si Gemini est indisponible.
 // Priorité au lead chaud : si un créneau d'appel est posé, on le CONFIRME clairement (avec le
 // numéro s'il l'a donné). Sinon, réponse d'accroche courte qui garde la porte ouverte.
-function buildFallbackReply(params: {
+async function buildFallbackReply(params: {
   classification: ReplyClassification
   contactName: string
   proposedSlot?: string
   contactPhone?: string
   existingRdvSlot?: string
   fromEmail?: string
-}): string {
+}): Promise<string> {
   const name = (params.contactName && params.contactName.includes('@')) ? '' : (params.contactName || '')
   const greeting = name ? `Bonjour ${name},` : 'Bonjour,'
   const box = params.fromEmail || 'gabin@hdigiweb-agence.com'
-  const sig = `Bien à vous,\n\nGabin\nHdigiweb\n${box}`
+  let sig = `Bien à vous,\n\nGabin\nHdigiweb\n${box}`
+  try {
+    const { getAgencyInfo, buildSignature } = await import('@/lib/agency-signature')
+    const agency = await getAgencyInfo()
+    sig = `Bien à vous,\n\n${buildSignature('Gabin', agency.nom, box, agency.telephone, agency.site)}`
+  } catch { /* non-bloquant : signature minimale en repli */ }
   const slot = params.existingRdvSlot || params.proposedSlot
 
   // Ton : je suis Hdigiweb (jamais "je transmets"), je ne répète JAMAIS son numéro, je propose concret.

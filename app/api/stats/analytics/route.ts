@@ -101,12 +101,18 @@ export async function GET(request: NextRequest) {
 
   const [
     [{ emailsSent }],
+    [{ contactedDistinct }],
     [{ replies }],
     [{ rdvCount }],
     [{ optouts }],
     [{ bounces }],
   ] = await Promise.all([
     db.select({ emailsSent: count() }).from(email_queue).where(emailConditions),
+    // ⚠️ DISTINCT du contact_id : "contactés" doit compter des PROSPECTS, pas des emails. Un même
+    // contact reçoit jusqu'à 6 mails (séquence) — les compter tous faisait dépasser le nombre de
+    // prospects existants (167% affiché, un contact "contacté" 6 fois comptait pour 6). Repéré via
+    // le dashboard : Contactés (3938) > Prospects (2363).
+    db.select({ contactedDistinct: sql<number>`count(distinct ${email_queue.contact_id})` }).from(email_queue).where(emailConditions),
     // replies = PROSPECTS distincts ayant fait une VRAIE réponse (on exclut le spam et
     // les auto-réponses/absences, ex : les vieilles plaintes "mail vide").
     db.select({ replies: sql<number>`count(distinct ${incoming_replies.contact_id})` }).from(incoming_replies).where(and(
@@ -273,7 +279,7 @@ export async function GET(request: NextRequest) {
     dailyActivity,
     pipeline: {
       prospects: totalContacts,
-      contacted: emailsSent,
+      contacted: contactedDistinct,
       replied: replies,
       rdv: rdvCount,
       signed: signedCount,
