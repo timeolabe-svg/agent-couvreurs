@@ -102,6 +102,38 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // JOURNÉES : on remonte aussi les 5 derniers jours, un par un. Sans ça, seul LabegarIA aurait une
+  // courbe jour par jour et on ne saurait pas QUEL JOUR la dépense de ce projet est tombée. On
+  // repasse sur 5 jours et pas seulement la veille : une vérification enregistrée après le passage
+  // du cron laisserait sinon une journée fausse pour toujours.
+  const joursOk: string[] = []
+  for (let i = 0; i < 5; i++) {
+    const d = new Date(now.getTime() - i * 86400000)
+    const jour = d.toISOString().slice(0, 10)
+
+    const [{ n: envoyes }] = await sql`
+      SELECT COUNT(*)::int AS n FROM email_queue
+      WHERE status = 'sent' AND sent_at >= ${jour}::date AND sent_at < (${jour}::date + INTERVAL '1 day')
+    ` as Array<{ n: number }>
+    const [{ n: verifies }] = await sql`
+      SELECT COUNT(*)::int AS n FROM contacts
+      WHERE mv_last_attempt_at >= ${jour}::date AND mv_last_attempt_at < (${jour}::date + INTERVAL '1 day')
+    ` as Array<{ n: number }>
+    const [{ n: fiches }] = await sql`
+      SELECT COUNT(*)::int AS n FROM contacts
+      WHERE created_at >= ${jour}::date AND created_at < (${jour}::date + INTERVAL '1 day')
+    ` as Array<{ n: number }>
+
+    try {
+      const rj = await fetch(`${CRM_URL}/api/crm/usage?key=${encodeURIComponent(CRM_KEY)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ client: CRM_CLIENT, jour, emails_envoyes: envoyes, emails_verifies: verifies, fiches_scrapees: fiches }),
+      })
+      if (rj.ok) joursOk.push(jour)
+    } catch { /* une journée ratée sera remontée au prochain passage : pas de quoi faire échouer le cron */ }
+  }
+
   // 500 explicite si le mois EN COURS n'est pas passé : un report silencieusement raté laisserait le
   // CRM afficher un coût faux, et c'est le genre de panne qu'on ne remarque qu'en relisant ses prix
   // six mois plus tard. Un échec sur la seule clôture du mois précédent ne bloque pas : elle sera
@@ -109,5 +141,5 @@ export async function GET(req: NextRequest) {
   if (!rapports[0]?.ok) {
     return NextResponse.json({ ok: false, error: rapports[0]?.erreur ?? 'report du mois en cours échoué', rapports }, { status: 500 })
   }
-  return NextResponse.json({ ok: true, rapports })
+  return NextResponse.json({ ok: true, rapports, jours_remontes: joursOk })
 }
