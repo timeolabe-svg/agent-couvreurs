@@ -106,33 +106,50 @@ export async function GET(req: NextRequest) {
   // courbe jour par jour et on ne saurait pas QUEL JOUR la dépense de ce projet est tombée. On
   // repasse sur 5 jours et pas seulement la veille : une vérification enregistrée après le passage
   // du cron laisserait sinon une journée fausse pour toujours.
-  const joursOk: string[] = []
-  for (let i = 0; i < 5; i++) {
-    const d = new Date(now.getTime() - i * 86400000)
-    const jour = d.toISOString().slice(0, 10)
+  // `?jours=N` : rattrapage ponctuel pour reconstituer l'historique quotidien (les journées
+  // antérieures à la mise en place de ce cron manquent, sinon la somme des jours ne colle pas au
+  // total du mois). Borné à 400.
+  const nbJours = Math.min(400, Math.max(1, parseInt(req.nextUrl.searchParams.get('jours') || '5') || 5))
+  const debutJours = new Date(now.getTime() - (nbJours - 1) * 86400000).toISOString().slice(0, 10)
 
-    const [{ n: envoyes }] = await sql`
-      SELECT COUNT(*)::int AS n FROM email_queue
-      WHERE status = 'sent' AND sent_at >= ${jour}::date AND sent_at < (${jour}::date + INTERVAL '1 day')
-    ` as Array<{ n: number }>
-    const [{ n: verifies }] = await sql`
-      SELECT COUNT(*)::int AS n FROM contacts
-      WHERE mv_last_attempt_at >= ${jour}::date AND mv_last_attempt_at < (${jour}::date + INTERVAL '1 day')
-    ` as Array<{ n: number }>
-    const [{ n: fiches }] = await sql`
-      SELECT COUNT(*)::int AS n FROM contacts
-      WHERE created_at >= ${jour}::date AND created_at < (${jour}::date + INTERVAL '1 day')
-    ` as Array<{ n: number }>
-
-    try {
-      const rj = await fetch(`${CRM_URL}/api/crm/usage?key=${encodeURIComponent(CRM_KEY)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ client: CRM_CLIENT, jour, emails_envoyes: envoyes, emails_verifies: verifies, fiches_scrapees: fiches }),
-      })
-      if (rj.ok) joursOk.push(jour)
-    } catch { /* une journée ratée sera remontée au prochain passage : pas de quoi faire échouer le cron */ }
+  // UNE SEULE requête par métrique pour TOUTES les journées (GROUP BY), au lieu de 3 requêtes par
+  // jour : à 70 jours ça faisait 210 requêtes et la fonction partait en timeout.
+  const parJour = new Map<string, { envoyes: number; verifies: number; fiches: number }>()
+  const ligne = (j: string) => {
+    if (!parJour.has(j)) parJour.set(j, { envoyes: 0, verifies: 0, fiches: 0 })
+    return parJour.get(j)!
   }
+  const envRows = await sql`
+    SELECT to_char(sent_at::date, 'YYYY-MM-DD') AS j, COUNT(*)::int AS n FROM email_queue
+    WHERE status = 'sent' AND sent_at >= ${debutJours}::date GROUP BY 1` as Array<{ j: string; n: number }>
+  for (const r of envRows) ligne(r.j).envoyes = r.n
+  const verRows = await sql`
+    SELECT to_char(mv_last_attempt_at::date, 'YYYY-MM-DD') AS j, COUNT(*)::int AS n FROM contacts
+    WHERE mv_last_attempt_at >= ${debutJours}::date GROUP BY 1` as Array<{ j: string; n: number }>
+  for (const r of verRows) ligne(r.j).verifies = r.n
+  const ficRows = await sql`
+    SELECT to_char(created_at::date, 'YYYY-MM-DD') AS j, COUNT(*)::int AS n FROM contacts
+    WHERE created_at >= ${debutJours}::date GROUP BY 1` as Array<{ j: string; n: number }>
+  for (const r of ficRows) ligne(r.j).fiches = r.n
+
+  // On envoie TOUTES les journées de la fenêtre, y compris celles à zéro : une journée absente
+  // laisserait l'ancienne valeur en base si le chiffre a été corrigé à la baisse depuis.
+  const lot: Array<Record<string, string | number>> = []
+  for (let i = 0; i < nbJours; i++) {
+    const jour = new Date(now.getTime() - i * 86400000).toISOString().slice(0, 10)
+    const v = parJour.get(jour) ?? { envoyes: 0, verifies: 0, fiches: 0 }
+    lot.push({ jour, emails_envoyes: v.envoyes, emails_verifies: v.verifies, fiches_scrapees: v.fiches })
+  }
+
+  let joursOk = 0
+  try {
+    const rj = await fetch(`${CRM_URL}/api/crm/usage?key=${encodeURIComponent(CRM_KEY)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ client: CRM_CLIENT, jours: lot }),
+    })
+    if (rj.ok) joursOk = Number((await rj.json())?.jours_ecrits ?? 0)
+  } catch { /* les journées ratées seront remontées au prochain passage : pas de quoi faire échouer le cron */ }
 
   // 500 explicite si le mois EN COURS n'est pas passé : un report silencieusement raté laisserait le
   // CRM afficher un coût faux, et c'est le genre de panne qu'on ne remarque qu'en relisant ses prix
