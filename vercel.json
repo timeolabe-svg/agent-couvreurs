@@ -2,7 +2,6 @@
   "crons": [
     { "path": "/api/cron/morning-digest", "schedule": "0 8 * * *" },
     { "path": "/api/cron/strategy-agent", "schedule": "0 7 * * *" },
-    { "path": "/api/cron/report-costs", "schedule": "0 4 1 * *" },
-    { "path": "/api/cron/report-costs", "schedule": "0 4 15 * *" }
+    { "path": "/api/cron/report-costs", "schedule": "0 4 * * *" }
   ]
 }
