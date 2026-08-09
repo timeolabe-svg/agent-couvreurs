@@ -33,10 +33,29 @@ export async function getAgencyInfo(): Promise<AgencyInfo> {
   }
 }
 
+/**
+ * Suites de chiffres qui n'existent pas comme vrais numéros : ce sont les exemples affichés dans
+ * les formulaires. Elles ne doivent JAMAIS sortir, quelle que soit la façon dont elles sont
+ * arrivées dans les réglages. Doublon volontaire avec lib/anti-invention.ts : les deux modules
+ * doivent pouvoir se protéger seuls, sans dépendre l'un de l'autre.
+ */
+export function estNumeroExemple(tel: string | null | undefined): boolean {
+  const d = (tel ?? '').replace(/\D/g, '').replace(/^0033/, '0').replace(/^33(?=\d{9}$)/, '0')
+  return new Set([
+    '0612345678', '0123456789', '0645454545', '0600000000', '0102030405',
+    '0611111111', '0622222222', '0666666666', '0700000000', '0712345678',
+  ]).has(d)
+}
+
 /** Bloc signature complet : prénom expéditeur, agence, boîte d'envoi, puis téléphone/site si renseignés. */
 export function buildSignature(senderName: string, agencyNom: string, fromEmail: string, telephone?: string, site?: string): string {
   const lines = [senderName, agencyNom, fromEmail]
-  if (telephone) lines.push(telephone)
+  // ⚠️ AUDIT 09/08 : le réglage `agence_telephone` contenait « 06 12 34 56 78 » — le numéro
+  // d'exemple des formulaires, saisi comme remplissage et jamais corrigé. Il était donc collé en
+  // signature de CHAQUE réponse, et le garde-fou anti-invention le validait puisqu'il le lisait
+  // comme la source de vérité. Mieux vaut une signature SANS téléphone qu'une signature avec un
+  // faux : un prospect qui appelle un inconnu, c'est le rendez-vous perdu et la crédibilité avec.
+  if (telephone && !estNumeroExemple(telephone)) lines.push(telephone)
   if (site) lines.push(site.replace(/^https?:\/\//, ''))
   return lines.join('\n')
 }

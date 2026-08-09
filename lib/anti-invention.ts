@@ -23,6 +23,24 @@ export interface InventionCheck {
   details: string[]  // libellés lisibles pour l'alerte / l'UI
 }
 
+/**
+ * 🚨 NUMÉROS D'EXEMPLE — INTERDITS MÊME S'ILS SONT CONFIGURÉS (audit 09/08).
+ *
+ * Ce module blanchit le numéro trouvé dans les réglages « Mon agence ». Or ces réglages
+ * contenaient `06 12 34 56 78` — le numéro d'exemple des formulaires, saisi une fois comme
+ * remplissage et jamais corrigé. Résultat : le garde-fou censé empêcher l'envoi d'un faux numéro
+ * le VALIDAIT, puisqu'il correspondait à la « source de vérité ». Le contrôle se retournait donc
+ * contre lui-même et signait le faux.
+ *
+ * Leçon : une liste blanche n'est fiable que si ce qu'on y met est lui-même contrôlé. Une valeur
+ * de configuration n'est pas une vérité — c'est une saisie humaine, donc faillible. Ces suites
+ * n'existent pas comme vrais numéros : elles sont refusées, d'où qu'elles viennent.
+ */
+const NUMEROS_EXEMPLE = new Set([
+  '0612345678', '0123456789', '0645454545', '0600000000', '0102030405',
+  '0611111111', '0622222222', '0666666666', '0700000000', '0712345678',
+])
+
 /** Réduit un numéro à ses chiffres, en normalisant +33 / 0033 → 0. */
 function digitsOnly(s: string): string {
   let d = s.replace(/\D/g, '')
@@ -83,6 +101,9 @@ export async function detectInventedFacts(
   try {
     const a = await getAgencyInfo()
     telOk = digitsOnly(a.telephone ?? '')
+    // Un numéro d'exemple configuré n'est PAS une source de vérité : on le jette. Sans cette ligne,
+    // le réglage « 06 12 34 56 78 » faisait passer le faux numéro pour le bon (cf. NUMEROS_EXEMPLE).
+    if (NUMEROS_EXEMPLE.has(telOk)) telOk = ''
     siteOk = (a.site ?? '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0].toLowerCase()
   } catch { /* pas de réglage lisible → on reste strict */ }
 
