@@ -120,3 +120,44 @@ export function blocLegalRgpd(): string {
     'en répondant simplement "Stop" à cet email.',
   ].join('\n')
 }
+
+/**
+ * NÉGOCIATION COMMERCIALE — le prospect propose un AUTRE modèle de rémunération.
+ *
+ * ⚠️ CAS RÉEL (07/08/26) : « si vous montez un site qui fonctionne très bien, vous gérez tout, je
+ * vous donne 20 % de mon bénéfice ». L'agent a répondu en engageant l'offre du client
+ * (« accompagnement mensuel fixe », « premier mois offert »). Or accepter, refuser ou aménager un
+ * modèle de rémunération n'est pas une tâche d'agent : c'est une décision de chef d'entreprise.
+ *
+ * Une réponse automatique ici ne risque pas d'être mal écrite — elle risque de FERMER une porte,
+ * ou d'engager le client sur des conditions qu'il n'a pas validées. Dans les deux cas c'est
+ * irrattrapable, alors qu'attendre 24 h ne coûte rien.
+ *
+ * Volontairement LARGE : un faux positif coûte une relecture, un faux négatif coûte un engagement
+ * pris au nom de quelqu'un d'autre.
+ */
+export function isNegociationCommerciale(text: string): boolean {
+  const t = stripOurFooterAndQuotes(text)
+    .toLowerCase()
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/ /g, ' ')
+  return [
+    // Partage de revenu / commission proposé par le prospect.
+    /\b\d{1,2}\s*%\s*(de\s+)?(mon|nos|notre|mes|le|du)\s*(benefice|benefices|marge|ca|chiffre|resultat|gain)/,
+    /je\s+vous\s+(donne|reverse|laisse|verse)\b.{0,25}%/,
+    /(commission|pourcentage|interessement|partage)\b.{0,30}(benefice|marge|ca|chiffre|resultat|vente)/,
+    /au\s+(pourcentage|prorata)\b/,
+    // Association / partenariat plutôt qu'une prestation payée.
+    /\b(association|associer|partenariat|partenaire|co[- ]?fondateur|equity|parts?\s+de\s+(la\s+)?societe)\b.{0,40}(plutot|au lieu|a la place|contre)/,
+    /\bon\s+s['\s]?associe\b/,
+    // Troc / échange de services.
+    /\b(echange|troc)\b.{0,30}(service|prestation|travaux|chantier)/,
+    // Contre-proposition explicite sur le prix ou le modèle.
+    // ⚠️ Motif ÉLARGI (test unitaire) : la première version exigeait « que » ou « qu' » entre le
+    // verbe et « au résultat », donc « je paie uniquement au résultat » — la formulation la plus
+    // courante — passait au travers. On accepte n'importe quel adverbe intercalé.
+    /je\s+(ne\s+)?(paie|paye|paierai|payerai)\b.{0,25}au\s+resultat/,
+    /pay(er|e|ez)\s+(uniquement|seulement|que|qu[' ]?)\b.{0,25}(au\s+resultat|si\s+(ca|cela)\s+marche)/,
+    /votre\s+(tarif|prix|offre)\b.{0,30}(trop|revoir|negocier|baisser)/,
+  ].some(re => re.test(t))
+}

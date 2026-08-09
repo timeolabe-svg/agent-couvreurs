@@ -220,24 +220,56 @@ export default function ConversationsPage() {
             <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-3">
               {current.messages.map((m, i) => {
                 const isOut = m.role === 'sent' || m.role === 'agent'
+                // 🚨 UN BROUILLON N'EST PAS UN MESSAGE ENVOYÉ (correctif 09/08).
+                // Le fil dessinait une réponse en attente de validation EXACTEMENT comme une réponse
+                // partie : même bulle, même côté, avec pour seule différence un « · pending » en gris
+                // 10 px. Timéo a logiquement cru que l'agent avait écrit au prospect sans son accord.
+                // Le danger est en réalité SYMÉTRIQUE, et le second cas est le pire : un brouillon
+                // qui a l'air envoyé ne sera jamais validé — donc le prospect n'aura JAMAIS de
+                // réponse, et personne ne s'en apercevra. C'est la mécanique du lead oublié.
+                // Un état qui change ce qui va se passer doit se voir au premier coup d'œil.
+                const enAttente = m.role === 'agent' && m.status !== 'sent'
+                const aValider = m.role === 'agent' && (m.status === 'pending' || m.status === 'awaiting_validation')
+                const libelle = m.role === 'sent'
+                  ? 'Email envoyé'
+                  : m.role === 'agent'
+                    ? (aValider ? 'BROUILLON — PAS ENVOYÉ, attend ta validation'
+                      : m.status === 'scheduled' ? 'Réponse programmée — partira automatiquement'
+                      : 'Réponse envoyée')
+                    : 'Reçu'
                 return (
                   <div key={i} className="flex flex-col" style={{ alignItems: isOut ? 'flex-end' : 'flex-start' }}>
                     <div className="flex items-center gap-2 mb-1">
-                      {m.role === 'agent' && <Cpu size={11} style={{ color: 'var(--color-accent)' }} />}
-                      <span className="text-[10px]" style={{ color: 'var(--color-muted-2)' }}>
-                        {m.role === 'sent' ? 'Email envoyé' : m.role === 'agent' ? `Réponse agent${m.status ? ' · ' + m.status : ''}` : 'Reçu'} · {fmt(m.date)}
+                      {m.role === 'agent' && <Cpu size={11} style={{ color: aValider ? '#e0a33e' : 'var(--color-accent)' }} />}
+                      <span
+                        className="text-[10px]"
+                        style={{ color: aValider ? '#e0a33e' : 'var(--color-muted-2)', fontWeight: aValider ? 600 : 400 }}
+                      >
+                        {libelle} · {fmt(m.date)}
                       </span>
                     </div>
                     <div
                       className="max-w-[80%] rounded-lg px-3 py-2 text-[13px] whitespace-pre-wrap leading-relaxed"
                       style={{
-                        background: m.role === 'received' ? 'var(--color-surface-2)' : m.role === 'agent' ? 'var(--color-accent)' + '18' : 'var(--color-surface)',
-                        border: '1px solid var(--color-border)',
-                        borderLeft: m.role === 'agent' ? '2px solid var(--color-accent)' : undefined,
+                        background: m.role === 'received'
+                          ? 'var(--color-surface-2)'
+                          : aValider ? 'transparent'
+                          : m.role === 'agent' ? 'var(--color-accent)' + '18'
+                          : 'var(--color-surface)',
+                        // Contour en pointillés + teinte ambre : la convention universelle du
+                        // « pas encore acté ». Visible sans lire une seule étiquette.
+                        border: aValider ? '1px dashed #e0a33e' : '1px solid var(--color-border)',
+                        borderLeft: m.role === 'agent' && !aValider ? '2px solid var(--color-accent)' : undefined,
+                        opacity: enAttente && !aValider ? 0.85 : 1,
                       }}
                     >
                       {m.subject && <div className="font-semibold mb-1 text-[12px]" style={{ color: 'var(--color-muted)' }}>{m.subject}</div>}
                       {m.body}
+                      {aValider && (
+                        <div className="mt-2 pt-2 text-[11px]" style={{ borderTop: '1px dashed #e0a33e', color: '#e0a33e' }}>
+                          Ce texte n&apos;a PAS été envoyé. Va dans « À valider » pour l&apos;envoyer, le corriger ou le rejeter.
+                        </div>
+                      )}
                     </div>
                   </div>
                 )

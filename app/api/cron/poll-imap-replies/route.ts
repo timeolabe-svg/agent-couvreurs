@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
-import { isExplicitOptOut, isRgpdRequestOrComplaint, isPressionSignalee } from '@/lib/rgpd'
+import { isExplicitOptOut, isRgpdRequestOrComplaint, isPressionSignalee, isNegociationCommerciale } from '@/lib/rgpd'
 import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
@@ -505,6 +505,36 @@ async function processReply(params: {
         results.push(`MAJ adresse échouée ${from}: ${String(e).slice(0, 60)}`)
       }
     }
+  }
+
+  // ── NÉGOCIATION COMMERCIALE → AUCUNE RÉPONSE, DÉCISION DU CLIENT ──
+  //
+  // ⚠️ CAS RÉEL 07/08 : un couvreur du Cannet répond « si vous montez un site qui fonctionne très
+  // bien, vous gérez tout, je vous donne 20 % de mon bénéfice ». L'agent a rédigé un refus poli
+  // en engageant l'offre : « notre modèle repose sur un accompagnement mensuel fixe », « le
+  // premier mois est offert ». Ce n'est PAS à lui de dire ça. Accepter, refuser ou aménager un
+  // modèle de rémunération est une décision de chef d'entreprise — celle de Haris, pas de l'agent,
+  // et pas de Timéo non plus.
+  //
+  // Le risque n'est pas que la réponse soit mal écrite : c'est qu'elle ferme une porte, ou qu'elle
+  // engage le client sur des conditions qu'il n'a pas validées. Un agent commercial doit savoir
+  // reconnaître ce qui le dépasse. Ici : on n'écrit rien, on remonte la balle.
+  if (isNegociationCommerciale(cleanBody)) {
+    await sql`UPDATE incoming_replies SET classification = 'negociation', agent_decision = 'no_action', status = 'awaiting_validation' WHERE instantly_reply_id = ${dedupKey}`.catch(() => {})
+    const titre = `[DÉCISION] Proposition commerciale — ${from}`
+    await sql`
+      INSERT INTO urgent_tasks (type, title, description)
+      VALUES ('decision', ${titre}, ${`${contact?.company ?? from} propose un autre modèle de rémunération.\n\nAUCUNE réponse n'a été envoyée : accepter, refuser ou négocier est une décision du client, pas de l'agent.\n\nSon message :\n${cleanBody.slice(0, 600)}`})
+      ON CONFLICT DO NOTHING
+    `.catch(() => {})
+    try {
+      const { alertIndependent } = await import('@/lib/alert')
+      await alertIndependent(
+        `Proposition commerciale a arbitrer — ${from}`,
+        `${contact?.company ?? from} propose un autre modele de remuneration.\nAucune reponse envoyee : c'est une decision du client.\n\n${cleanBody.slice(0, 500)}`,
+      )
+    } catch { /* l'alerte ne doit pas bloquer le traitement */ }
+    return { processed: true, classification: 'negociation' }
   }
 
   // ── Opt-out / désintérêt (classé par l'IA) → blocklist + annulation des relances ──
