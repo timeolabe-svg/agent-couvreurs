@@ -102,13 +102,14 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // JOURNÉES : on remonte aussi les 5 derniers jours, un par un. Sans ça, seul LabegarIA aurait une
-  // courbe jour par jour et on ne saurait pas QUEL JOUR la dépense de ce projet est tombée. On
-  // repasse sur 5 jours et pas seulement la veille : une vérification enregistrée après le passage
-  // du cron laisserait sinon une journée fausse pour toujours.
-  // `?jours=N` : rattrapage ponctuel pour reconstituer l'historique quotidien (les journées
-  // antérieures à la mise en place de ce cron manquent, sinon la somme des jours ne colle pas au
-  // total du mois). Borné à 400.
+  // JOURNÉES : on remonte aussi la consommation quotidienne, en UN SEUL envoi groupé. Sans elle,
+  // seul LabegarIA aurait une courbe jour par jour et on ne saurait pas QUEL JOUR la dépense de ce
+  // projet est tombée. On repasse sur une fenêtre de 5 jours (défaut) et pas seulement sur la
+  // veille : une vérification enregistrée après le passage du cron laisserait sinon une journée
+  // fausse pour toujours.
+  // `?jours=N` : élargit la fenêtre pour un rattrapage ponctuel (les journées antérieures à la mise
+  // en place de ce cron manquent, sinon la somme des jours ne colle pas au total du mois). Borné
+  // à 400.
   const nbJours = Math.min(400, Math.max(1, parseInt(req.nextUrl.searchParams.get('jours') || '5') || 5))
   const debutJours = new Date(now.getTime() - (nbJours - 1) * 86400000).toISOString().slice(0, 10)
 
@@ -142,6 +143,7 @@ export async function GET(req: NextRequest) {
   }
 
   let joursOk = 0
+  let joursErreur: string | undefined
   try {
     const rj = await fetch(`${CRM_URL}/api/crm/usage?key=${encodeURIComponent(CRM_KEY)}`, {
       method: 'POST',
@@ -149,7 +151,15 @@ export async function GET(req: NextRequest) {
       body: JSON.stringify({ client: CRM_CLIENT, jours: lot }),
     })
     if (rj.ok) joursOk = Number((await rj.json())?.jours_ecrits ?? 0)
-  } catch { /* les journées ratées seront remontées au prochain passage : pas de quoi faire échouer le cron */ }
+    else joursErreur = `CRM a répondu ${rj.status} : ${(await rj.text()).slice(0, 200)}`
+  } catch (e) {
+    joursErreur = String(e).slice(0, 200)
+  }
+  // ⚠️ L'échec du volet quotidien ne fait PAS échouer le cron (le mois, lui, est passé et c'est le
+  // chiffre qui compte), mais il doit être VISIBLE dans la réponse. Sans ça il aurait suffi que le
+  // CRM refuse le lot pour que la courbe quotidienne cesse de se remplir en silence, avec un cron
+  // affiché « succès » — le motif exact de panne qu'on ne repère que des mois plus tard.
+  if (joursErreur) console.error('[report-costs] volet quotidien échoué:', joursErreur)
 
   // 500 explicite si le mois EN COURS n'est pas passé : un report silencieusement raté laisserait le
   // CRM afficher un coût faux, et c'est le genre de panne qu'on ne remarque qu'en relisant ses prix
@@ -158,5 +168,5 @@ export async function GET(req: NextRequest) {
   if (!rapports[0]?.ok) {
     return NextResponse.json({ ok: false, error: rapports[0]?.erreur ?? 'report du mois en cours échoué', rapports }, { status: 500 })
   }
-  return NextResponse.json({ ok: true, rapports, jours_remontes: joursOk })
+  return NextResponse.json({ ok: true, rapports, jours_remontes: joursOk, jours_attendus: lot.length, jours_erreur: joursErreur })
 }
