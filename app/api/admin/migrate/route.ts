@@ -43,6 +43,37 @@ export async function GET(request: NextRequest) {
       nom: 'rdv: add client_name',
       run: () => db.execute(sql`ALTER TABLE rdv ADD COLUMN IF NOT EXISTS client_note TEXT`),
     },
+    {
+      // 🚨 AUDIT 09/08 — TABLE ÉCRITE MAIS INEXISTANTE.
+      // poll-imap-replies insère ici la tâche « demande RGPD reçue, répondre sous 1 mois », avec
+      // un `.catch(() => {})`. La table n'ayant jamais été créée, CHAQUE insertion échouait en
+      // silence : l'alerte la plus importante du système (une demande RGPD à traiter dans un délai
+      // légal) disparaissait sans laisser la moindre trace. Un `.catch` vide sur une écriture qui
+      // porte une obligation légale est une faute en soi — mais l'absence de table la rendait
+      // permanente.
+      nom: 'urgent_tasks: create table',
+      run: () => db.execute(sql`
+        CREATE TABLE IF NOT EXISTS urgent_tasks (
+          id          SERIAL PRIMARY KEY,
+          type        TEXT NOT NULL,
+          title       TEXT NOT NULL,
+          description TEXT,
+          contact_id  TEXT,
+          done        BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          done_at     TIMESTAMPTZ
+        )
+      `),
+    },
+    {
+      nom: 'urgent_tasks: index type/date',
+      run: () => db.execute(sql`CREATE INDEX IF NOT EXISTS urgent_tasks_type_idx ON urgent_tasks(type, created_at DESC)`),
+    },
+    {
+      // Anti-doublon : une même demande RGPD relue deux fois ne doit pas empiler deux tâches.
+      nom: 'urgent_tasks: unicite du titre',
+      run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS urgent_tasks_title_uk ON urgent_tasks(title)`),
+    },
   ]
 
   const resultats: string[] = []

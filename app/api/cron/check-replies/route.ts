@@ -256,6 +256,31 @@ export async function GET(request: NextRequest) {
   const cronAuth = checkCronAuth(request)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
 
+  // 🚨 CRON LEGACY NEUTRALISÉ (audit 09/08) — NE PAS RÉACTIVER SANS LIRE CECI.
+  //
+  // Ce cron date de l'époque où les réponses arrivaient par l'API Instantly. Elles arrivent
+  // aujourd'hui par IMAP (`poll-imap-replies`), qui porte TOUS les garde-fous ajoutés depuis :
+  // détection d'opt-out, détection de demande RGPD / mise en demeure, détection de plainte sur le
+  // volume d'envois, garde-fou anti-invention, kill-switch de validation.
+  //
+  // Celui-ci n'en a AUCUN : il classe puis auto-répond. Une mise en demeure qui passerait par ce
+  // chemin recevrait donc une relance commerciale automatique — exactement l'enchaînement qui a
+  // produit la plainte CNIL du 03/08 côté LabegarIA. Il n'est plus planifié nulle part (aucune
+  // ligne dans cron_heartbeats), mais il restait DÉPLOYÉ et appelable avec la clé : un simple
+  // curl, ou une vieille tâche réactivée par erreur, suffisait à le déclencher.
+  //
+  // Deux chemins de traitement des réponses qui divergent, c'est une bombe à retardement : le jour
+  // où l'un est corrigé et pas l'autre, la faille revient par la porte de derrière. On le ferme.
+  // Pour le rouvrir volontairement : CHECK_REPLIES_LEGACY=1 — et alors il faut d'abord y porter
+  // les garde-fous de poll-imap-replies.
+  if (process.env.CHECK_REPLIES_LEGACY !== '1') {
+    return NextResponse.json({
+      ok: true,
+      desactive: true,
+      motif: "cron legacy Instantly — remplacé par poll-imap-replies, qui porte les garde-fous RGPD. Réactivation volontaire : CHECK_REPLIES_LEGACY=1 (après y avoir porté les gardes).",
+    })
+  }
+
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }

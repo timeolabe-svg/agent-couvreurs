@@ -86,11 +86,26 @@ export async function POST(req: NextRequest) {
   // la Partie A (deadline + timeout par envoi) ; le reste part au run suivant (toutes les 10 min).
   const PARTIE_A_DEADLINE_MS = 12_000
   try {
+    // 🚨 CLAIM ATOMIQUE (audit 09/08). Avant : SELECT → envoi → UPDATE. Trois requêtes distinctes,
+    // donc trois occasions pour un second run de passer entre les deux. Or ce cron tourne toutes
+    // les 10 min, cron-job.org réessaie sur timeout, et Vercel peut exécuter deux instances en
+    // parallèle : deux runs pouvaient lire le MÊME brouillon 'scheduled' et l'envoyer TOUS LES
+    // DEUX. Le prospect reçoit la même réponse en double — c'est la mécanique exacte de l'incident
+    // des doublons du 8 juillet, appliquée aux réponses.
+    //
+    // Ici, la réservation et la lecture sont la MÊME requête : seul le premier run obtient la
+    // ligne. `FOR UPDATE SKIP LOCKED` évite en plus que deux runs s'attendent l'un l'autre.
     const ready = (await sql`
-      SELECT rd.id AS draft_id, rd.body, rd.incoming_reply_id
-      FROM reply_drafts rd
-      WHERE rd.status = 'scheduled' AND rd.send_after <= NOW()
-      LIMIT 6
+      WITH pris AS (
+        SELECT rd.id FROM reply_drafts rd
+        WHERE rd.status = 'scheduled' AND rd.send_after <= NOW()
+        ORDER BY rd.send_after
+        LIMIT 6
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE reply_drafts SET status = 'sending'
+      WHERE id IN (SELECT id FROM pris)
+      RETURNING id AS draft_id, body, incoming_reply_id
     `) as Array<{ draft_id: string; body: string; incoming_reply_id: string }>
     for (const d of ready) {
       if (Date.now() - started > PARTIE_A_DEADLINE_MS) { results.push('⏱ Partie A: budget atteint, suite au prochain run'); break }
@@ -102,15 +117,28 @@ export async function POST(req: NextRequest) {
           stats.sentReplies++
           results.push(`↩ auto-réponse envoyée → ${r.to} via ${r.via}`)
         } else {
+          // Échec d'envoi → on RELIBÈRE la ligne, sinon elle reste bloquée en 'sending' pour
+          // toujours et la réponse au prospect n'est jamais renvoyée (lead perdu en silence).
+          await sql`UPDATE reply_drafts SET status = 'scheduled' WHERE id = ${d.draft_id}`.catch(() => {})
           results.push(`✗ auto-réponse KO (${d.draft_id}): ${(r.error ?? '').slice(0, 80)}`)
         }
       } catch (e) {
+        await sql`UPDATE reply_drafts SET status = 'scheduled' WHERE id = ${d.draft_id}`.catch(() => {})
         results.push(`✗ auto-réponse erreur (${d.draft_id}): ${String(e).slice(0, 80)}`)
       }
     }
   } catch (e) {
     results.push(`Partie A erreur: ${String(e).slice(0, 80)}`)
   }
+
+  // REAPER : un run coupé net (timeout cron-job.org à 30 s, redéploiement) laisse des lignes en
+  // 'sending' que plus personne ne reprendra. Sans ce filet, le claim atomique ci-dessus troque un
+  // risque de double envoi contre un risque de non-envoi — donc contre un lead perdu. On rend au
+  // circuit toute réservation qui traîne depuis plus de 15 minutes.
+  await sql`
+    UPDATE reply_drafts SET status = 'scheduled'
+    WHERE status = 'sending' AND send_after < NOW() - INTERVAL '15 minutes'
+  `.catch(() => {})
 
   // ── Partie B : lecture IMAP des boîtes + traitement des nouvelles réponses ──
   // Rotation de l'ordre des boîtes à chaque run (toutes les 10 min) : avec un budget
@@ -394,7 +422,27 @@ async function processReply(params: {
     if (contact?.id) await cancelSteps(from)
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'rgpd_request', reason: rgpd.motif, company: contact?.company ?? from })}::jsonb)`
     // Tâche urgente : une demande RGPD exige une réponse HUMAINE, tracée, sous 1 mois.
-    await sql`INSERT INTO urgent_tasks (type, title, description) VALUES ('rgpd', ${`[RGPD] ${rgpd.motif} — ${from}`}, ${`Demande RGPD reçue de ${from} (${contact?.company ?? 'contact inconnu'}).\nMotif détecté : ${rgpd.motif}.\nContact BLOCKLISTÉ et file annulée automatiquement.\n\nACTION HUMAINE REQUISE : répondre sous 1 mois et documenter la suppression.\n\nExtrait du message :\n${cleanBody.slice(0, 500)}`})`.catch(() => {})
+    // ⚠️ AUDIT 09/08 : cette écriture échouait DEPUIS TOUJOURS — la table `urgent_tasks` n'avait
+    // jamais été créée — et le `.catch(() => {})` l'avalait sans un mot. La trace d'une demande
+    // RGPD, qui ouvre un délai légal d'un mois, disparaissait donc en silence. La table est
+    // désormais créée (migration), et un échec n'est plus muet : il part sur le canal d'alerte,
+    // parce qu'une obligation légale non tracée est pire qu'une erreur visible.
+    try {
+      await sql`
+        INSERT INTO urgent_tasks (type, title, description)
+        VALUES ('rgpd', ${`[RGPD] ${rgpd.motif} — ${from}`}, ${`Demande RGPD reçue de ${from} (${contact?.company ?? 'contact inconnu'}).\nMotif détecté : ${rgpd.motif}.\nContact BLOCKLISTÉ et file annulée automatiquement.\n\nACTION HUMAINE REQUISE : répondre sous 1 mois et documenter la suppression.\n\nExtrait du message :\n${cleanBody.slice(0, 500)}`})
+        ON CONFLICT DO NOTHING
+      `
+    } catch (e) {
+      console.error('[poll-imap] urgent_tasks KO', e)
+      try {
+        const { alertIndependent } = await import('@/lib/alert')
+        await alertIndependent(
+          `RGPD non trace en base — ${from}`,
+          `Impossible d'enregistrer la tache RGPD pour ${from} (motif ${rgpd.motif}).\nLe contact EST blockliste et sa file annulee, mais la trace manque.\nErreur : ${String(e).slice(0, 200)}`,
+        )
+      } catch { /* le canal d'alerte est traité juste après */ }
+    }
     try {
       const { alertIndependent } = await import('@/lib/alert')
       await alertIndependent(
@@ -713,7 +761,7 @@ async function buildHistory(contactId: string): Promise<Array<{ role: 'sent' | '
       SELECT rd.body, rd.sent_at, rd.created_at
       FROM reply_drafts rd
       JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
-      WHERE ir.contact_id = ${contactId} AND rd.status IN ('sent', 'scheduled', 'pending')
+      WHERE ir.contact_id = ${contactId} AND rd.status IN ('sent', 'scheduled', 'sending', 'pending')
     `) as Array<{ body: string; sent_at: string | null; created_at: string | null }>
     for (const a of agent) {
       const ts = a.sent_at ? new Date(a.sent_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0)
