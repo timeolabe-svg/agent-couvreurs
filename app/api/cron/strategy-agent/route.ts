@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: NextRequest) {
+async function handler(request: NextRequest) {
   const cronAuth = checkCronAuth(request)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
 
@@ -245,3 +246,6 @@ Analyse et décide en JSON STRICT (pas de texte avant ou après) :
     raise_daily_limit: geminiDecision.raise_daily_limit,
   })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('strategy-agent', handler)

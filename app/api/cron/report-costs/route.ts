@@ -3,6 +3,7 @@ export const maxDuration = 30
 
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { wrapCron } from "@/lib/cron-wrap"
 
 /**
  * GET /api/cron/report-costs
@@ -27,7 +28,7 @@ import { checkCronAuth } from '@/lib/cron-auth'
 
 interface Rapport { mois: string; ok: boolean; payload?: Record<string, unknown>; erreur?: string }
 
-export async function GET(req: NextRequest) {
+async function handler(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
@@ -170,3 +171,6 @@ export async function GET(req: NextRequest) {
   }
   return NextResponse.json({ ok: true, rapports, jours_remontes: joursOk, jours_attendus: lot.length, jours_erreur: joursErreur })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('report-costs', handler)

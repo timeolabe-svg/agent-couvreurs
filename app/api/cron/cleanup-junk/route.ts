@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -20,7 +21,7 @@ const JUNK_ILIKE = [
   '%vous trompez d\'entreprise%', '%mauvais secteur%', '%trompé de destinataire%',
 ]
 
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
@@ -70,3 +71,6 @@ export async function GET(req: Request) {
   const del = (await sql`DELETE FROM incoming_replies WHERE id = ANY(${ids}) RETURNING id`) as Array<{ id: string }>
   return NextResponse.json({ mode: 'delete', supprimés: del.length })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('cleanup-junk', handler)

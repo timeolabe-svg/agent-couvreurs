@@ -7,10 +7,11 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+async function handler(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
@@ -32,3 +33,6 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ ok: true, supprimes: deleted.length, ids: deleted.map(d => d.id) })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('dedupe-rdv', handler)

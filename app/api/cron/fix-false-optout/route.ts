@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { cleanIncomingBody } from '@/lib/decode-body'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -11,7 +12,7 @@ let sql!: NeonQueryFunction<false, false>
 // Un FAUX opt-out = le prospect a été blocklisté alors que son message ne contient aucun refus :
 // le "Stop" venait de NOTRE pied de page cité dans sa réponse. On détecte ces cas (message réel
 // sans refus, classé interest/question/rdv_request) et on les débloque. ?apply=1 pour exécuter.
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
@@ -68,3 +69,6 @@ export async function GET(req: Request) {
   }
   return NextResponse.json({ ok: true, debloques: debloques.length, leads: debloques })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('fix-false-optout', handler)

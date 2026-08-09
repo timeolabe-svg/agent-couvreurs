@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { VARIANT_IDS, MESSAGE_VARIANTS, WEIGHTS_KEYS, getWeights, setWeights } from '@/lib/experiments'
 import { SECTORS, REGIONS, CITY_TO_REGION } from '@/lib/scrape-targets'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -74,7 +75,7 @@ async function sendReport(html: string, subject: string) {
   })
 }
 
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const cronAuth = checkCronAuth(req)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 503 })
@@ -213,3 +214,6 @@ export async function GET(req: Request) {
     region: region.table,
   })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('self-improve', handler)

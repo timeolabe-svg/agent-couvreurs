@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -10,7 +11,7 @@ let sql!: NeonQueryFunction<false, false>
 
 // Renvoie la notification du DERNIER RDV confirmé, vers l'adresse de notif RÉELLE (champ UI
 // agent_config.client_notif_email, sinon env). Sert à tester que le client reçoit bien.
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'No DATABASE_URL' }, { status: 500 })
@@ -65,3 +66,6 @@ export async function GET(req: Request) {
   }
   return NextResponse.json({ ok: true, rdv: { who, dateStr, timeStr }, recipients, results })
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('resend-rdv-notif', handler)

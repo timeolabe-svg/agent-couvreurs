@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
+import { wrapCron } from "@/lib/cron-wrap"
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +31,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
   }
 }
 
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const cronAuth = checkCronAuth(req)
   if (!cronAuth.ok) return NextResponse.json({ error: cronAuth.error }, { status: cronAuth.status })
 
@@ -193,3 +194,6 @@ export async function GET(req: Request) {
     )
   }
 }
+
+/** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
+export const GET = wrapCron('morning-digest', handler)
