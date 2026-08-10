@@ -178,6 +178,18 @@ async function handler(req: Request) {
       await sendEmail(notifyEmail, subject, html)
     }
 
+    // 🚨 INVARIANT QUOTIDIEN : personne ayant demandé l'arrêt ne doit plus rien recevoir.
+    // Branché ici parce qu'il ne doit JAMAIS dépendre de quelqu'un qui pense à le lancer. Un
+    // prospect a écrit « Stop » le 4 août et a reçu deux relances de plus : la détection marchait,
+    // c'est l'application qui visait la mauvaise adresse — et personne ne repassait derrière.
+    // Best-effort : un échec ici ne doit pas casser le digest.
+    try {
+      const base = 'https://agent-couvreurs.vercel.app'
+      const key = process.env.CRON_SECRET ?? ''
+      await fetch(`${base}/api/admin/stop-non-respectes?apply=1&key=${encodeURIComponent(key)}`,
+        { signal: AbortSignal.timeout(20000) })
+    } catch { /* best-effort */ }
+
     return NextResponse.json({
       emailsNight,
       newReplies,
