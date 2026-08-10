@@ -22,13 +22,53 @@
 
 /** Retire notre pied de page et tout ce qui suit un marqueur de citation, normalise les apostrophes. */
 export function stripOurFooterAndQuotes(text: string): string {
-  return (text || '')
-    .replace(/[’‘`´]/g, "'")
-    .split(/pour ne plus recevoir mes emails/i)[0]
-    .split(/vos coordonn[ée]es sont publiques/i)[0]
-    .split(/envoy[ée]\s+de\s+mon\s+/i)[0]
-    .split(/>\s*le\s/i)[0]
-    .split(/^\s*le\s.{0,40}\s+a\s+écrit\s*:/im)[0]
+  // ⚠️ INCIDENT 10/08/2026 — CE FILTRE LAISSAIT PASSER NOTRE PROPRE PIED DE PAGE.
+  //
+  // Le motif cherchait « vos coordonnées SONT publiques » alors que le bloc légal réellement
+  // envoyé dit « vos coordonnées professionnelles PROVIENNENT DE SOURCES publiques […]
+  // Conformément au RGPD […] ». Le texte n'était donc jamais coupé, et le mot « RGPD » de NOTRE
+  // mention se retrouvait analysé comme si le prospect l'avait écrit.
+  //
+  // Conséquence mesurée : un prospect répondant « Oui je suis très intéressé, appelez-moi ! » —
+  // en citant notre mail, ce que fait tout client mail par défaut — était détecté comme une
+  // DEMANDE RGPD, donc blocklisté et sa séquence annulée. Le lead le plus chaud possible, tué par
+  // notre propre signature. C'est le symétrique exact du bug des « Stop » ignorés : le même filtre
+  // ratait les vraies demandes et en inventait de fausses.
+  //
+  // Règle : on coupe au PREMIER marqueur de citation rencontré, quel qu'il soit, et on liste les
+  // phrases de nos pieds de page par leur DÉBUT (les formulations évoluent, les débuts moins).
+  let t = (text || '').replace(/[’‘`´]/g, "'")
+
+  // 1) Toute ligne de citation « > … » : tout ce qui suit appartient à notre message.
+  const ligneCitee = t.search(/^\s*>/m)
+  if (ligneCitee > 0) t = t.slice(0, ligneCitee)
+
+  // 2) Marqueurs de réponse des clients mail (accents tolérés : « a écrit » / « a ecrit »).
+  for (const re of [
+    /(?:^|\s)le\s[\s\S]{0,90}?\sa\s+[ée]crit\s*:/i,
+    /(?:^|\s)on\s[\s\S]{0,90}?\swrote\s*:/i,
+    /-{2,}\s*(message d'origine|original message)\s*-{2,}/i,
+    /(?:^|\s)de\s*:[\s\S]{0,250}?envoy[ée]\s*:/i,
+    /(?:^|\s)from\s*:[\s\S]{0,250}?sent\s*:/i,
+    /envoy[ée]\s+de\s+mon\s+/i,
+    /(?:^|\s)_{5,}/,
+  ]) {
+    const m = t.match(re)
+    if (m && m.index !== undefined && m.index > 0) t = t.slice(0, m.index)
+  }
+
+  // 3) NOS pieds de page, repérés par leur début — c'est la partie qui avait dérivé.
+  for (const re of [
+    /pour ne plus recevoir mes emails/i,
+    /vos coordonn[ée]es (professionnelles )?(sont|proviennent)/i,
+    /conform[ée]ment au rgpd, vous pouvez/i,
+    /pour ne plus [êe]tre contact[ée]/i,
+  ]) {
+    const i = t.search(re)
+    if (i > 0) t = t.slice(0, i)
+  }
+
+  return t
 }
 
 /** Opt-out simple : le prospect ne veut plus être contacté. */
@@ -160,4 +200,56 @@ export function isNegociationCommerciale(text: string): boolean {
     /pay(er|e|ez)\s+(uniquement|seulement|que|qu[' ]?)\b.{0,25}(au\s+resultat|si\s+(ca|cela)\s+marche)/,
     /votre\s+(tarif|prix|offre)\b.{0,30}(trop|revoir|negocier|baisser)/,
   ].some(re => re.test(t))
+}
+
+/**
+ * ADRESSES VISÉES PAR UNE DEMANDE D'ARRÊT — extraites du TEXTE du message.
+ *
+ * ⚠️ INCIDENT 04-09/08/2026, découvert le 10/08. Un prospect écrit :
+ *   « je vous remercie de SUPPRIMER contact@france-valley.com de toutes vos listes de diffusion »
+ * …mais il l'écrit depuis SON adresse personnelle, guillaume.toussaint@france-valley.com.
+ * Le code blocklistait l'expéditeur et annulait la file « du contact dont l'email = expéditeur » —
+ * or ce contact n'existait pas. Résultat : l'adresse réellement démarchée
+ * (contact@france-valley.com) n'a été ni bloquée ni purgée, et l'agent lui a envoyé DEUX relances
+ * de plus, avec trois autres programmées. La personne avait pourtant écrit « Stop » en toutes
+ * lettres, deux fois.
+ *
+ * Leçon : celui qui ÉCRIT n'est pas toujours celui qu'on DÉMARCHE. Une boîte générique
+ * (contact@, info@, accueil@) est relevée par un humain qui répond avec son adresse nominative.
+ * Un opt-out appliqué au seul expéditeur rate donc systématiquement ce cas — le plus courant en
+ * B2B. On récupère toutes les adresses citées dans le message pour les traiter aussi.
+ */
+export function adressesCiteesDansLeMessage(text: string, domainesAExclure: string[] = []): string[] {
+  const t = stripOurFooterAndQuotes(text || '')
+  const brut = t.match(/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/g) ?? []
+  const exclus = domainesAExclure.map(d => d.toLowerCase())
+  const out = new Set<string>()
+  for (const a of brut) {
+    const mail = a.toLowerCase()
+    const dom = mail.split('@')[1] ?? ''
+    if (!dom) continue
+    // Jamais nos propres adresses, ni les adresses techniques.
+    if (exclus.some(d => dom === d || dom.endsWith('.' + d))) continue
+    if (/mailer-daemon|postmaster|no[-.]?reply|do[-.]?not[-.]?reply/i.test(mail)) continue
+    out.add(mail)
+  }
+  return [...out]
+}
+
+/** Domaines grand public : deux adresses n'y ont AUCUN lien entre elles (jamais de blocage par domaine). */
+const FREEMAIL = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.fr', 'yahoo.com', 'hotmail.fr', 'hotmail.com',
+  'outlook.fr', 'outlook.com', 'live.fr', 'msn.com', 'aol.com', 'orange.fr', 'wanadoo.fr',
+  'free.fr', 'sfr.fr', 'neuf.fr', 'bbox.fr', 'laposte.net', 'icloud.com', 'me.com', 'gmx.fr',
+])
+
+/**
+ * Le domaine d'une adresse professionnelle identifie l'ENTREPRISE : si quelqu'un de
+ * @france-valley.com demande l'arrêt, le contact @france-valley.com qu'on démarche est visé.
+ * Faux sur un domaine grand public (deux gmail n'ont rien à voir) → on refuse dans ce cas.
+ */
+export function domaineExploitable(email: string): string | null {
+  const dom = (email || '').toLowerCase().split('@')[1] ?? ''
+  if (!dom || FREEMAIL.has(dom)) return null
+  return dom
 }

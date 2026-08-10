@@ -403,10 +403,10 @@ async function processReply(params: {
   // Ne dépend PAS de l'IA : un "Stop" / "désabonnez-moi" explicite = blocklist immédiate.
   // (Analysé sur cleanBody = texte réel du prospect, pas notre footer cité.)
   if (isExplicitOptOut(cleanBody)) {
-    await blocklistOnce(from, 'unsubscribe')
-    if (contact?.id) await cancelSteps(from)
-    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'blocklist', reason: 'opt-out explicite', company: contact?.company ?? from })}::jsonb)`
-    results.push(`⛔ opt-out explicite → blocklist ${from}`)
+    const cibles = await ciblesArret(from, cleanBody)
+    for (const c of cibles) { await blocklistOnce(c, 'unsubscribe'); await cancelSteps(c) }
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'blocklist', reason: 'opt-out explicite', cibles, company: contact?.company ?? from })}::jsonb)`
+    results.push(`⛔ opt-out explicite → blocklist ${cibles.join(', ')}`)
     return { processed: true, classification: 'desinterest' }
   }
 
@@ -418,8 +418,8 @@ async function processReply(params: {
   // humaine documentée sous 1 mois), et alerte immédiate sur le canal indépendant.
   const rgpd = isRgpdRequestOrComplaint(cleanBody)
   if (rgpd.match) {
-    await blocklistOnce(from, `rgpd_${rgpd.motif}`)
-    if (contact?.id) await cancelSteps(from)
+    const cibles = await ciblesArret(from, cleanBody)
+    for (const c of cibles) { await blocklistOnce(c, `rgpd_${rgpd.motif}`); await cancelSteps(c) }
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'rgpd_request', reason: rgpd.motif, company: contact?.company ?? from })}::jsonb)`
     // Tâche urgente : une demande RGPD exige une réponse HUMAINE, tracée, sous 1 mois.
     // ⚠️ AUDIT 09/08 : cette écriture échouait DEPUIS TOUJOURS — la table `urgent_tasks` n'avait
@@ -824,6 +824,41 @@ async function cancelSteps(email: string): Promise<number> {
 /** Adresse technique (daemon/postmaster) qu'il ne faut JAMAIS blocklister comme un prospect. */
 function isDaemonAddress(email: string): boolean {
   return /mailer-daemon|postmaster|no[-.]?reply|do[-.]?not[-.]?reply|bounce/i.test(email)
+}
+
+/**
+ * 🚨 QUI EST VISÉ PAR CETTE DEMANDE D'ARRÊT ? — pas seulement celui qui écrit.
+ *
+ * ⚠️ INCIDENT 04→09/08/2026. Un prospect écrit « SUPPRIMER contact@france-valley.com de toutes vos
+ * listes » puis « Stop », depuis SON adresse nominative guillaume.toussaint@france-valley.com.
+ * Le code blocklistait l'expéditeur et cherchait le contact « dont l'email = expéditeur » : ce
+ * contact n'existait pas, donc `cancelSteps` n'annulait RIEN. L'adresse réellement démarchée a reçu
+ * deux relances de plus, trois autres étaient programmées. Deux « Stop » explicites, ignorés.
+ *
+ * Celui qui ÉCRIT n'est pas celui qu'on DÉMARCHE : une boîte générique (contact@, info@, accueil@)
+ * est relevée par un humain qui répond avec son adresse nominative. C'est le cas le PLUS courant en
+ * B2B, et c'était l'angle mort. On réunit donc trois sources :
+ *   1. l'expéditeur ;
+ *   2. toute adresse CITÉE dans le message (« supprimez X ») ;
+ *   3. tout contact de notre base partageant le DOMAINE professionnel de l'expéditeur.
+ * Le point 3 est exclu sur les domaines grand public (deux gmail n'ont aucun lien).
+ */
+async function ciblesArret(from: string, corps: string): Promise<string[]> {
+  const cibles = new Set<string>([from.toLowerCase()])
+  try {
+    const { adressesCiteesDansLeMessage, domaineExploitable } = await import('@/lib/rgpd')
+    for (const a of adressesCiteesDansLeMessage(corps, ['hdigiweb.fr', 'hdigiweb-agence.com', 'hdigiweb-digital.com', 'hdigiweb.com'])) {
+      cibles.add(a)
+    }
+    const dom = domaineExploitable(from)
+    if (dom) {
+      const rows = (await sql`
+        SELECT LOWER(email) AS email FROM contacts WHERE LOWER(email) LIKE ${'%@' + dom}
+      `) as Array<{ email: string }>
+      for (const r of rows) cibles.add(r.email)
+    }
+  } catch { /* au pire on ne traite que l'expéditeur — jamais moins */ }
+  return [...cibles].filter(e => e && !isDaemonAddress(e))
 }
 
 /** Ajoute une adresse à la blocklist SANS créer de doublon (la table n'a pas de contrainte unique). */
