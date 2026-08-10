@@ -38,8 +38,14 @@ async function handler(req: NextRequest) {
   if (p.get('cleanup') === '1') {
     const [c] = (await sql`SELECT id FROM contacts WHERE LOWER(email) = ${EMAIL_TEST}`) as Array<{ id: string }>
     if (c?.id) {
-      await sql`DELETE FROM reply_drafts WHERE incoming_reply_id IN (SELECT id FROM incoming_replies WHERE contact_id = ${c.id})`.catch(() => {})
-      await sql`DELETE FROM incoming_replies WHERE contact_id = ${c.id} OR LOWER(from_email) = ${EMAIL_TEST}`.catch(() => {})
+      // ⚠️ ORDRE IMPOSÉ PAR LES CLÉS ÉTRANGÈRES : brouillons → RDV → réponses → file → contact.
+      // Le premier essai supprimait le contact avec des `incoming_replies` encore rattachées et
+      // échouait sur la contrainte. Un `.catch(() => {})` posé « au cas où » masquait en plus les
+      // échecs intermédiaires : on croyait avoir nettoyé alors que le contact de test restait en
+      // base, comptabilisé comme un vrai prospect — exactement le défaut des 9 RDV.
+      await sql`DELETE FROM reply_drafts WHERE incoming_reply_id IN (SELECT id FROM incoming_replies WHERE contact_id = ${c.id} OR LOWER(from_email) = ${EMAIL_TEST})`
+      await sql`DELETE FROM rdv WHERE contact_id = ${c.id}`.catch(() => {})
+      await sql`DELETE FROM incoming_replies WHERE contact_id = ${c.id} OR LOWER(from_email) = ${EMAIL_TEST}`
       await sql`DELETE FROM email_queue WHERE contact_id = ${c.id}`
       await sql`DELETE FROM contacts WHERE id = ${c.id}`
     }
