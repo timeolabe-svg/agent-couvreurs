@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Upload, FileSpreadsheet, CheckCircle2, AlertTriangle } from 'lucide-react'
 
 /**
@@ -34,13 +34,29 @@ export default function ImportPage() {
   const [enCours, setEnCours] = useState(false)
   const [importe, setImporte] = useState(false)
 
+  /**
+   * ⚠️ La page renvoyait « Unauthorized » sur TOUS les fichiers, et j'ai livré ça sans l'essayer.
+   * L'endpoint est protégé par CRON_SECRET (c'est un point d'écriture : il crée des prospects qui
+   * recevront de vrais mails), mais la page ne transmettait aucune clé. Elle ne pouvait donc pas
+   * fonctionner une seule fois.
+   *
+   * On demande la clé une fois et on la garde dans le navigateur. Retirer la protection aurait été
+   * plus simple — et aurait laissé n'importe qui injecter des destinataires dans la file d'envoi.
+   */
+  const [cle, setCle] = useState('')
+  useEffect(() => { setCle(localStorage.getItem('cron_key') ?? '') }, [])
+  function memoriser(v: string) { setCle(v); localStorage.setItem('cron_key', v) }
+
   async function envoyer(importer: boolean) {
     if (!fichier) return
     setEnCours(true)
     try {
       const fd = new FormData()
       fd.append('fichier', fichier)
-      const r = await fetch(`/api/admin/import-fichier${importer ? '?importer=1' : ''}`, { method: 'POST', body: fd })
+      const q = new URLSearchParams()
+      if (importer) q.set('importer', '1')
+      if (cle) q.set('key', cle)
+      const r = await fetch(`/api/admin/import-fichier?${q.toString()}`, { method: 'POST', body: fd })
       const d = (await r.json()) as Analyse
       setAnalyse(d)
       if (importer && d.ok) setImporte(true)
@@ -55,6 +71,8 @@ export default function ImportPage() {
   const libelles: Record<string, string> = {
     sans_nom: 'Lignes sans nom d\'entreprise',
     concurrents: 'Agences web / com (concurrents)',
+    fermees_definitivement: 'Entreprises fermées (Google)',
+    hors_metier: 'Hors métier (hôtels, spas, clubs…)',
     deja_en_base: 'Déjà connus',
     moins_de_20_avis: 'Moins de 20 avis Google',
     sans_site_web: 'Sans site internet',
@@ -87,6 +105,20 @@ export default function ImportPage() {
           onChange={e => { setFichier(e.target.files?.[0] ?? null); setAnalyse(null); setImporte(false) }}
         />
       </label>
+
+      <div className="mt-4">
+        <label className="block text-xs mb-1" style={{ color: 'var(--color-muted-2)' }}>
+          Clé d&apos;accès (CRON_SECRET) — retenue sur cet appareil
+        </label>
+        <input
+          type="password"
+          value={cle}
+          onChange={e => memoriser(e.target.value)}
+          placeholder="clé"
+          className="w-full px-3 py-2 rounded-md text-sm"
+          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+        />
+      </div>
 
       {fichier && !importe && (
         <button

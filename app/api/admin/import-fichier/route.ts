@@ -35,6 +35,53 @@ const ALIAS: Record<string, string[]> = {
   rating: ['rating', 'note', 'score', 'etoiles', 'étoiles', 'stars'],
   email: ['email', 'e-mail', 'mail', 'courriel', 'email_1'],
   place_id: ['place_id', 'placeid', 'google_id', 'id'],
+  // ⚠️ Les trois colonnes suivantes ne servaient à RIEN avant le 11/08 — elles n'étaient même pas
+  // lues. Elles portent pourtant deux filtres indispensables (cf. plus bas) : le métier réel de
+  // l'entreprise et le fait qu'elle soit encore ouverte.
+  category: ['category', 'categorie', 'catégorie', 'type', 'activite', 'activité'],
+  subtypes: ['subtypes', 'sous-types', 'sous types', 'types', 'categories', 'catégories'],
+  business_status: ['business_status', 'statut', 'status', 'etat', 'état'],
+}
+
+/**
+ * ENTREPRISES HORS MÉTIER — le filtre qui manquait, et il manquait beaucoup.
+ *
+ * ⚠️ MESURE DU 11/08/2026 sur un export réel de 3 000 fiches (« pisciniste » + « terrassier »).
+ * Sur les 1 236 fiches que l'import considérait comme exploitables, **499 n'étaient pas des
+ * entreprises du bâtiment** : 58 hôtels, 74 « attractions », 35 piscines municipales, 34
+ * restaurants, 32 spas, 24 clubs de sport, des kinés, des agences de voyage, un opticien.
+ *
+ * La raison est structurelle, pas accidentelle : Google Maps répond à « pisciniste » par tout ce
+ * qui a un rapport avec une piscine — donc les lieux qui EN POSSÈDENT une, pas seulement ceux qui
+ * en CONSTRUISENT. Aucun réglage d'Outscraper ne corrige ça ; ça se filtre à l'import.
+ *
+ * Deux fiches sur cinq partaient donc en prospection « refonte de site pour artisan » vers des
+ * hôtels et des salles de sport. Ce n'est pas seulement du budget perdu : c'est un mail hors sujet
+ * envoyé au nom du client, qui abîme sa réputation d'expéditeur autant que la sienne.
+ *
+ * On procède par EXCLUSION et non par liste blanche, volontairement : un artisan peut être rangé
+ * par Google sous un libellé inattendu (« Travaux généraux », « Entrepreneur », vide…), et une
+ * liste blanche l'écarterait en silence. Mieux vaut laisser passer une brasserie que jeter un
+ * maçon — le premier cas se voit, le second jamais.
+ */
+const HORS_METIER = /(hotel|hôtel|restaurant|brasserie|attraction|articles de sports|ecole de natation|école de natation|professeur de natation|\bbars?\b|\bspa\b|hammam|sauna|massage|bronzage|institut de beaut|opticien|fitness|\bgym\b|salle de sport|club de sport|complexe sportif|natation|plongee|plongée|tennis|golf|kinesitherapeute|kinésithérapeute|bien-etre|bien-être|aquatique|camping|agence de voyage|agence immobili|maisons de vacances|vacation rental|location de maisons|vetements|vêtements|boutique|coiffure|pharmacie|station-service|supermarch|coll[eè]ge|lyc[eé]e|universit|mairie|administration publique|centre culturel|mus[eé]e|cabinet de recrutement|centre de r[eé][eé]ducation|piscine couverte|piscine ext[eé]rieure|centre aquatique|parc aquatique)/i
+
+/**
+ * Certaines catégories ne sont hors sujet que lorsqu'elles sont SEULES. « Piscine » tout court, chez
+ * Google, désigne un bassin — la piscine municipale, celle d'un camping — alors que « Société de
+ * construction de piscine » désigne bien un installateur. Un simple test de sous-chaîne écarterait
+ * les deux ou n'écarterait ni l'un ni l'autre : il faut comparer la catégorie ENTIÈRE.
+ */
+const CATEGORIE_SEULE_KO = new Set(['piscine', 'club', 'magasin', 'association ou organisation', 'siege social', 'entreprise'])
+
+/**
+ * Google marque les fiches fermées. On ne les écartait pas : 127 fermetures définitives et 54
+ * fermetures temporaires dans le même export. Écrire à une entreprise fermée, c'est un mail qui
+ * rebondit — et le taux de rebond dégrade la réputation des boîtes d'envoi.
+ */
+function estFermee(statut: string): boolean {
+  const s = String(statut ?? '').trim().toUpperCase()
+  return s.startsWith('CLOSED')
 }
 
 /**
@@ -127,12 +174,24 @@ async function handler(req: NextRequest) {
   )
 
   let sansNom = 0, concurrents = 0, dejaConnus = 0, sousSeuil = 0, sansSite = 0, exploitables = 0
+  let fermees = 0, horsMetier = 0
+  const exemplesHorsMetier: string[] = []
   const aCharger: Array<Record<string, unknown>> = []
 
   for (const l of lignes) {
     const nom = val(l, 'name')
     if (!nom) { sansNom++; continue }
     if (estConcurrent(nom)) { concurrents++; continue }
+    if (estFermee(val(l, 'business_status'))) { fermees++; continue }
+    // Le métier se lit sur la catégorie ET les sous-types : Google range parfois l'activité
+    // réelle dans le second seulement.
+    const categorie = val(l, 'category')
+    const metier = `${categorie} ${val(l, 'subtypes')}`
+    if (HORS_METIER.test(metier) || CATEGORIE_SEULE_KO.has(sansAccents(categorie))) {
+      horsMetier++
+      if (exemplesHorsMetier.length < 8) exemplesHorsMetier.push(`${nom} — ${val(l, 'category')}`)
+      continue
+    }
     const site = val(l, 'site')
     const avis = nombre(val(l, 'reviews'))
     if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) { dejaConnus++; continue }
@@ -153,10 +212,13 @@ async function handler(req: NextRequest) {
     ecartes: {
       sans_nom: sansNom,
       concurrents: concurrents,
+      fermees_definitivement: fermees,
+      hors_metier: horsMetier,
       deja_en_base: dejaConnus,
       moins_de_20_avis: sousSeuil,
       sans_site_web: sansSite,
     },
+    exemples_hors_metier: exemplesHorsMetier,
     EXPLOITABLES: exploitables,
     taux: lignes.length ? Math.round((exploitables / lignes.length) * 100) + '%' : '0%',
   }
