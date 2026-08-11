@@ -185,8 +185,14 @@ async function handler(req: NextRequest) {
     if (estFermee(val(l, 'business_status'))) { fermees++; continue }
     // Le métier se lit sur la catégorie ET les sous-types : Google range parfois l'activité
     // réelle dans le second seulement.
+    // ⚠️ ON NE TESTE QUE LA CATÉGORIE PRINCIPALE. Croiser aussi les `subtypes` paraissait plus sûr —
+    // c'est l'inverse. Un vrai pisciniste porte couramment « Spa », « Hot tub store » ou « Garden
+    // furniture shop » dans ses sous-types : le premier essai écartait « Magiline Rueil-Malmaison »
+    // et « Piscines Ibiza Cergy », deux cibles parfaites, sur la présence du mot « Spa ». Les
+    // sous-types sont un sac d'étiquettes voisines, pas une déclaration d'activité.
+    // On ne s'en sert qu'en dernier recours, quand la catégorie est vide.
     const categorie = val(l, 'category')
-    const metier = `${categorie} ${val(l, 'subtypes')}`
+    const metier = categorie || val(l, 'subtypes')
     if (HORS_METIER.test(metier) || CATEGORIE_SEULE_KO.has(sansAccents(categorie))) {
       horsMetier++
       if (exemplesHorsMetier.length < 8) exemplesHorsMetier.push(`${nom} — ${val(l, 'category')}`)
