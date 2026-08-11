@@ -21,7 +21,7 @@ export default function ProspectsPage() {
           <h1 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Prospects</h1>
         </div>
         <button
-          onClick={() => router.push('/leads')}
+          onClick={() => router.push('/import')}
           className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
           style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
         >
