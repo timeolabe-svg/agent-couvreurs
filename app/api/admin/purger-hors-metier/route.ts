@@ -55,16 +55,22 @@ async function handler(req: NextRequest) {
   }
 
   // Ce que le plafond attrape, avec les noms : c'est ce qu'on veut lire avant d'appliquer.
+  //
+  // ⚠️ SANS filtre de statut, volontairement. Un premier essai ne regardait que les fiches encore
+  // en attente ('new'…) et annonçait « 0 contact concerné » — alors que « Paradis Latin » (un
+  // cabaret) était DÉJÀ passé en contact, donc en statut 'importe', donc invisible à la requête.
+  // La fiche la plus urgente à rattraper est précisément celle qui a franchi l'étape suivante : le
+  // filtre de statut cachait exactement les cas qui comptent.
+  // Le statut est bien pris en compte plus bas, mais seulement pour décider quoi RÉÉCRIRE.
   const tropGros = (await sql`
     SELECT place_id, name, reviews FROM outscraper_leads
-    WHERE reviews > ${PLAFOND_AVIS} AND status IN ('new', 'no_email', 'skipped_lowreviews')
+    WHERE reviews > ${PLAFOND_AVIS}
     ORDER BY reviews DESC
   `) as Array<{ place_id: string; name: string; reviews: number }>
 
   const parListe = ids.length
     ? (await sql`
-        SELECT place_id, name, reviews FROM outscraper_leads
-        WHERE place_id = ANY(${ids}) AND status IN ('new', 'no_email', 'skipped_lowreviews')
+        SELECT place_id, name, reviews FROM outscraper_leads WHERE place_id = ANY(${ids})
       `) as Array<{ place_id: string; name: string; reviews: number }>
     : []
 
