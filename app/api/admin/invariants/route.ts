@@ -249,6 +249,14 @@ async function handler(req: NextRequest) {
       JOIN contacts c ON LOWER(c.email) = LOWER(ir.from_email)
       JOIN email_queue q ON q.contact_id = c.id
       WHERE q.status = 'sent' AND q.sent_at > ir.created_at + INTERVAL '1 hour'
+        -- ⚠️ L'invariant signalait le comportement VOULU. Les étapes >= 20 sont des relances de
+        -- CONVERSATION : un prospect qui a répondu puis s'est tu doit être relancé, et
+        -- send-campaign les exempte explicitement de la règle « il a répondu, on s'arrête ».
+        -- Les 3 lignes rouges du 06/08 étaient toutes en étape 21, donc parfaitement légitimes.
+        -- Un contrôle qui n'applique pas la même règle que le moteur qu'il surveille produit une
+        -- alerte permanente sur du fonctionnement normal — et une alerte permanente est une alerte
+        -- morte, qui masquera la vraie le jour où elle arrivera.
+        AND q.sequence_step < 20
         AND COALESCE(ir.classification, '') NOT IN ('oof', 'spam', 'warmup')
         AND ir.created_at > NOW() - INTERVAL '60 days'
         AND q.sent_at > NOW() - INTERVAL '7 days'
