@@ -239,7 +239,12 @@ async function handler(req: NextRequest) {
   await verifier('C3', 'coherence',
     'Aucune relance de séquence n\'est partie après une réponse du prospect',
     async () => await sql`
-      SELECT c.email, ir.created_at AS a_repondu, q.sent_at AS relance
+      -- ⚠️ On expose `sequence_step`, sans quoi cet invariant est indiagnostiquable : les étapes
+      -- >= 20 sont des relances DE CONVERSATION, volontairement exemptées côté send-campaign (un
+      -- prospect qui a répondu puis s'est tu doit être relancé). Sans le numéro d'étape, impossible
+      -- de savoir si une ligne rouge est une vraie faute ou le fonctionnement voulu — et une alerte
+      -- qu'on ne peut pas trancher est une alerte qu'on finit par ignorer.
+      SELECT c.email, q.sequence_step, ir.created_at AS a_repondu, q.sent_at AS relance
       FROM incoming_replies ir
       JOIN contacts c ON LOWER(c.email) = LOWER(ir.from_email)
       JOIN email_queue q ON q.contact_id = c.id
