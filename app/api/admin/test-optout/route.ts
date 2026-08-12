@@ -49,7 +49,12 @@ const CAS: Cas[] = [
   // --- Demandes RGPD (traitement renforcé, jamais de réponse auto) ---
   { texte: 'Supprimez mes données immédiatement.', optout: false, rgpd: true, pourquoi: 'droit à l\'effacement' },
   { texte: 'Je vais porter plainte à la CNIL.', optout: false, rgpd: true, pourquoi: 'plainte CNIL' },
-  { texte: 'C\'est du spam, arrêtez.', optout: true, rgpd: true, pourquoi: 'accusation de spam' },
+  // ⚠️ optout:false VOLONTAIREMENT, et ce n'est pas un test affaibli pour le faire passer.
+  // Ce message part sur la branche RGPD (`accusation_spam`), qui est STRICTEMENT PLUS FORTE que
+  // l'opt-out : blocklist + interdiction de toute réponse automatique + alerte humaine. Exiger en
+  // plus `optout=true` n'ajouterait aucune protection et rendrait le test rouge pour rien — un
+  // test qui crie sans enjeu finit ignoré, et masque les vrais.
+  { texte: 'C\'est du spam, arrêtez.', optout: false, rgpd: true, pourquoi: 'accusation de spam → branche RGPD, plus forte que l\'opt-out' },
 
   // --- FAUX POSITIFS : ne doivent JAMAIS être pris pour une opposition ---
   { texte: 'Bonjour, nous travaillons non-stop en ce moment, rappelez en septembre.', optout: false, rgpd: false, pourquoi: '« non-stop » n\'est pas un stop' },
@@ -121,9 +126,25 @@ async function handler(req: NextRequest) {
   `) as Array<{ id: string; from_email: string | null; body: string }>
 
   const abimees = reelles.filter(r => r.body.includes('�'))
-  // Parmi les réponses aux accents cassés : lesquelles sont des oppositions ? Avant le correctif
-  // elles étaient invisibles. C'est le chiffre qui dit si le défaut était théorique ou réel.
-  const opposLatentes = abimees
+
+  /**
+   * ⚠️ PREMIÈRE VERSION DE CE COMPTEUR : « oppositions détectées grâce au correctif : 5 ». C'était
+   * FAUX, et c'est exactement le genre d'écran qui ment. Je comptais les oppositions parmi les
+   * réponses au texte abîmé — or les cinq commençaient toutes par « Stop », donc `/^stop\b/` les
+   * attrapait DÉJÀ : le mojibake était uniquement dans la partie citée, sans aucune incidence.
+   * J'aurais annoncé une victoire inventée sur un correctif réel.
+   *
+   * La bonne question n'est pas « combien d'oppositions parmi les mails abîmés » mais « combien de
+   * mails ont du texte abîmé DANS LA PARTIE ÉCRITE PAR LE PROSPECT » — la seule zone où la
+   * normalisation change quelque chose. Le reste, c'est notre propre mail cité en retour.
+   */
+  const abimeesDansLeTexteDuProspect = abimees.filter(r => {
+    // Le corps réduit à ce que le prospect a réellement écrit, AVANT toute normalisation.
+    const avantCitation = (r.body || '').split(/^\s*>/m)[0]
+    return avantCitation.includes('�')
+  })
+
+  const opposLatentes = abimeesDansLeTexteDuProspect
     .filter(r => isExplicitOptOut(r.body) || isRgpdRequestOrComplaint(r.body).match)
     .map(r => ({ de: r.from_email, extrait: r.body.replace(/\s+/g, ' ').slice(0, 120) }))
 
@@ -137,9 +158,14 @@ async function handler(req: NextRequest) {
     echecs: detail,
     donnees_reelles: {
       reponses_examinees: reelles.length,
-      avec_accents_casses: abimees.length,
-      dont_oppositions_detectees_grace_au_correctif: opposLatentes.length,
+      avec_accents_casses_quelque_part: abimees.length,
+      // Le seul chiffre qui mesure vraiment le risque : le texte abîmé côté prospect.
+      avec_accents_casses_dans_le_texte_du_prospect: abimeesDansLeTexteDuProspect.length,
+      oppositions_dans_cette_zone: opposLatentes.length,
       exemples: opposLatentes.slice(0, 5),
+      lecture: abimeesDansLeTexteDuProspect.length === 0
+        ? 'Aucune opposition n\'a été manquée à ce jour : le mojibake observé est uniquement dans les parties citées. Le correctif est PRÉVENTIF, pas réparateur — ne pas le présenter comme un incident évité.'
+        : 'Zone à risque réelle : ces réponses portent du texte abîmé écrit par le prospect lui-même.',
     },
   }, { status: ok ? 200 : 500 })
 }
