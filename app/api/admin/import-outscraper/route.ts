@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { scrapeEmailFromWebsite } from '@/lib/scraper/google-places'
+import { isFakeEmail } from '@/lib/fake-email'
 
 export const maxDuration = 60
 
@@ -153,6 +154,18 @@ export async function GET(request: NextRequest) {
         continue
       }
       const email = em.email.toLowerCase()
+      // ⚠️ ASYMÉTRIE ENTRE LES DEUX CHEMINS D'ENTRÉE. `scrape-leads` filtrait les adresses
+      // placeholder par isFakeEmail(), pas celui-ci — alors que les deux créent des contacts.
+      // Observé en production : « exemple@mail.com » scrapé sur un vrai site et enregistré comme
+      // adresse de contact. L'envoi l'aurait bien refusé plus loin (autopilot-tick), mais la fiche
+      // occupait une place dans le CRM en se faisant passer pour un prospect joignable.
+      // Règle générale : deux chemins qui écrivent dans la même table doivent porter les mêmes
+      // garde-fous, sinon le plus récent hérite silencieusement des trous de l'autre.
+      if (isFakeEmail(email)) {
+        await db.execute(sql`UPDATE outscraper_leads SET status = 'no_email', processed_at = NOW() WHERE place_id = ${l.place_id}`)
+        results.push(`∅ adresse bidon (${email}) : ${l.name}`)
+        continue
+      }
       // Blocklist (opt-out d'anciens contacts) — jamais réimporter.
       const bl = g(await db.execute(sql`
         SELECT 1 AS x FROM blocklist b
