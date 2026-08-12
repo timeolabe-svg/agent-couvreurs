@@ -21,21 +21,54 @@ export async function GET(request: NextRequest) {
     try { out[k] = await fn() } catch (e) { out[k] = { _error: String(e).slice(0, 200) } }
   }
 
-  // Motif large : TOUTE formulation d'arrêt, d'opposition ou de plainte (bien plus large que la
-  // détection d'opt-out en production — c'est justement ce qu'on cherche à mesurer).
-  const MOTIF = `(désabonn|desabonn|désinscri|desinscri|unsubscribe|ne plus (me |nous )?(recevoir|contacter|écrire|solliciter|envoyer)|arrêtez|arretez|stop|supprim|effac|retir|enlev|oppos|rgpd|cnil|spam|harcel|harcèl|plainte|poursuit|avocat)`
+  /**
+   * ⚠️ CET AUDIT MENTAIT, ET DANS LE PIRE SENS (constaté le 12/08/2026).
+   *
+   * Il cherchait un motif brut — `stop|rgpd|supprim|oppos|spam…` — N'IMPORTE OÙ dans le corps du
+   * mail. Or NOTRE PROPRE PIED DE PAGE contient les trois mots les plus déclencheurs :
+   * « Conformément au RGPD, vous pouvez demander leur suppression […] en répondant "Stop" ».
+   * Et tout client mail cite le message auquel il répond.
+   *
+   * Résultat : les 22 « demandes d'arrêt non blocklistées » signalées étaient en réalité les
+   * MEILLEURS leads — « Ok appelle moi », « oui c'est possible pour demain 14h », « Cela
+   * m'intéresse, contactez-moi au 06… » — plus des réponses d'absence et des filtres antispam.
+   * Zéro vraie demande d'arrêt. L'écran affichait une situation RGPD catastrophique là où il n'y
+   * avait rien, et surtout : une vraie demande s'y serait noyée sans que personne ne la voie.
+   *
+   * C'est exactement le bug du 10/08 (notre signature analysée comme si le prospect l'avait
+   * écrite), reproduit ici parce que l'audit refaisait sa propre détection au lieu d'utiliser
+   * celle de la production.
+   *
+   * CORRECTIF : on emploie les MÊMES fonctions que le moteur — elles retirent d'abord notre pied
+   * de page et les citations, et elles sont couvertes par 19 cas de test. Un contrôle qui
+   * n'applique pas la règle du système qu'il surveille ne surveille rien.
+   */
+  const { isExplicitOptOut, isRgpdRequestOrComplaint } = await import('@/lib/rgpd')
 
-  // 1) Demandes d'arrêt détectées dans les réponses reçues → sont-elles blocklistées ?
-  await run('demandes_arret_non_blocklistees', async () => g(await db.execute(sql`
-    SELECT ir.from_email, ir.classification, ir.action_taken, ir.created_at,
-           LEFT(regexp_replace(ir.body, '\\s+', ' ', 'g'), 180) AS extrait
-    FROM incoming_replies ir
-    WHERE ir.body ~* ${MOTIF}
-      AND NOT EXISTS (
-        SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email)
-      )
-    ORDER BY ir.created_at DESC LIMIT 40
-  `)))
+  const toutesReponses = g(await db.execute(sql`
+    SELECT id, from_email, body, classification, action_taken, created_at
+    FROM incoming_replies WHERE body IS NOT NULL
+    ORDER BY created_at DESC LIMIT 2000
+  `)) as Array<{ id: string; from_email: string; body: string; classification: string | null; action_taken: string | null; created_at: string }>
+
+  const vraiesDemandes = toutesReponses.filter(r =>
+    isExplicitOptOut(r.body) || isRgpdRequestOrComplaint(r.body).match)
+  const idsArret = vraiesDemandes.map(r => r.id)
+
+  out._methode = `Détection par les fonctions de production (isExplicitOptOut / isRgpdRequestOrComplaint), pas par motif brut. ${vraiesDemandes.length} vraie(s) demande(s) sur ${toutesReponses.length} réponses examinées.`
+
+  // 1) Demandes d'arrêt réelles → sont-elles blocklistées ?
+  await run('demandes_arret_non_blocklistees', async () => {
+    if (!idsArret.length) return []
+    const bloques = new Set((g(await db.execute(sql`SELECT LOWER(email) AS e FROM blocklist WHERE email IS NOT NULL`)) as Array<{ e: string }>).map(r => r.e))
+    return vraiesDemandes
+      .filter(r => !bloques.has(String(r.from_email).toLowerCase()))
+      .map(r => ({
+        from_email: r.from_email, classification: r.classification,
+        action_taken: r.action_taken, created_at: r.created_at,
+        extrait: String(r.body).replace(/\s+/g, ' ').slice(0, 180),
+      }))
+  })
 
   // 2) LE PIRE CAS : un mail ENVOYÉ APRÈS une demande d'arrêt (RGPD : interdit).
   await run('mails_envoyes_apres_demande_arret', async () => g(await db.execute(sql`
@@ -44,7 +77,8 @@ export async function GET(request: NextRequest) {
     FROM incoming_replies ir
     JOIN contacts c ON LOWER(c.email) = LOWER(ir.from_email)
     JOIN email_queue eq ON eq.contact_id = c.id AND eq.status = 'sent' AND eq.sent_at > ir.created_at
-    WHERE ir.body ~* ${MOTIF}
+    -- Même correctif que ci-dessus : on ne se fie qu'aux demandes RÉELLEMENT identifiées.
+    WHERE ir.id = ANY(${idsArret})
     ORDER BY eq.sent_at DESC LIMIT 40
   `)))
 
@@ -55,7 +89,7 @@ export async function GET(request: NextRequest) {
            LEFT(regexp_replace(rd.body, '\\s+', ' ', 'g'), 140) AS extrait_reponse
     FROM incoming_replies ir
     JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
-    WHERE ir.body ~* ${MOTIF} AND rd.status = 'sent'
+    WHERE ir.id = ANY(${idsArret}) AND rd.status = 'sent'
     ORDER BY rd.sent_at DESC LIMIT 30
   `)))
 
