@@ -807,9 +807,15 @@ async function buildHistory(contactId: string): Promise<Array<{ role: 'sent' | '
 async function cancelSteps(email: string): Promise<number> {
   try {
     const rows = await sql`
+      -- ⚠️ Il y avait un LIMIT 1 ici. Un même prospect peut exister en PLUSIEURS fiches contacts
+      -- (import répété, adresse retrouvée par deux chemins, casse différente) : sa désinscription
+      -- n'annulait alors que la file d'UNE fiche, et il continuait de recevoir les mails de
+      -- l'autre. Une opposition à moitié appliquée est une opposition non appliquée — c'est
+      -- littéralement le motif de la plainte CNIL.
+      -- Signalé par la session labegaria (5 cas de doublons mesurés chez elle), vérifié ici.
       UPDATE email_queue SET status = 'cancelled'
-      WHERE contact_id = (SELECT id FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1)
-        AND status IN ('pending', 'queued', 'queued_instantly')
+      WHERE contact_id IN (SELECT id FROM contacts WHERE LOWER(email) = LOWER(${email}))
+        AND status IN ('pending', 'queued', 'queued_instantly', 'scheduled', 'sending')
       RETURNING id
     `
     return (rows as Array<{ id: string }>).length
