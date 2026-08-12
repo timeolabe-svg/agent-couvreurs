@@ -137,9 +137,9 @@ export async function GET(request: NextRequest) {
   if (!camp[0]) return NextResponse.json({ ok: false, error: 'aucune campagne active' })
 
   const todo = g(await db.execute(sql`
-    SELECT place_id, name, site, phone, city, postal_code, rating, reviews
+    SELECT place_id, name, site, phone, city, postal_code, rating, reviews, sector
     FROM outscraper_leads WHERE status = 'new' ORDER BY reviews DESC LIMIT ${batch}
-  `)) as Array<{ place_id: string; name: string; site: string; phone: string | null; city: string | null; postal_code: string | null; rating: number | null; reviews: number }>
+  `)) as Array<{ place_id: string; name: string; site: string; phone: string | null; city: string | null; postal_code: string | null; rating: number | null; reviews: number; sector: string | null }>
 
   const results: string[] = []
   let importes = 0
@@ -166,9 +166,15 @@ export async function GET(request: NextRequest) {
         continue
       }
       // Insert contact (email UNIQUE : un doublon d'email → contact existant, on n'écrase rien).
+      //
+      // ⚠️ Le métier était écrit EN DUR à 'terrassier' pour TOUT LE MONDE. Or la colonne sector
+      // décide du vocabulaire du mail généré ("ce prospect est un {sector}") : chaque pisciniste
+      // recevait un texte de terrassier, signé du nom du client.
+      // Le repli est générique et surtout PAS 'terrassier' — un métier faux est pire qu'un métier
+      // vague, parce qu'il produit un message confiant et hors sujet.
       const ins = g(await db.execute(sql`
         INSERT INTO contacts (email, company, website, phone, sector, city, postal_code, google_place_id, google_rating, google_reviews_count, email_confidence_score, source, audit_done)
-        VALUES (${email}, ${l.name}, ${l.site}, ${l.phone}, 'terrassier', ${l.city}, ${l.postal_code}, ${l.place_id}, ${l.rating}, ${l.reviews}, ${em.confidence}, 'outscraper', false)
+        VALUES (${email}, ${l.name}, ${l.site}, ${l.phone}, ${l.sector || 'artisan du bâtiment'}, ${l.city}, ${l.postal_code}, ${l.place_id}, ${l.rating}, ${l.reviews}, ${em.confidence}, 'outscraper', false)
         ON CONFLICT (email) DO NOTHING
         RETURNING id
       `)) as Array<{ id: string }>

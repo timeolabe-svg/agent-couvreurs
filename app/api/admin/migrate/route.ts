@@ -74,6 +74,24 @@ export async function GET(request: NextRequest) {
       nom: 'urgent_tasks: unicite du titre',
       run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS urgent_tasks_title_uk ON urgent_tasks(title)`),
     },
+    {
+      /**
+       * ⚠️ Le métier du prospect n'était NULLE PART dans le tampon d'import, et le passage en
+       * contact écrivait `sector = 'terrassier'` EN DUR. Or `sector` pilote le vocabulaire du mail
+       * généré (« ce prospect est un {sector} »). Chaque pisciniste recevait donc un message écrit
+       * en jargon de terrassier — une erreur que le prospect lit, au nom du client.
+       *
+       * On conserve deux choses distinctes : `category` telle que Google la donne (brute, utile
+       * pour rejouer un filtre a posteriori — impossible aujourd'hui puisqu'on ne la gardait pas),
+       * et `sector` normalisé, celui qu'on écrira dans contacts.
+       */
+      nom: 'outscraper_leads: category + sector',
+      run: () => db.execute(sql`
+        ALTER TABLE outscraper_leads
+          ADD COLUMN IF NOT EXISTS category TEXT,
+          ADD COLUMN IF NOT EXISTS sector   TEXT
+      `),
+    },
   ]
 
   const resultats: string[] = []

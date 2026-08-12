@@ -41,6 +41,9 @@ const ALIAS: Record<string, string[]> = {
   category: ['category', 'categorie', 'catégorie', 'type', 'activite', 'activité'],
   subtypes: ['subtypes', 'sous-types', 'sous types', 'types', 'categories', 'catégories'],
   business_status: ['business_status', 'statut', 'status', 'etat', 'état'],
+  // La requête d'origine (« pisciniste, 06001 CEDEX 1, Nice, … ») : dernier recours pour connaître
+  // le métier quand Google laisse la catégorie vide.
+  query: ['query', 'requete', 'requête', 'search', 'recherche', 'keyword'],
 }
 
 /**
@@ -64,7 +67,60 @@ const ALIAS: Record<string, string[]> = {
  * liste blanche l'écarterait en silence. Mieux vaut laisser passer une brasserie que jeter un
  * maçon — le premier cas se voit, le second jamais.
  */
-const HORS_METIER = /(hotel|hôtel|restaurant|brasserie|attraction|articles de sports|ecole de natation|école de natation|professeur de natation|\bbars?\b|\bspa\b|hammam|sauna|massage|bronzage|institut de beaut|opticien|fitness|\bgym\b|salle de sport|club de sport|complexe sportif|natation|plongee|plongée|tennis|golf|kinesitherapeute|kinésithérapeute|bien-etre|bien-être|aquatique|camping|agence de voyage|agence immobili|maisons de vacances|vacation rental|location de maisons|vetements|vêtements|boutique|coiffure|pharmacie|station-service|supermarch|coll[eè]ge|lyc[eé]e|universit|mairie|administration publique|centre culturel|mus[eé]e|cabinet de recrutement|centre de r[eé][eé]ducation|piscine couverte|piscine ext[eé]rieure|centre aquatique|parc aquatique)/i
+const HORS_METIER = new RegExp([
+  // Hébergement, restauration, loisirs — le gros du bruit d'une requête « pisciniste »
+  'hotel|hôtel|restaurant|brasserie|traiteur|attraction|\\bbars?\\b|discoth|salle de concert|salle de spectacle',
+  'camping|parc de loisirs|bowling|cinema|cinéma|casino|karting|paintball',
+  // Bien-être, sport, santé — l'autre moitié du bruit
+  '\\bspa\\b|hammam|sauna|massage|bronzage|institut de beaut|coiffure|onglerie|tatouage',
+  'fitness|\\bgym\\b|salle de sport|club de sport|complexe sportif|aquabike|articles de sports',
+  'natation|plongee|plongée|tennis|golf|equitation|équitation|\\bjudo\\b|\\bdanse\\b',
+  'kinesitherapeute|kinésithérapeute|osteopathe|ostéopathe|chirurgien|medecin|médecin|dentiste|veterinaire|vétérinaire',
+  'bien-etre|bien-être|centre de r[eé][eé]ducation|clinique|laboratoire|pharmacie|opticien|audioprothes',
+  // Bassins qui ne sont pas des chantiers : municipaux, hôteliers, parcs
+  'aquatique|piscine couverte|piscine ext[eé]rieure|centre aquatique|parc aquatique',
+  // Commerce de détail et enseignes — Castorama, Bricorama, Truffaut, GiFi sont passés par là
+  'do-it-yourself|bricolage|jardinerie|animalerie|ameublement|d[eé]coration|electromenager|électroménager',
+  'supermarch|hypermarch|epicerie|épicerie|boulangerie|boucherie|primeur|caviste|tabac|presse',
+  'vetements|vêtements|chaussures|lingerie|bijouterie|horlogerie|librairie|jouets|cartes de collection',
+  'magasin discount|grand magasin|centre commercial|station-service|concession|garage automobile',
+  // Services, institutions, formation — rien à vendre pour une agence web d'artisans
+  'agence de voyage|agence immobili|maisons de vacances|vacation rental|location de maisons|\\bposte\\b',
+  'coll[eè]ge|lyc[eé]e|universit|[eé]cole|formation|auto-[eé]cole|cr[eè]che|garderie',
+  'mairie|administration publique|prefecture|préfecture|tribunal|commissariat|caserne|hopital|hôpital',
+  'centre culturel|mus[eé]e|biblioth[eè]que|th[eé][aâ]tre|[eé]glise|temple|synagogue|mosqu',
+  'cabinet de recrutement|cabinet comptable|avocat|notaire|assurance|banque|mutuelle',
+  'fabricant de|grossiste',
+  // ⚠️ Google rend parfois la catégorie dans une AUTRE LANGUE que le pays interrogé (« Do-it-
+  // yourself shop », « Negozio di forniture », « Real estate agency ») — un filtre uniquement
+  // francophone laisse donc passer une queue entière de fiches hors sujet.
+  'real estate|travel agency|sports club|art gallery|bed & breakfast|guest house|tourist',
+  'grocery|clothing store|book store|beauty salon|hair salon|night club|fitness center',
+  // Lieux et structures qui ne sont pas des entreprises artisanales
+  'parc citadin|parc des expositions|espace [eé]v[eé]nementiel|organisateur d [eé]v[eé]nements',
+  'coworking|maison d h[oô]tes|appartement de vacances|complexe d appartements|galerie d art',
+  'prestataire de mariage|agence de visites|bureau de s[eé]curit[eé] sociale|administration',
+  '\\bjardin\\b|club de |atelier de couture|magasin d articles de f[eê]te|appareils auditifs',
+].join('|'), 'i')
+
+/**
+ * PLAFOND D'AVIS — le filtre qui attrape ce qu'aucune catégorie ne trahit.
+ *
+ * ⚠️ Après avoir posé le filtre métier, l'agent a quand même importé « La Cigale » (salle de
+ * concert, 6 622 avis), « Castorama » (5 782), « La Poste » (2 556) et « Paradis Latin » (2 154,
+ * catégorie VIDE — donc invisible à tout filtre de libellé).
+ *
+ * Le point commun n'est pas le métier, c'est la TAILLE. Un artisan pisciniste ou terrassier avec
+ * 600 avis Google n'existe pas : au-delà, on a affaire à une enseigne, une franchise ou un lieu
+ * public. Et c'est justement le signal le plus fiable, parce qu'il ne dépend pas d'un libellé que
+ * Google peut laisser vide ou écrire en anglais (« Do-it-yourself shop »).
+ *
+ * On perd au passage une vingtaine de gros indépendants réels (Cash Pools, Waterair). Perte
+ * assumée : à ce niveau de notoriété ils ont déjà une agence, ce sont les prospects les moins
+ * susceptibles de signer — alors qu'un mail « refonte de votre site » envoyé à La Poste au nom du
+ * client, ça, ça se paie en crédibilité.
+ */
+const PLAFOND_AVIS = 600
 
 /**
  * Certaines catégories ne sont hors sujet que lorsqu'elles sont SEULES. « Piscine » tout court, chez
@@ -72,13 +128,40 @@ const HORS_METIER = /(hotel|hôtel|restaurant|brasserie|attraction|articles de s
  * construction de piscine » désigne bien un installateur. Un simple test de sous-chaîne écarterait
  * les deux ou n'écarterait ni l'un ni l'autre : il faut comparer la catégorie ENTIÈRE.
  */
-const CATEGORIE_SEULE_KO = new Set(['piscine', 'club', 'magasin', 'association ou organisation', 'siege social', 'entreprise'])
+const CATEGORIE_SEULE_KO = new Set([
+  'piscine', 'club', 'magasin', 'boutique', 'association ou organisation', 'siege social',
+  'entreprise', 'societe', 'service', 'attractions', 'point d interet', 'batiment',
+])
 
 /**
  * Google marque les fiches fermées. On ne les écartait pas : 127 fermetures définitives et 54
  * fermetures temporaires dans le même export. Écrire à une entreprise fermée, c'est un mail qui
  * rebondit — et le taux de rebond dégrade la réputation des boîtes d'envoi.
  */
+/**
+ * MÉTIER NORMALISÉ — ce qui sera écrit dans `contacts.sector`, donc ce qui décidera du vocabulaire
+ * du mail envoyé au prospect. On le déduit de la catégorie Google, et à défaut de la requête
+ * d'origine (colonne `query` d'Outscraper : « pisciniste, 06001 CEDEX 1, Nice… »).
+ *
+ * Le repli n'est pas « terrassier » mais « artisan du bâtiment » : un métier faux est pire qu'un
+ * métier générique, parce qu'il produit un mail confiant et à côté de la plaque.
+ */
+function deduireMetier(categorie: string, requete: string): string {
+  const t = sansAccents(`${categorie} ${requete}`)
+  if (/piscine|pisciniste|swimming pool/.test(t)) return 'pisciniste'
+  if (/terrassement|terrassier|excavat/.test(t)) return 'terrassier'
+  if (/travaux publics|\bvrd\b|voirie/.test(t)) return 'entreprise de travaux publics'
+  if (/paysagiste|paysager|jardinier|elagage/.test(t)) return 'paysagiste'
+  if (/assainissement|eaux usees|saneamiento/.test(t)) return 'entreprise d assainissement'
+  if (/plombier|plumber|chauffagiste|heating/.test(t)) return 'plombier'
+  if (/macon|maconnerie|beton/.test(t)) return 'maçon'
+  if (/couvreur|toiture|charpent/.test(t)) return 'couvreur'
+  if (/menuisier|menuiserie/.test(t)) return 'menuisier'
+  if (/carrelage|carreleur/.test(t)) return 'carreleur'
+  if (/demolition|forage|pavage/.test(t)) return 'entreprise de terrassement'
+  return 'artisan du bâtiment'
+}
+
 function estFermee(statut: string): boolean {
   const s = String(statut ?? '').trim().toUpperCase()
   return s.startsWith('CLOSED')
@@ -174,14 +257,17 @@ async function handler(req: NextRequest) {
   )
 
   let sansNom = 0, concurrents = 0, dejaConnus = 0, sousSeuil = 0, sansSite = 0, exploitables = 0
-  let fermees = 0, horsMetier = 0
+  let fermees = 0, horsMetier = 0, enseignes = 0
   const exemplesHorsMetier: string[] = []
+  const exemplesEnseignes: string[] = []
   const aCharger: Array<Record<string, unknown>> = []
 
   for (const l of lignes) {
     const nom = val(l, 'name')
     if (!nom) { sansNom++; continue }
-    if (estConcurrent(nom)) { concurrents++; continue }
+    // ⚠️ Le test portait sur le NOM seul : « Linkeo » ne dit rien, sa CATÉGORIE dit « Agence de
+    // marketing ». Un concurrent direct entrait donc dans la file d'envoi du client.
+    if (estConcurrent(nom) || estConcurrent(val(l, 'category'))) { concurrents++; continue }
     if (estFermee(val(l, 'business_status'))) { fermees++; continue }
     // Le métier se lit sur la catégorie ET les sous-types : Google range parfois l'activité
     // réelle dans le second seulement.
@@ -200,6 +286,11 @@ async function handler(req: NextRequest) {
     }
     const site = val(l, 'site')
     const avis = nombre(val(l, 'reviews'))
+    if (avis > PLAFOND_AVIS) {
+      enseignes++
+      if (exemplesEnseignes.length < 8) exemplesEnseignes.push(`${nom} — ${avis} avis`)
+      continue
+    }
     if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) { dejaConnus++; continue }
     if (avis < SEUIL_AVIS) { sousSeuil++; continue }
     if (!site) { sansSite++; continue }
@@ -208,6 +299,8 @@ async function handler(req: NextRequest) {
       place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
       name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
       postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
+      category: categorie || null,
+      sector: deduireMetier(categorie, val(l, 'query')),
     })
   }
 
@@ -220,11 +313,13 @@ async function handler(req: NextRequest) {
       concurrents: concurrents,
       fermees_definitivement: fermees,
       hors_metier: horsMetier,
+      enseignes_trop_grosses: enseignes,
       deja_en_base: dejaConnus,
       moins_de_20_avis: sousSeuil,
       sans_site_web: sansSite,
     },
     exemples_hors_metier: exemplesHorsMetier,
+    exemples_enseignes: exemplesEnseignes,
     EXPLOITABLES: exploitables,
     taux: lignes.length ? Math.round((exploitables / lignes.length) * 100) + '%' : '0%',
   }
@@ -236,10 +331,10 @@ async function handler(req: NextRequest) {
   let charges = 0
   for (const r of aCharger) {
     const res = (await sql`
-      INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, status)
+      INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, category, sector, status)
       VALUES (${r.place_id as string}, ${r.name as string}, ${r.site as string}, ${r.phone as string || null},
               ${r.city as string || null}, ${r.postal_code as string || null}, ${r.rating as number | null},
-              ${r.reviews as number}, 'new')
+              ${r.reviews as number}, ${r.category as string | null}, ${r.sector as string}, 'new')
       ON CONFLICT (place_id) DO NOTHING
       RETURNING place_id
     `) as Array<{ place_id: string }>
