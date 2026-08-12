@@ -239,7 +239,7 @@ async function handler(req: NextRequest) {
   await verifier('C3', 'coherence',
     'Aucune relance de séquence n\'est partie après une réponse du prospect',
     async () => await sql`
-      -- ⚠️ On expose `sequence_step`, sans quoi cet invariant est indiagnostiquable : les étapes
+      -- ⚠️ On expose sequence_step, sans quoi cet invariant est indiagnostiquable : les étapes
       -- >= 20 sont des relances DE CONVERSATION, volontairement exemptées côté send-campaign (un
       -- prospect qui a répondu puis s'est tu doit être relancé). Sans le numéro d'étape, impossible
       -- de savoir si une ligne rouge est une vraie faute ou le fonctionnement voulu — et une alerte
