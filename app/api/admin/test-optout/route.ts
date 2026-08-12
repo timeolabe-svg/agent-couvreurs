@@ -113,8 +113,10 @@ async function handler(req: NextRequest) {
   const { sql } = await import('@/lib/db')
   const reelles = (await sql`
     SELECT id, from_email, body FROM incoming_replies
-    WHERE body IS NOT NULL AND received_at > NOW() - INTERVAL '120 days'
-    ORDER BY received_at DESC
+    -- ⚠️ created_at, PAS received_at : la colonne n'existe pas dans ce schéma. Quatrième requête
+    -- écrite de mémoire aujourd'hui qui se casse sur un nom de colonne. Relire le schéma, toujours.
+    WHERE body IS NOT NULL AND created_at > NOW() - INTERVAL '120 days'
+    ORDER BY created_at DESC
     LIMIT 1000
   `) as Array<{ id: string; from_email: string | null; body: string }>
 
