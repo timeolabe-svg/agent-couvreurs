@@ -140,7 +140,29 @@ const OCCITANIE_CITIES = [
  * le stock existant, donc aucune alerte "0 mail envoyé" ne se déclenche). Les try/catch internes
  * ne couvraient ni la lecture de config initiale ni l'injection des orphelins.
  */
+/**
+ * BUDGET DE TEMPS DU TICK — cron-job.org coupe à 30 s, quoi qu'en dise `maxDuration`.
+ *
+ * ⚠️ CONSTATÉ LE 12/08/2026 : ce cron et `scrape-leads` étaient en « Échec (délai d'attente) 30 s »
+ * à chaque passage. Ils n'étaient pas désactivés — ils dépassaient. Or c'est le tick qui promeut
+ * les leads vers la file d'envoi : sans lui, un stock fraîchement importé ne part jamais, et rien
+ * ne le signale ailleurs qu'en rouge dans une console qu'on ne regarde pas tous les jours.
+ *
+ * La cause est le scraping Google Places + MillionVerifier, fait EN LIGNE dans le tick. Le
+ * throttle de 2 h existait déjà, mais il espace les scrapings sans borner celui qui s'exécute :
+ * un tick sur douze partait pour 40 s et se faisait couper — et emportait l'envoi avec lui.
+ *
+ * On borne donc le tick lui-même. 20 s : de la marge sous les 30 s, et le travail non fait est
+ * simplement repris au tick suivant (toutes les 30 min). Un cron qui fait 80 % du travail et rend
+ * la main vaut infiniment mieux qu'un cron qui en fait 100 % une fois sur deux.
+ */
+const TICK_BUDGET_MS = 20000
+let tickStart = Date.now()
+const tempsEcoule = () => Date.now() - tickStart
+const budgetDepasse = () => tempsEcoule() > TICK_BUDGET_MS
+
 export async function GET(request: NextRequest) {
+  tickStart = Date.now()
   try {
     return await runTickHandler(request)
   } catch (err) {
@@ -307,7 +329,10 @@ async function runTickHandler(request: NextRequest) {
         }
       } catch { /* non bloquant */ }
 
-      if (pendingCount < MIN_PIPELINE_LEADS && !scrapeThrottled) {
+      // ⚠️ 8 s et non 20 : on n'ENTRE dans le scraping que s'il reste largement de quoi le finir.
+      // Le démarrer à la 19ᵉ seconde garantirait la coupure — et le tick marquerait pourtant
+      // `last_scrape_at`, donc se throttlerait 2 h pour un scraping qui n'a rien produit.
+      if (pendingCount < MIN_PIPELINE_LEADS && !scrapeThrottled && tempsEcoule() < 8000) {
         // Marque tout de suite l'horodatage pour throttler les prochains ticks
         await db.insert(agent_config)
           .values({ key: 'last_scrape_at', value: new Date().toISOString() })
@@ -392,6 +417,9 @@ async function runTickHandler(request: NextRequest) {
         ).length
 
         for (const lead of leadsWithEmail) {
+          // Les leads non traités restent en base : le tick suivant les reprendra. Rien n'est
+          // perdu, seulement différé de 30 minutes.
+          if (budgetDepasse()) break
           try {
             // Ne jamais recontacter une adresse blocklistée (opt-out)
             const [isBlocked] = await db

@@ -209,13 +209,33 @@ async function runCron(req: Request) {
     }
   }
 
+  /**
+   * ⚠️ CE CRON ÉTAIT EN « Échec (délai d'attente) 30 s » À CHAQUE PASSAGE (constaté le 12/08/2026),
+   * alors qu'il portait déjà un TIME_BUDGET_MS de 20 s. Le budget existait mais n'était vérifié
+   * qu'à la boucle d'insertion, tout à la fin.
+   *
+   * Le vrai défaut est plus subtil : `deadlineMs: 20000` était une constante. Le budget global
+   * court depuis le début du run (sélection du combo, requêtes de dédup…), et on offrait ensuite
+   * 20 secondes PLEINES au scraping par-dessus. Les deux budgets s'ADDITIONNAIENT au lieu de se
+   * partager — donc 8 s de préparation + 20 s de scraping + insertion = coupure garantie.
+   *
+   * Règle : une échéance passée à un appel lent doit être DÉRIVÉE du temps restant, jamais écrite
+   * en dur. Deux budgets qui ne se parlent pas ne bornent rien.
+   */
+  const tempsRestant = () => TIME_BUDGET_MS - (Date.now() - started)
+
   let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
   try {
+    // Moins de 6 s restantes : on n'ouvre même pas le scraping. Le commencer pour se faire couper
+    // consommerait du crédit Google Places (payant) sans rien insérer en base.
+    if (tempsRestant() < 6000) throw new Error('budget épuisé avant le scraping — reporté au prochain run')
     rawLeads = await scrapeGooglePlaces({
       sector: queryDef.term, city,
       maxResults: SCRAPE_MAX_RESULTS,
       maxPages: SCRAPE_MAX_PAGES,
-      deadlineMs: 20000,
+      // On garde 5 s pour l'insertion des leads récupérés : rapporter 30 fiches et n'en écrire
+      // aucune serait le pire des deux mondes (on a payé, on n'a rien gardé).
+      deadlineMs: Math.max(3000, tempsRestant() - 5000),
       // RENDEMENT (audit 03/08) : filtres AVANT paiement — on ne paie un Place Details ni pour
       // un < 20 avis (critère client, gratuit dans le Text Search) ni pour un doublon déjà en base.
       minReviews: 20,
