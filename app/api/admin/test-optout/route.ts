@@ -138,11 +138,21 @@ async function handler(req: NextRequest) {
    * mails ont du texte abîmé DANS LA PARTIE ÉCRITE PAR LE PROSPECT » — la seule zone où la
    * normalisation change quelque chose. Le reste, c'est notre propre mail cité en retour.
    */
-  const abimeesDansLeTexteDuProspect = abimees.filter(r => {
-    // Le corps réduit à ce que le prospect a réellement écrit, AVANT toute normalisation.
-    const avantCitation = (r.body || '').split(/^\s*>/m)[0]
-    return avantCitation.includes('�')
-  })
+  // ⚠️ Deuxième version de ce découpage. La première coupait sur /^\s*>/m — un chevron en DÉBUT DE
+  // LIGNE. Or les corps stockés ici sont aplatis sur une seule ligne (« Stop > Le 12 août… ») :
+  // rien n'était coupé, et le compteur réaffichait bêtement les 25 de départ. Un compteur qui
+  // reproduit le total qu'il est censé affiner est un compteur qui ne calcule rien.
+  // On coupe donc au premier chevron OÙ QU'IL SOIT, ou au premier marqueur de citation.
+  const texteDuProspect = (corps: string): string => {
+    const marqueurs = [/>/, /\ba\s*=?\s*.?crit\s*:/i, /\bwrote\s*:/i, /envoy.?\s+de\s+mon\s+/i]
+    let fin = corps.length
+    for (const re of marqueurs) {
+      const m = corps.match(re)
+      if (m && m.index !== undefined && m.index < fin) fin = m.index
+    }
+    return corps.slice(0, fin)
+  }
+  const abimeesDansLeTexteDuProspect = abimees.filter(r => texteDuProspect(r.body || '').includes('�'))
 
   const opposLatentes = abimeesDansLeTexteDuProspect
     .filter(r => isExplicitOptOut(r.body) || isRgpdRequestOrComplaint(r.body).match)
