@@ -276,6 +276,30 @@ async function handler(req: NextRequest) {
         AND created_at < NOW() - INTERVAL '24 hours'
       LIMIT 500`)
 
+  /**
+   * ⚠️ C7 — ajouté le 12/08, sur signalement de la session labegaria (5 cas mesurés chez elle).
+   *
+   * TOUS les garde-fous du moteur d'envoi joignent sur `contact_id` : « déjà envoyé cette étape »,
+   * « déjà un mail aujourd'hui », « plafond de 4 mails à vie ». Ils reposent donc entièrement sur
+   * l'hypothèse « une personne = une ligne dans contacts ». La colonne `email` est UNIQUE, ce qui
+   * rend l'hypothèse vraie pour une adresse à la casse identique — mais PAS pour « A@x.fr » et
+   * « a@x.fr », qui sont deux lignes distinctes pour Postgres.
+   *
+   * Si ce cas apparaît, les trois plafonds sautent d'un coup et en silence : le prospect reçoit
+   * tout en double, y compris après s'être désinscrit. Plutôt que de réécrire les cinq requêtes du
+   * moteur sur une hypothèse (coûteux, risqué, et peut-être inutile), on SURVEILLE la condition qui
+   * les rend fausses. Si elle se déclenche un jour, on saura qu'il faut basculer sur l'email.
+   */
+  await verifier('C7', 'coherence',
+    'Aucune personne n\'existe en double dans contacts (même adresse, casse différente)',
+    async () => await sql`
+      SELECT LOWER(email) AS adresse, COUNT(*)::int AS fiches,
+             STRING_AGG(email, ' | ') AS variantes
+      FROM contacts
+      GROUP BY LOWER(email)
+      HAVING COUNT(*) > 1
+      LIMIT 500`)
+
   // ── MÉMOIRE DES FAUTES DÉJÀ COMMISES ─────────────────────────────────
   // Un invariant doit être SATISFIABLE : s'il compte des faits passés qu'on ne peut plus défaire,
   // il reste rouge à vie et on cesse de le regarder — c'est ce qui est arrivé à l'alerte
