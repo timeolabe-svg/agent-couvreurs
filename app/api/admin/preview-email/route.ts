@@ -65,11 +65,19 @@ export async function GET() {
       // donc avec l'ancien pied de page "Stop" seul et SANS la mention légale RGPD (origine des
       // données, art. 14) que l'envoi ajoute réellement. Relire un texte différent de celui qui
       // part, c'est valider un mail qu'on n'a jamais vu. On applique ici la MÊME transformation.
+      // ⚠️ 12/08 — LE MÊME DÉFAUT S'EST REFORMÉ, exactement là où il avait été corrigé. En ajoutant
+      // le lien de désabonnement à l'envoi, cette ligne appelait toujours `blocLegalRgpd()` SANS
+      // lien : la prévisualisation affichait donc un pied de page que personne ne recevrait.
+      // Une transformation dupliquée dérive dès qu'on ne touche qu'une des deux copies. Toute
+      // modification du pied de page côté send-campaign doit être répercutée ICI.
       const { blocLegalRgpd } = await import('@/lib/rgpd')
+      const { creerJetonDesabo } = await import('@/lib/unsubscribe-token')
+      const base = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
+      const lienDesabo = `${base}/u/${creerJetonDesabo(c.email)}`
       const emails = emailsBruts.map(e => {
         if (/coordonnées professionnelles proviennent/i.test(e.body)) return e
         const sansAncien = e.body.replace(/\n*---\nPour ne plus recevoir mes emails[^\n]*\n?/i, '\n')
-        return { ...e, body: `${sansAncien.trimEnd()}\n\n${blocLegalRgpd()}` }
+        return { ...e, body: `${sansAncien.trimEnd()}\n\n${blocLegalRgpd(lienDesabo)}` }
       })
       preview.push({ entreprise: c.company, emails })
       const labels = ['Email 1 (J+0)', 'Relance 1 (J+3)', 'Relance 2 (J+7)', 'Relance 3 (J+14)']
