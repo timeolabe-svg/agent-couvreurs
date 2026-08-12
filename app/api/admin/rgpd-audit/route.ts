@@ -55,6 +55,19 @@ export async function GET(request: NextRequest) {
     isExplicitOptOut(r.body) || isRgpdRequestOrComplaint(r.body).match)
   const idsArret = vraiesDemandes.map(r => r.id)
 
+  /**
+   * ⚠️ `= ANY(${tableau})` ÉCHOUE avec le driver utilisé ici (« Failed query ») : contrairement au
+   * client neon employé ailleurs dans ce projet, `db.execute(sql`…`)` de Drizzle ne sérialise pas
+   * un tableau JS en tableau Postgres. Les deux requêtes concernées renvoyaient une erreur —
+   * heureusement capturée par le `try/catch` de chaque bloc, sinon l'audit aurait affiché
+   * « 0 manquement » alors qu'il n'avait rien pu vérifier. Le pire résultat possible pour un
+   * contrôle RGPD : un zéro rassurant qui signifie « je n'ai pas regardé ».
+   *
+   * On passe donc une chaîne, reconstruite en tableau côté Postgres.
+   */
+  const idsCsv = idsArret.join(',')
+  const filtreIds = sql`ir.id = ANY(string_to_array(${idsCsv}, ',')::uuid[])`
+
   out._methode = `Détection par les fonctions de production (isExplicitOptOut / isRgpdRequestOrComplaint), pas par motif brut. ${vraiesDemandes.length} vraie(s) demande(s) sur ${toutesReponses.length} réponses examinées.`
 
   // 1) Demandes d'arrêt réelles → sont-elles blocklistées ?
@@ -78,7 +91,7 @@ export async function GET(request: NextRequest) {
     JOIN contacts c ON LOWER(c.email) = LOWER(ir.from_email)
     JOIN email_queue eq ON eq.contact_id = c.id AND eq.status = 'sent' AND eq.sent_at > ir.created_at
     -- Même correctif que ci-dessus : on ne se fie qu'aux demandes RÉELLEMENT identifiées.
-    WHERE ir.id = ANY(${idsArret})
+    WHERE ${filtreIds}
     ORDER BY eq.sent_at DESC LIMIT 40
   `)))
 
@@ -89,7 +102,7 @@ export async function GET(request: NextRequest) {
            LEFT(regexp_replace(rd.body, '\\s+', ' ', 'g'), 140) AS extrait_reponse
     FROM incoming_replies ir
     JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
-    WHERE ir.id = ANY(${idsArret}) AND rd.status = 'sent'
+    WHERE ${filtreIds} AND rd.status = 'sent'
     ORDER BY rd.sent_at DESC LIMIT 30
   `)))
 
