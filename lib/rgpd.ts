@@ -183,13 +183,18 @@ export function isPressionSignalee(text: string): boolean {
  * été collectées auprès d'elle, ce qui est le cas d'un scraping de sources publiques).
  * Ne PAS supprimer : c'est ce bloc qui rend la prospection défendable en cas de contrôle.
  */
-export function blocLegalRgpd(): string {
-  return [
+export function blocLegalRgpd(lienDesabo?: string): string {
+  const lignes = [
     '---',
     "Vos coordonnées professionnelles proviennent de sources publiques (votre site internet et votre fiche Google).",
     "Conformément au RGPD, vous pouvez demander leur suppression ou vous opposer à leur traitement",
     'en répondant simplement "Stop" à cet email.',
-  ].join('\n')
+  ]
+  // ⚠️ Le lien vient EN PLUS de « répondez Stop », jamais à la place. Répondre reste le geste le
+  // plus naturel, et certaines messageries d'entreprise réécrivent ou neutralisent les liens.
+  // Deux chemins valent mieux qu'un pour exercer un droit.
+  if (lienDesabo) lignes.push('', `Se désabonner en un clic : ${lienDesabo}`)
+  return lignes.join('\n')
 }
 
 /**

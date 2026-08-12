@@ -22,6 +22,17 @@ import { checkCronAuth } from '@/lib/cron-auth'
 import { getGmailBoxes, sendFromBox, type GmailBox } from '@/lib/gmail-sender'
 import { getInboxSenderName } from '@/lib/instantly/inbox-rotation'
 import { blocLegalRgpd } from '@/lib/rgpd'
+import { creerJetonDesabo } from '@/lib/unsubscribe-token'
+
+/**
+ * Domaine public de l'application, utilisé pour les liens de désabonnement.
+ *
+ * ⚠️ On ne se sert PAS de `VERCEL_URL` : sa valeur est l'URL unique du déploiement
+ * (`agent-couvreurs-k1ttnbral-….vercel.app`), qui change à CHAQUE mise en production. Un lien de
+ * désabonnement doit rester cliquable des mois plus tard, dans un mail archivé — un prospect qui
+ * retombe sur une URL morte n'a plus qu'un recours : « Signaler comme spam ».
+ */
+const BASE_URL = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
 import { pingHeartbeat } from '@/lib/heartbeat'
 
 export const dynamic = 'force-dynamic'
@@ -354,14 +365,34 @@ async function runCron(req: NextRequest) {
       // origine et de son droit d'opposition. L'ancien pied de page ne disait que "répondez Stop",
       // ce qui couvre l'opt-out mais PAS l'obligation d'information : c'est ce manquement qui rend
       // une plainte CNIL difficile à défendre (incident LabegarIA, août 2026).
+      /**
+       * DÉSABONNEMENT EN UN CLIC (RFC 8058) — le lien ET l'en-tête, jamais l'un sans l'autre.
+       *
+       * ⚠️ Sans l'en-tête `List-Unsubscribe`, Gmail et Outlook n'affichent PAS leur bouton natif
+       * « Se désabonner ». Le seul geste restant pour un prospect agacé est « Signaler comme
+       * spam » : ça ne l'inscrit sur aucune liste, ne l'empêche pas de recevoir la suite, et abîme
+       * durablement la réputation d'expédition des boîtes du client. Le lien seul dans le corps ne
+       * suffit donc pas — c'est l'en-tête qui protège la délivrabilité.
+       *
+       * `One-Click` indique aux messageries qu'elles peuvent appeler l'URL en POST directement,
+       * sans ouvrir de navigateur ni demander confirmation.
+       */
+      const jeton = creerJetonDesabo(contact.email)
+      const lienDesabo = `${BASE_URL}/u/${jeton}`
+
       if (!/coordonnées professionnelles proviennent/i.test(finalBody)) {
         // On retire un éventuel ancien pied de page "Stop" seul pour ne pas empiler deux blocs.
         finalBody = finalBody.replace(/\n*---\nPour ne plus recevoir mes emails[^\n]*\n?/i, '\n')
-        finalBody = `${finalBody.trimEnd()}\n\n${blocLegalRgpd()}`
+        finalBody = `${finalBody.trimEnd()}\n\n${blocLegalRgpd(lienDesabo)}`
+      }
+
+      const enTetesDesabo = {
+        'List-Unsubscribe': `<${lienDesabo}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       }
 
       const senderName = getInboxSenderName(box.email)
-      let r = await sendFromBox(box, { to: contact.email, subject: row.subject, text: finalBody, senderName })
+      let r = await sendFromBox(box, { to: contact.email, subject: row.subject, text: finalBody, senderName, headers: enTetesDesabo })
 
       // Boîte HS (535 BadCredentials) → désactivée ce run, retry ailleurs.
       if (!r.ok && /BadCredentials|Invalid login|535/.test(r.error ?? '')) {
@@ -370,7 +401,10 @@ async function runCron(req: NextRequest) {
         const alt = capMap ? boxes.find(b => (capMap.get(b.email) ?? 0) > 0) : boxes.find(b => b.email !== box!.email)
         if (alt) {
           box = alt
-          r = await sendFromBox(alt, { to: contact.email, subject: row.subject, text: finalBody, senderName: getInboxSenderName(alt.email) })
+          // ⚠️ Les en-têtes doivent être repassés ici aussi : sur le chemin de secours (boîte HS →
+          // on renvoie depuis une autre), les oublier produirait un mail SANS bouton « Se
+          // désabonner ». Un mail sur dix sans issue de sortie, invisible dans les compteurs.
+          r = await sendFromBox(alt, { to: contact.email, subject: row.subject, text: finalBody, senderName: getInboxSenderName(alt.email), headers: enTetesDesabo })
         }
       }
 
