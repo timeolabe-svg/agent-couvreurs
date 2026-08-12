@@ -20,6 +20,33 @@
  * la réponse du prospect déclenche un faux opt-out sur un lead chaud (leçon 49).
  */
 
+/**
+ * NORMALISATION AVANT DÉTECTION — accents aplatis et caractères cassés restitués.
+ *
+ * ⚠️ ANGLE MORT SIGNALÉ PAR LA SESSION LABEGARIA LE 11/08/2026, VÉRIFIÉ ICI.
+ * Les corps de mails arrivant par IMAP contiennent régulièrement des accents ABÎMÉS — l'octet
+ * illisible devient U+FFFD (le losange « ? »). Constaté sur de vraies réponses : « l'?quipe »,
+ * « ferm?e ». Or nos motifs s'écrivent `d[ée]sabonn`, `arr[êe]tez` : la classe accepte bien la
+ * lettre nue, mais PAS U+FFFD. Donc « Merci de me d?sabonner » n'était pas détecté — et une
+ * opposition manquée, c'est une relance envoyée à quelqu'un qui a demandé l'arrêt. C'est
+ * exactement le motif de la plainte CNIL du 06/08.
+ *
+ * Trois traitements, dans cet ordre :
+ *  1. apostrophes typographiques → apostrophe simple ;
+ *  2. U+FFFD → « e » : le caractère perdu est presque toujours é/è/ê, le remplacer restitue le mot ;
+ *  3. décomposition NFD + suppression des diacritiques.
+ *
+ * Sûr pour TOUS les motifs existants : ils s'écrivent déjà `[ée]`, `[êe]`, `[àa]`, `[ôo]` — des
+ * classes qui contiennent la lettre nue. Aplatir les accents ne peut donc rien casser, seulement
+ * élargir ce qui est reconnu.
+ */
+export function normalizeForDetection(text: string): string {
+  return (text || '')
+    .replace(/[’‘`´]/g, "'")
+    .replace(/�/g, 'e')
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+}
+
 /** Retire notre pied de page et tout ce qui suit un marqueur de citation, normalise les apostrophes. */
 export function stripOurFooterAndQuotes(text: string): string {
   // ⚠️ INCIDENT 10/08/2026 — CE FILTRE LAISSAIT PASSER NOTRE PROPRE PIED DE PAGE.
@@ -37,7 +64,11 @@ export function stripOurFooterAndQuotes(text: string): string {
   //
   // Règle : on coupe au PREMIER marqueur de citation rencontré, quel qu'il soit, et on liste les
   // phrases de nos pieds de page par leur DÉBUT (les formulations évoluent, les débuts moins).
-  let t = (text || '').replace(/[’‘`´]/g, "'")
+  // La normalisation se fait ICI, en amont de tout : les marqueurs de citation (`a [ée]crit`,
+  // `envoy[ée] :`) sont eux aussi aveugles aux accents cassés. Un mail cité dont le marqueur n'est
+  // pas reconnu, c'est notre propre pied de page analysé comme s'il venait du prospect — le bug
+  // du 10/08, qui blocklistait les leads les plus chauds.
+  let t = normalizeForDetection(text)
 
   // 1) Toute ligne de citation « > … » : tout ce qui suit appartient à notre message.
   const ligneCitee = t.search(/^\s*>/m)
