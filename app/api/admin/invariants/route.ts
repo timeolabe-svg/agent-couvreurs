@@ -290,6 +290,36 @@ async function handler(req: NextRequest) {
       LIMIT 500`)
 
   /**
+   * ⚠️ C8 — LE CONTRÔLE QUI AURAIT ATTRAPÉ L'INCIDENT DU 12/08.
+   *
+   * Un prospect répond « NO WAY ! » depuis son adresse personnelle ; le contact professionnel
+   * démarché, lui, garde sa séquence et reçoit une relance le lendemain. Aucun invariant existant
+   * ne le voyait : A1 ne regarde que les contacts BLOCKLISTÉS, et c'est bien le particulier qui
+   * l'avait été, pas l'entreprise.
+   *
+   * Celui-ci part de l'autre bout, le seul qui ne mente pas : `incoming_replies.contact_id` dit
+   * QUELLE FICHE a répondu, quelle que soit l'adresse d'expédition. Dès qu'une fiche a répondu,
+   * plus aucun mail FROID (étape < 20) ne doit rester programmé pour elle. Les étapes >= 20 sont
+   * les relances de conversation, qui sont précisément faites pour ce cas.
+   *
+   * C'est l'invariant « un refus doit arrêter la machine », vérifié sur les données et non sur
+   * l'intention du code.
+   */
+  await verifier('C8', 'juridique',
+    'Aucune fiche ayant répondu ne garde de mail froid programmé',
+    async () => await sql`
+      SELECT DISTINCT c.email, c.company, q.sequence_step, q.scheduled_at, ir.created_at AS a_repondu_le
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      JOIN email_queue q ON q.contact_id = c.id
+      WHERE q.status IN ('pending', 'queued', 'queued_instantly', 'scheduled')
+        AND q.sequence_step < 20
+        AND COALESCE(ir.classification, '') NOT IN ('oof', 'spam', 'warmup')
+      ORDER BY q.scheduled_at ASC
+      LIMIT 500`,
+    'Un prospect qui a écrit reprend la main : la séquence froide s\'arrête, même s\'il a écrit depuis une autre adresse.')
+
+  /**
    * ⚠️ C7 — ajouté le 12/08, sur signalement de la session labegaria (5 cas mesurés chez elle).
    *
    * TOUS les garde-fous du moteur d'envoi joignent sur `contact_id` : « déjà envoyé cette étape »,
