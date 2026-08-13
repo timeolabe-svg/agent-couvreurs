@@ -360,6 +360,16 @@ async function runCron(req: NextRequest) {
         if (isCompany || isAllCaps) finalBody = finalBody.replace(/^\s*Bonjour\s+[^,\n]+,/i, 'Bonjour,')
       }
 
+      /**
+       * ⚠️ CIVILITÉ VIDE — « Bonjour M., ». Constaté le 13/08 dans les mails réellement générés.
+       * Le modèle produit une civilité seule quand il n'a pas de nom de dirigeant : « M. », « Mme »,
+       * parfois « M. X ». Le prospect lit ça en première ligne, et ça signe le publipostage mal
+       * fait — l'effet exactement inverse de celui recherché.
+       * Le nettoyage précédent ne l'attrapait pas : il ne se déclenche que si le nom ressemble au
+       * nom de l'entreprise ou est tout en majuscules.
+       */
+      finalBody = finalBody.replace(/^\s*Bonjour\s+(M\.|Mme\.?|Mr\.?|Monsieur|Madame)(\s+[A-Z]\.?)?\s*,/i, 'Bonjour,')
+
       // 2) MENTION LÉGALE RGPD garantie sur CHAQUE mail (art. 14 : les données ne viennent PAS de
       // la personne — elles sont scrapées de sources publiques — donc on DOIT l'informer de leur
       // origine et de son droit d'opposition. L'ancien pied de page ne disait que "répondez Stop",
