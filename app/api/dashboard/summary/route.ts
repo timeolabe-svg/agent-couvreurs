@@ -267,17 +267,34 @@ export async function GET() {
 
   const emailsSentThisWeek = dailyActivity.map(d => ({ date: d.date, count: d.sent }))
 
-  // Last tick minutes ago
+  /**
+   * DEPUIS QUAND L'AGENT N'A-T-IL PAS TOURNÉ ?
+   *
+   * ⚠️ CE CHIFFRE MENTAIT (constaté le 13/08/2026) : il affichait « dernier cycle il y a 546 min »
+   * — neuf heures — alors que 126 mails étaient partis dans la journée et que le cycle tournait
+   * normalement. De quoi croire l'agent en panne, ou pire, ne plus regarder l'indicateur du tout.
+   *
+   * Deux sources, aucune valable :
+   *  1. le dernier `dashboard_events` de type 'agent_decision' — écrit SEULEMENT quand l'agent
+   *     prend une décision notable, donc pas à chaque cycle. Il mesurait « dernière décision », pas
+   *     « dernier cycle » ;
+   *  2. en repli, la clé `last_tick_at` d'`agent_config`… que RIEN n'écrit dans tout le projet.
+   *
+   * C'est la règle « tout compteur affiché doit avoir un writer », violée deux fois de suite.
+   *
+   * On lit désormais `cron_heartbeats`, qui est écrit à CHAQUE passage du cycle, en succès comme
+   * en échec — c'est la seule table qui répond réellement à la question posée.
+   */
   let lastTickMinutesAgo: number | null = null
-  if (lastTickRow.length > 0 && lastTickRow[0].created_at) {
+  const battement = (await db.execute(sql`
+    SELECT last_run_at FROM cron_heartbeats WHERE cron_name = 'autopilot-tick' LIMIT 1
+  `)) as unknown as Array<{ last_run_at: string | null }>
+  const ligne = (battement as { rows?: Array<{ last_run_at: string | null }> }).rows ?? battement
+  if (ligne[0]?.last_run_at) {
+    lastTickMinutesAgo = Math.floor((now.getTime() - new Date(ligne[0].last_run_at).getTime()) / 60000)
+  } else if (lastTickRow.length > 0 && lastTickRow[0].created_at) {
+    // Repli : mieux vaut « dernière décision » qu'aucune information — mais on ne s'y fie plus.
     lastTickMinutesAgo = Math.floor((now.getTime() - new Date(lastTickRow[0].created_at).getTime()) / 60000)
-  }
-
-  if (lastTickMinutesAgo === null) {
-    const lastTickConfig = await db.select().from(agent_config).where(eq(agent_config.key, 'last_tick_at')).limit(1)
-    if (lastTickConfig[0]) {
-      lastTickMinutesAgo = Math.floor((now.getTime() - new Date(lastTickConfig[0].updated_at!).getTime()) / 60000)
-    }
   }
 
   // Reply rate vs last week
