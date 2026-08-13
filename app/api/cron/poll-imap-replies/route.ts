@@ -295,7 +295,12 @@ async function processBox(box: { email: string; password: string }, started: num
           if (outcome?.processed) {
             stats.replies++
             if (outcome.classification && outcome.classification !== 'oof') {
+              // ⚠️ DEUX ANNULATIONS, PAS UNE. `from` est l'adresse d'où le prospect a écrit ;
+              // `contactHint` est la fiche réellement démarchée, quand elle diffère (réponse depuis
+              // une adresse perso). N'annuler que la première laissait la séquence de l'entreprise
+              // intacte — le cas « NO WAY ! » du 11/08, relancé le 12.
               stats.cancelled += await cancelSteps(from)
+              if (contactHint) stats.cancelled += await cancelStepsParContactId(contactHint)
             }
           }
         } catch (e) {
@@ -403,7 +408,7 @@ async function processReply(params: {
   // Ne dépend PAS de l'IA : un "Stop" / "désabonnez-moi" explicite = blocklist immédiate.
   // (Analysé sur cleanBody = texte réel du prospect, pas notre footer cité.)
   if (isExplicitOptOut(cleanBody)) {
-    const cibles = await ciblesArret(from, cleanBody)
+    const cibles = await ciblesArret(from, cleanBody, contact?.email)
     for (const c of cibles) { await blocklistOnce(c, 'unsubscribe'); await cancelSteps(c) }
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'blocklist', reason: 'opt-out explicite', cibles, company: contact?.company ?? from })}::jsonb)`
     results.push(`⛔ opt-out explicite → blocklist ${cibles.join(', ')}`)
@@ -418,7 +423,7 @@ async function processReply(params: {
   // humaine documentée sous 1 mois), et alerte immédiate sur le canal indépendant.
   const rgpd = isRgpdRequestOrComplaint(cleanBody)
   if (rgpd.match) {
-    const cibles = await ciblesArret(from, cleanBody)
+    const cibles = await ciblesArret(from, cleanBody, contact?.email)
     for (const c of cibles) { await blocklistOnce(c, `rgpd_${rgpd.motif}`); await cancelSteps(c) }
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'rgpd_request', reason: rgpd.motif, company: contact?.company ?? from })}::jsonb)`
     // Tâche urgente : une demande RGPD exige une réponse HUMAINE, tracée, sous 1 mois.
@@ -849,8 +854,28 @@ function isDaemonAddress(email: string): boolean {
  *   3. tout contact de notre base partageant le DOMAINE professionnel de l'expéditeur.
  * Le point 3 est exclu sur les domaines grand public (deux gmail n'ont aucun lien).
  */
-async function ciblesArret(from: string, corps: string): Promise<string[]> {
+/**
+ * ⚠️ INCIDENT DU 12/08/2026 — LE REFUS D'UN PROSPECT N'A PAS ARRÊTÉ SA SÉQUENCE.
+ *
+ * Un plombier de Brest répond « NO WAY ! » le 11 août. Le système le classe correctement
+ * (« désintérêt ») et le blockliste. Une relance part quand même le 12.
+ *
+ * Cause : il a répondu depuis son adresse PERSONNELLE (yahoo.fr), alors qu'on écrivait à l'adresse
+ * PROFESSIONNELLE de son entreprise. On a donc blocklisté le particulier et annulé la file du
+ * particulier — qui n'a jamais eu de file. Le contact démarché, lui, n'a rien vu passer.
+ *
+ * Le plus rageant : le poller SAVAIT de qui il s'agissait. Il retrouve le contact par le sujet du
+ * fil (`contactHint`) pour ne pas jeter la réponse. Cette information n'était simplement pas
+ * transmise ici. L'extension par domaine ne pouvait pas compenser : yahoo.fr est une messagerie
+ * grand public, volontairement exclue (sinon un refus depuis gmail bloquerait tous les prospects
+ * en @gmail.com).
+ *
+ * RÈGLE : l'arrêt vise la PERSONNE ET LE CONTACT DÉMARCHÉ, jamais la seule adresse d'expédition.
+ * `contactEmail` est donc OBLIGATOIRE dans le raisonnement, même quand il diffère de `from`.
+ */
+async function ciblesArret(from: string, corps: string, contactEmail?: string | null): Promise<string[]> {
   const cibles = new Set<string>([from.toLowerCase()])
+  if (contactEmail) cibles.add(contactEmail.toLowerCase())
   try {
     const { adressesCiteesDansLeMessage, domaineExploitable } = await import('@/lib/rgpd')
     for (const a of adressesCiteesDansLeMessage(corps, ['hdigiweb.fr', 'hdigiweb-agence.com', 'hdigiweb-digital.com', 'hdigiweb.com'])) {
@@ -865,6 +890,22 @@ async function ciblesArret(from: string, corps: string): Promise<string[]> {
     }
   } catch { /* au pire on ne traite que l'expéditeur — jamais moins */ }
   return [...cibles].filter(e => e && !isDaemonAddress(e))
+}
+
+/**
+ * Annulation par identifiant de contact — indispensable quand le prospect répond depuis une AUTRE
+ * adresse que celle démarchée : `cancelSteps(email)` ne trouve alors aucune fiche à couper.
+ */
+async function cancelStepsParContactId(contactId: string): Promise<number> {
+  try {
+    const rows = await sql`
+      UPDATE email_queue SET status = 'cancelled'
+      WHERE contact_id = ${contactId}
+        AND status IN ('pending', 'queued', 'queued_instantly', 'scheduled', 'sending')
+      RETURNING id
+    `
+    return (rows as Array<{ id: string }>).length
+  } catch { return 0 }
 }
 
 /** Ajoute une adresse à la blocklist SANS créer de doublon (la table n'a pas de contrainte unique). */
