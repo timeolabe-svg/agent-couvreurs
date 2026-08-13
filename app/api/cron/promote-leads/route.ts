@@ -32,7 +32,23 @@ async function handler(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const debut = Date.now()
-  const BUDGET_MS = 22_000
+  /**
+   * ⚠️ 12 s et non 22 : ce cron fait DEUX choses, et la seconde est indispensable.
+   *
+   * Promouvoir un lead crée un contact dont l'adresse n'est PAS encore validée. Or le moteur
+   * d'envoi exige `email_validated = true` avant d'écrire à qui que ce soit. Les contacts créés ici
+   * resteraient donc bloqués juste avant l'envoi — le même chaînon manquant que celui qu'on vient
+   * de réparer, déplacé d'un cran.
+   *
+   * `validate-emails` a bien son propre cron dans le code, avec battement… mais rien ne l'appelait
+   * non plus sur cron-job.org. Plutôt que de réclamer une quatrième tâche à Timéo, on enchaîne :
+   * ~12 s de promotion puis une passe de validation (~12 s), soit ~24 s, sous la coupe des 30 s.
+   *
+   * Débits obtenus, à cadence de 30 min : ~10 leads promus et 5 adresses validées par passage,
+   * soit ~480 et ~240 par jour. La validation suit la promotion (35 % des leads donnent un email),
+   * donc aucune des deux files ne s'accumule.
+   */
+  const BUDGET_MS = 12_000
 
   const { sql } = await import('@/lib/db')
   const restant = (await sql`
@@ -71,11 +87,28 @@ async function handler(req: NextRequest) {
     SELECT COUNT(*)::int AS n FROM outscraper_leads WHERE status = 'new'
   `) as Array<{ n: number }>
 
+  /**
+   * SECONDE MOITIÉ DU CYCLE : valider les adresses des contacts fraîchement créés.
+   * Sans cette passe, ils restent visibles en base mais ne partent jamais — le moteur refuse
+   * d'écrire à une adresse non validée. Un échec ici ne doit PAS faire échouer la promotion :
+   * les leads promus le restent, la validation reprendra au passage suivant.
+   */
+  let validation: unknown = 'non lancée (budget épuisé)'
+  if (Date.now() - debut < 16_000) {
+    const v = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
+      headers: { 'user-agent': 'promote-leads-cron' },
+    }).catch(() => null)
+    validation = v && v.ok
+      ? await v.json().catch(() => 'réponse illisible')
+      : `échec (${v?.status ?? 'injoignable'})`
+  }
+
   return NextResponse.json({
     ok: true,
     traites,
     contacts_crees: importes,
     restant_a_promouvoir: apres[0]?.n ?? 0,
+    validation,
     duree_s: Math.round((Date.now() - debut) / 100) / 10,
     apercu: detail.slice(0, 10),
   })
