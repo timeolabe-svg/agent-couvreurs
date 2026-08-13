@@ -89,8 +89,12 @@ async function handler(req: NextRequest) {
           WHERE q.contact_id = c.id AND q.status = 'sent'
         ) env ON TRUE
         LEFT JOIN LATERAL (
+          -- ⚠️ La liste des statuts « pas encore partis » DOIT être complète et identique partout.
+          -- Elle omettait 'queued' et 'sending' : une fiche hors métier déjà promue en 'queued'
+          -- était comptée comme neutralisée… et son mail partait au run suivant. Un rapport qui
+          -- dit « c'est réglé » alors que l'envoi a lieu est pire que pas de rapport du tout.
           SELECT COUNT(*)::int AS n FROM email_queue q
-          WHERE q.contact_id = c.id AND q.status IN ('pending', 'scheduled')
+          WHERE q.contact_id = c.id AND q.status IN ('pending', 'queued', 'queued_instantly', 'scheduled', 'sending')
         ) att ON TRUE
         WHERE c.google_place_id = ANY(${cibles})
       `) as Array<{ id: string; email: string; company: string; deja_envoyes: number; en_file: number }>
@@ -126,7 +130,34 @@ async function handler(req: NextRequest) {
   const annules = idsRattrapables.length
     ? (await sql`
         UPDATE email_queue SET status = 'cancelled'
-        WHERE contact_id = ANY(${idsRattrapables}) AND status IN ('pending', 'scheduled')
+        WHERE contact_id = ANY(${idsRattrapables})
+          AND status IN ('pending', 'queued', 'queued_instantly', 'scheduled', 'sending')
+        RETURNING id
+      `) as Array<{ id: string }>
+    : []
+
+  /**
+   * ⚠️ SANS CECI, LA PURGE SE DÉFAIT TOUTE SEULE AU TICK SUIVANT.
+   *
+   * `enqueueOrphanContacts` remet en file tout contact ≥ 20 avis qui n'a AUCUNE ligne dans
+   * `email_queue`. Annuler les mails d'un contact laisse des lignes 'cancelled' — cela suffit donc
+   * à le protéger. Mais un contact purgé qui n'avait encore RIEN en file n'a aucune ligne du tout :
+   * il redevient « orphelin », est remis en file, et repart en prospection — alors que le rapport
+   * de purge l'a compté comme neutralisé.
+   *
+   * On pose donc une ligne 'cancelled' explicite. Ce n'est pas un artifice : `contacts` n'a pas de
+   * colonne d'état sur ce projet, et cette ligne EST la trace lisible de la décision (« écarté :
+   * hors métier »), au même endroit que tout le reste de l'historique d'envoi.
+   */
+  const marqueurs = idsRattrapables.length
+    ? (await sql`
+        INSERT INTO email_queue (contact_id, campaign_id, sequence_step, from_email, subject, body, status, scheduled_at)
+        SELECT c.id, (SELECT id FROM campaigns WHERE status = 'active' LIMIT 1), 0,
+               'purge@hdigiweb.fr', '[écarté] hors métier', 'Fiche écartée par la purge hors métier — jamais démarchée.',
+               'cancelled', NOW()
+        FROM contacts c
+        WHERE c.id = ANY(${idsRattrapables})
+          AND NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id)
         RETURNING id
       `) as Array<{ id: string }>
     : []
@@ -134,6 +165,7 @@ async function handler(req: NextRequest) {
   return NextResponse.json({
     ok: true, mode: 'appliqué',
     fiches_classees_hors_metier: fiches.length,
+    marqueurs_anti_reinjection: marqueurs.length,
     mails_annules_avant_envoi: annules.length,
     contacts_neutralises: idsRattrapables.length,
     deja_demarches_intouchables: dejaDemarches.map(c => c.company),

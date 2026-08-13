@@ -34,7 +34,10 @@ const ALIAS: Record<string, string[]> = {
   reviews: ['reviews', 'avis', 'nb avis', 'nombre avis', 'reviews_count', 'user_ratings_total', 'nombre d\'avis'],
   rating: ['rating', 'note', 'score', 'etoiles', 'étoiles', 'stars'],
   email: ['email', 'e-mail', 'mail', 'courriel', 'email_1'],
-  place_id: ['place_id', 'placeid', 'google_id', 'id'],
+  // ⚠️ PAS d'alias `id` : un export quelconque numérote souvent ses lignes 1, 2, 3… et cette
+  // colonne deviendrait la clé primaire. Un second fichier renuméroté à partir de 1 serait alors
+  // AVALÉ EN ENTIER par le `ON CONFLICT DO NOTHING` — zéro ligne importée, aucune erreur.
+  place_id: ['place_id', 'placeid', 'google_id'],
   // ⚠️ Les trois colonnes suivantes ne servaient à RIEN avant le 11/08 — elles n'étaient même pas
   // lues. Elles portent pourtant deux filtres indispensables (cf. plus bas) : le métier réel de
   // l'entreprise et le fait qu'elle soit encore ouverte.
@@ -293,9 +296,17 @@ async function handler(req: NextRequest) {
     }
     if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) { dejaConnus++; continue }
     if (avis < SEUIL_AVIS) { sousSeuil++; continue }
-    if (!site) { sansSite++; continue }
+    /**
+     * ⚠️ On jetait toute fiche sans site — y compris celles qui portaient DÉJÀ une adresse email
+     * dans le fichier, et l'email reconnu n'était de toute façon jamais enregistré. Un export
+     * enrichi (ou une base rachetée) dont l'email EST la colonne utile n'importait donc rien.
+     * Le site ne sert qu'à TROUVER l'email ; l'avoir déjà rend le site superflu.
+     */
+    const email = val(l, 'email')
+    if (!site && !email) { sansSite++; continue }
     exploitables++
     aCharger.push({
+      email: email || null,
       place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
       name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
       postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
@@ -328,21 +339,57 @@ async function handler(req: NextRequest) {
     return NextResponse.json({ ok: true, mode: 'analyse', ...analyse, apercu: aCharger.slice(0, 5) })
   }
 
+  /**
+   * ⚠️ UN ALLER-RETOUR PAR LIGNE NE PASSE PAS L'ÉCHELLE — mesuré, pas supposé : l'import réel de
+   * 631 lignes a pris 60,4 s, soit très exactement le `maxDuration` de cette route. Le fichier
+   * décrit dans les commentaires en fait 3 000 : la fonction aurait été tuée en pleine boucle,
+   * sans résumé, sans point de reprise, et avec une partie des lignes déjà écrites — l'utilisateur
+   * ne saurait ni combien ont été chargées, ni s'il peut relancer sans doubler.
+   *
+   * On insère par paquets, avec un budget de temps. Ce qui n'a pas été chargé est ANNONCÉ : un
+   * import tronqué qui se présente comme complet est exactement le genre d'écran qui ment.
+   */
+  const started = Date.now()
+  const BUDGET_MS = 45_000
+  const PAQUET = 50
   let charges = 0
-  for (const r of aCharger) {
+  let traitees = 0
+
+  for (let i = 0; i < aCharger.length; i += PAQUET) {
+    if (Date.now() - started > BUDGET_MS) break
+    const lot = aCharger.slice(i, i + PAQUET)
     const res = (await sql`
-      INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, category, sector, status)
-      VALUES (${r.place_id as string}, ${r.name as string}, ${r.site as string}, ${r.phone as string || null},
-              ${r.city as string || null}, ${r.postal_code as string || null}, ${r.rating as number | null},
-              ${r.reviews as number}, ${r.category as string | null}, ${r.sector as string}, 'new')
+      INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, category, sector, email, status)
+      SELECT x.place_id, x.name, x.site, NULLIF(x.phone, ''), NULLIF(x.city, ''), NULLIF(x.postal_code, ''),
+             NULLIF(x.rating, '')::real, x.reviews::int, NULLIF(x.category, ''), x.sector,
+             NULLIF(x.email, ''), 'new'
+      FROM jsonb_to_recordset(${JSON.stringify(lot.map(r => ({
+        place_id: r.place_id, name: r.name, site: r.site, phone: r.phone ?? '', city: r.city ?? '',
+        postal_code: r.postal_code ?? '', rating: r.rating === null ? '' : String(r.rating),
+        reviews: String(r.reviews), category: r.category ?? '', sector: r.sector, email: r.email ?? '',
+      })))}::jsonb)
+        AS x(place_id text, name text, site text, phone text, city text, postal_code text,
+             rating text, reviews text, category text, sector text, email text)
       ON CONFLICT (place_id) DO NOTHING
       RETURNING place_id
     `) as Array<{ place_id: string }>
     charges += res.length
+    traitees += lot.length
   }
 
+  const restants = aCharger.length - traitees
+
   return NextResponse.json({
-    ok: true, mode: 'importé', ...analyse, charges_en_base: charges,
+    ok: restants === 0,
+    mode: restants === 0 ? 'importé' : 'importé PARTIELLEMENT',
+    ...analyse,
+    charges_en_base: charges,
+    lignes_traitees: traitees,
+    // Jamais tronquer en silence : sans ce chiffre, un import à moitié fait se lit comme un succès.
+    non_traitees_faute_de_temps: restants,
+    reprise: restants > 0
+      ? 'Redépose le MÊME fichier : les lignes déjà chargées sont ignorées (clé Google unique), seules les restantes seront ajoutées.'
+      : null,
     suite: 'GET /api/admin/import-outscraper?process=1&batch=10 — scrape l\'email sur leur site puis met en file.',
   })
 }

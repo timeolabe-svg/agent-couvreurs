@@ -58,27 +58,32 @@ async function desinscrire(jeton: string): Promise<{ ok: boolean; email?: string
   return { ok: true, email, annules: annules.length }
 }
 
-/** Appelé automatiquement par Gmail/Outlook (RFC 8058). Aucune page rendue : seul le code compte. */
-export async function POST(_req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+/**
+ * Deux appelants, un seul traitement :
+ *  - Gmail/Outlook (RFC 8058), qui attendent un simple code de retour ;
+ *  - le bouton de confirmation de la page ci-dessous, pour qui il faut une page lisible.
+ * On distingue sur l'en-tête `Accept` : un navigateur demande du HTML, une messagerie non.
+ */
+export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params
   const r = await desinscrire(token)
-  return NextResponse.json({ ok: r.ok }, { status: r.ok ? 200 : 400 })
+  const versNavigateur = (req.headers.get('accept') ?? '').includes('text/html')
+
+  if (!versNavigateur) return NextResponse.json({ ok: r.ok }, { status: r.ok ? 200 : 400 })
+
+  return pageHtml(
+    r.ok
+      ? `<h1>C'est fait.</h1>
+         <p>L'adresse <strong>${String(r.email).replace(/[<>&"]/g, '')}</strong> ne recevra plus aucun message de notre part.</p>
+         <p class="d">${r.annules ? `${r.annules} message${r.annules > 1 ? 's' : ''} encore programmé${r.annules > 1 ? 's' : ''} ${r.annules > 1 ? 'ont' : 'a'} été annulé${r.annules > 1 ? 's' : ''}.` : 'Aucun message n\'était en attente.'}</p>
+         <p class="d">Vous pouvez fermer cette page. Désolé pour le dérangement.</p>`
+      : `<h1>Ce lien n'est pas valide.</h1>
+         <p class="d">Répondez simplement « Stop » au message reçu : nous vous retirerons de la liste.</p>`,
+    r.ok ? 200 : 400,
+  )
 }
 
-/** Clic humain sur le lien du corps du message : on rend une page lisible, sans jargon. */
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
-  const { token } = await ctx.params
-  const r = await desinscrire(token)
-
-  const page = r.ok
-    ? `<h1>C'est fait.</h1>
-       <p>L'adresse <strong>${r.email}</strong> ne recevra plus aucun message de notre part.</p>
-       <p class="d">${r.annules ? `${r.annules} message${r.annules > 1 ? 's' : ''} encore programmé${r.annules > 1 ? 's' : ''} ${r.annules > 1 ? 'ont' : 'a'} été annulé${r.annules > 1 ? 's' : ''}.` : 'Aucun message n\'était en attente.'}</p>
-       <p class="d">Vous pouvez fermer cette page. Désolé pour le dérangement.</p>`
-    : `<h1>Ce lien n'est pas valide.</h1>
-       <p>Il a peut-être été tronqué par votre messagerie.</p>
-       <p class="d">Répondez simplement « Stop » au message reçu : nous vous retirerons de la liste.</p>`
-
+function pageHtml(corps: string, statut: number): NextResponse {
   return new NextResponse(
     `<!doctype html><html lang="fr"><head><meta charset="utf-8">
      <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -89,8 +94,49 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ token: str
        h1{font-size:1.35rem;margin:0 0 .75rem}
        p{margin:.5rem 0}
        .d{color:#666;font-size:.92rem}
-       @media(prefers-color-scheme:dark){body{background:#111;color:#eee}.d{color:#999}}
-     </style></head><body>${page}</body></html>`,
-    { status: r.ok ? 200 : 400, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+       button{margin-top:1.25rem;padding:.7rem 1.4rem;font-size:1rem;border:0;border-radius:.4rem;background:#1a1a1a;color:#fff;cursor:pointer}
+       @media(prefers-color-scheme:dark){body{background:#111;color:#eee}.d{color:#999}button{background:#eee;color:#111}}
+     </style></head><body>${corps}</body></html>`,
+    { status: statut, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+  )
+}
+
+/**
+ * ⚠️ CE GET NE DÉSINSCRIT PLUS DIRECTEMENT — et c'est une correction, pas une complication.
+ *
+ * Première version : un GET sur ce lien désinscrivait immédiatement. Or les passerelles de sécurité
+ * des messageries d'entreprise (Proofpoint, Microsoft Safe Links, Barracuda…) VISITENT
+ * AUTOMATIQUEMENT tous les liens d'un mail entrant pour les analyser, avant même que le
+ * destinataire l'ouvre. Chez un prospect protégé par l'une d'elles, le lien aurait été appelé tout
+ * seul : blocklist posée et séquence annulée, sans que personne n'ait cliqué.
+ *
+ * Le résultat aurait été indétectable — on aurait vu des « désinscriptions » parfaitement normales
+ * en base, et perdu en silence les prospects des entreprises les mieux équipées, c'est-à-dire les
+ * plus grosses. Exactement la famille de bug qui fait perdre des leads sans laisser de trace.
+ *
+ * Un GET doit rester sans effet de bord. Le clic humain passe donc par un bouton qui POSTe.
+ * Le POST automatique de la RFC 8058, lui, garde son effet immédiat : il n'est émis QUE sur action
+ * explicite de l'utilisateur dans son client mail, jamais par un scanner.
+ */
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+  const { token } = await ctx.params
+  const email = lireJetonDesabo(token)
+
+  if (!email) {
+    return pageHtml(
+      `<h1>Ce lien n'est pas valide.</h1>
+       <p>Il a peut-être été tronqué par votre messagerie.</p>
+       <p class="d">Répondez simplement « Stop » au message reçu : nous vous retirerons de la liste.</p>`,
+      400,
+    )
+  }
+
+  return pageHtml(
+    `<h1>Ne plus recevoir nos messages</h1>
+     <p>Confirmez pour retirer <strong>${email.replace(/[<>&"]/g, '')}</strong> de notre liste.
+        Plus aucun message ne partira, y compris ceux déjà programmés.</p>
+     <form method="POST"><button type="submit">Me désabonner</button></form>
+     <p class="d">Vous pouvez aussi répondre « Stop » à notre message.</p>`,
+    200,
   )
 }

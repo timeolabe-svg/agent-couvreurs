@@ -51,6 +51,13 @@ export async function GET(request: NextRequest) {
     ORDER BY created_at DESC LIMIT 2000
   `)) as Array<{ id: string; from_email: string; body: string; classification: string | null; action_taken: string | null; created_at: string }>
 
+  // ⚠️ TOUTE REQUÊTE PLAFONNÉE DOIT ANNONCER LE TOTAL RÉEL. Mes propres audits ont déjà rapporté
+  // « 20 grappes » là où il y en avait 340 et « 30 réponses » sur 47, uniquement parce qu'un LIMIT
+  // passait pour un résultat. Sur un contrôle RGPD, un corpus tronqué présenté comme complet est
+  // une garantie de conformité qui ne vaut rien.
+  const [compte] = g(await db.execute(sql`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE body IS NOT NULL`)) as Array<{ n: number }>
+  const totalReponses = Number(compte?.n ?? 0)
+
   const vraiesDemandes = toutesReponses.filter(r =>
     isExplicitOptOut(r.body) || isRgpdRequestOrComplaint(r.body).match)
   const idsArret = vraiesDemandes.map(r => r.id)
@@ -68,7 +75,11 @@ export async function GET(request: NextRequest) {
   const idsCsv = idsArret.join(',')
   const filtreIds = sql`ir.id = ANY(string_to_array(${idsCsv}, ',')::uuid[])`
 
-  out._methode = `Détection par les fonctions de production (isExplicitOptOut / isRgpdRequestOrComplaint), pas par motif brut. ${vraiesDemandes.length} vraie(s) demande(s) sur ${toutesReponses.length} réponses examinées.`
+  out._methode = `Détection par les fonctions de production (isExplicitOptOut / isRgpdRequestOrComplaint), pas par motif brut. ${vraiesDemandes.length} vraie(s) demande(s) sur ${toutesReponses.length} réponses examinées, pour ${totalReponses} en base.`
+  out._couverture_complete = toutesReponses.length >= totalReponses
+  if (toutesReponses.length < totalReponses) {
+    out._alerte_troncature = `AUDIT INCOMPLET : ${totalReponses - toutesReponses.length} réponses non examinées (plafond de 2000). Les compteurs ci-dessous ne couvrent pas tout.`
+  }
 
   // 1) Demandes d'arrêt réelles → sont-elles blocklistées ?
   await run('demandes_arret_non_blocklistees', async () => {

@@ -57,6 +57,8 @@ async function runCron(req: Request) {
   }
 
   const started = Date.now()
+  /** Temps restant sur le budget du run. Déclaré ici : plusieurs gardes en ont besoin, très tôt. */
+  const tempsRestant = () => TIME_BUDGET_MS - (Date.now() - started)
   try {
   const { db } = await import('@/lib/db')
   const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
@@ -114,6 +116,25 @@ async function runCron(req: Request) {
       return NextResponse.json({ ok: true, skipped: true, reason: `throttle (${ageMin.toFixed(0)}/${SCRAPE_MIN_INTERVAL_MIN} min)` })
     }
   }
+  /**
+   * ⚠️ LE GARDE-FOU DE TEMPS DOIT PASSER *AVANT* LA RÉSERVE DE CRÉDIT, pas après.
+   *
+   * Première version du correctif : j'abandonnais faute de temps juste avant l'appel Places — donc
+   * APRÈS avoir réservé atomiquement 14 crédits du plafond journalier (120), et le run marquait
+   * quand même `last_scrape_at`. Bilan d'un tel run : zéro appel d'API, 14 crédits sur 120 brûlés,
+   * et les DEUX throttles armés (30 min ici, 2 h dans autopilot-tick) comme si un scrape avait eu
+   * lieu. Un correctif de performance qui consomme le budget et bloque le suivant.
+   *
+   * On sort donc ici, avant tout effet de bord : rien réservé, rien horodaté, le prochain run
+   * repart intact.
+   */
+  if (tempsRestant() < 6000) {
+    return NextResponse.json({
+      ok: true, skipped: true,
+      reason: `budget de temps insuffisant (${Math.max(0, tempsRestant())} ms restants) — aucun crédit consommé, aucun throttle armé`,
+    })
+  }
+
   // 4) Plafond DUR journalier — RÉSERVE ATOMIQUE d'un crédit AVANT l'appel Places.
   //    Un seul UPDATE incrémente ET retourne le compteur → deux runs concurrents ne peuvent
   //    PAS dépasser le plafond (contrairement à un lire-puis-écrire non atomique).
@@ -222,13 +243,8 @@ async function runCron(req: Request) {
    * Règle : une échéance passée à un appel lent doit être DÉRIVÉE du temps restant, jamais écrite
    * en dur. Deux budgets qui ne se parlent pas ne bornent rien.
    */
-  const tempsRestant = () => TIME_BUDGET_MS - (Date.now() - started)
-
   let rawLeads: Awaited<ReturnType<typeof scrapeGooglePlaces>> = []
   try {
-    // Moins de 6 s restantes : on n'ouvre même pas le scraping. Le commencer pour se faire couper
-    // consommerait du crédit Google Places (payant) sans rien insérer en base.
-    if (tempsRestant() < 6000) throw new Error('budget épuisé avant le scraping — reporté au prochain run')
     rawLeads = await scrapeGooglePlaces({
       sector: queryDef.term, city,
       maxResults: SCRAPE_MAX_RESULTS,
