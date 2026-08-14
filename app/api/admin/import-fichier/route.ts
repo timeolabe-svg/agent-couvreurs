@@ -471,6 +471,12 @@ async function handler(req: NextRequest) {
         status  = CASE
           WHEN outscraper_leads.status = 'skipped_lowreviews' AND EXCLUDED.reviews >= ${SEUIL_AVIS}
             THEN 'new'
+          -- Une fiche classee doublon par l ANCIENNE regle (identite = le site) peut etre jugee
+          -- distincte par la NOUVELLE (identite = l adresse mail). Une decision fraiche corrige une
+          -- decision perimee : sinon les prospects ecartes a tort le restent pour toujours, et
+          -- corriger la regle n aurait servi qu aux fichiers futurs.
+          WHEN outscraper_leads.status = 'deja_en_base' AND EXCLUDED.status = 'new'
+            THEN 'new'
           ELSE outscraper_leads.status
         END
       -- xmax = 0 distingue une INSERTION d une MISE A JOUR. Sans ca, depuis le passage a
