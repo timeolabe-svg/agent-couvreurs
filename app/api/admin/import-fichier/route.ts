@@ -258,6 +258,29 @@ async function handler(req: NextRequest) {
   const nomsConnus = new Set(
     ((await sql`SELECT LOWER(company) AS c FROM contacts`) as Array<{ c: string }>).map(r => r.c),
   )
+  /**
+   * ⚠️ LE SITE N'EST PAS L'IDENTITÉ D'UN PROSPECT — SON ADRESSE L'EST.
+   *
+   * Mesuré sur un fichier de 871 fiches (14/08) : 264 étaient écartées comme « déjà en base » sur
+   * 40 villes pourtant neuves. La cause est le réseau de franchise — dix agences « Piscines de
+   * France » partagent un seul site national, donc neuf étaient jetées.
+   *
+   * Le tri par site a souvent raison : 237 lignes de ce fichier partagent réellement UNE SEULE
+   * boîte mail (`irri77mea@irripiscine.fr` revient 31 fois). Les contacter séparément enverrait
+   * 31 messages à la même personne.
+   *
+   * Mais il a tort quand l'agence possède sa PROPRE adresse tout en affichant le site du réseau :
+   * c'est une entreprise distincte, un interlocuteur distinct, et on la jetait.
+   *
+   * Règle : quand le fichier fournit un email, c'est LUI qui décide. Site et nom ne servent de
+   * repère que faute de mieux.
+   */
+  const emailsConnus = new Set(
+    ((await sql`
+      SELECT LOWER(email) AS e FROM contacts WHERE email IS NOT NULL
+      UNION SELECT LOWER(email) FROM outscraper_leads WHERE email IS NOT NULL
+    `) as Array<{ e: string }>).map(r => r.e),
+  )
 
   let sansNom = 0, concurrents = 0, dejaConnus = 0, sousSeuil = 0, sansSite = 0, exploitables = 0
   let fermees = 0, horsMetier = 0, enseignes = 0
@@ -341,11 +364,25 @@ async function handler(req: NextRequest) {
      * Elles ne comptent pas comme exploitables (ce ne sont pas de nouveaux prospects), mais elles
      * traversent l'écriture pour que leurs avis soient remis à jour gratuitement.
      */
-    if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) {
+    /**
+     * L'ADRESSE PRIME SUR LE SITE. Trois cas, dans cet ordre :
+     *  1. le fichier donne un email DÉJÀ connu → doublon certain, on écarte ;
+     *  2. le fichier donne un email INCONNU → prospect distinct, on garde MÊME si le site ou le
+     *     nom ressemblent à quelque chose de connu (cas des agences de réseau) ;
+     *  3. pas d'email → on retombe sur l'ancien repère site/nom, faute de mieux.
+     */
+    const mailFichier = val(l, 'email').toLowerCase()
+    const doublonCertain = mailFichier && emailsConnus.has(mailFichier)
+    const doublonProbable = !mailFichier
+      && (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase()))
+    if (doublonCertain || doublonProbable) {
       dejaConnus++
       enregistrer(l, nom, avis, 'deja_en_base')
       continue
     }
+    // Un même fichier peut lister 31 agences derrière une seule boîte mail : on ne garde que la
+    // première, sinon on créerait 31 prospects qui écrivent tous à la même personne.
+    if (mailFichier) emailsConnus.add(mailFichier)
     // ⚠️ LE STATUT LE PLUS IMPORTANT DE TOUS. « Moins de 20 avis » est un critère TEMPORAIRE : ces
     // fiches franchiront le seuil un jour, et le rafraîchissement les remettra seules en 'new'.
     // Les jeter revenait à racheter plus tard, au prix fort, ce qu'on avait déjà payé.
