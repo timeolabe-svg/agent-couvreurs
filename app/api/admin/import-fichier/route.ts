@@ -275,11 +275,20 @@ async function handler(req: NextRequest) {
    * Règle : quand le fichier fournit un email, c'est LUI qui décide. Site et nom ne servent de
    * repère que faute de mieux.
    */
+  /**
+   * ⚠️ ON NE LIT QUE `contacts`, PAS `outscraper_leads`.
+   *
+   * Premier essai : l'union des deux. Effet constaté immédiatement — une fiche réimportée retrouve
+   * SA PROPRE adresse en base et se déclare doublon d'elle-même. Le rattrapage ne rattrapait donc
+   * rien, et le funnel n'a pas bougé d'une ligne alors que j'annonçais 306 fiches réveillées.
+   *
+   * La bonne question n'est pas « cette adresse est-elle quelque part en base » mais « avons-nous
+   * DÉJÀ UN PROSPECT à cette adresse ». Un lead en réserve n'est pas un prospect : il n'a jamais
+   * été contacté. Seule la table `contacts` fait foi.
+   */
   const emailsConnus = new Set(
-    ((await sql`
-      SELECT LOWER(email) AS e FROM contacts WHERE email IS NOT NULL
-      UNION SELECT LOWER(email) FROM outscraper_leads WHERE email IS NOT NULL
-    `) as Array<{ e: string }>).map(r => r.e),
+    ((await sql`SELECT LOWER(email) AS e FROM contacts WHERE email IS NOT NULL`) as Array<{ e: string }>)
+      .map(r => r.e),
   )
 
   let sansNom = 0, concurrents = 0, dejaConnus = 0, sousSeuil = 0, sansSite = 0, exploitables = 0
@@ -441,6 +450,21 @@ async function handler(req: NextRequest) {
   let reveilles = 0
   let traitees = 0
 
+  /**
+   * ⚠️ ÉTAT AVANT ÉCRITURE — sans lui, impossible de compter un RÉVEIL.
+   * `RETURNING` ne voit que la ligne d'après ; « statut final = new » englobe donc les fiches qui
+   * l'étaient déjà. C'est ainsi que j'ai annoncé 306 réveils pendant que le funnel restait figé.
+   * On relève donc les statuts existants une fois, puis on compare.
+   */
+  const idsFichier = aCharger.map(r => String(r.place_id))
+  const statutAvant = new Map<string, string>()
+  if (idsFichier.length) {
+    const av = (await sql`
+      SELECT place_id, status FROM outscraper_leads WHERE place_id = ANY(${idsFichier})
+    `) as Array<{ place_id: string; status: string }>
+    for (const r of av) statutAvant.set(r.place_id, r.status)
+  }
+
   for (let i = 0; i < aCharger.length; i += PAQUET) {
     if (Date.now() - started > BUDGET_MS) break
     const lot = aCharger.slice(i, i + PAQUET)
@@ -483,11 +507,15 @@ async function handler(req: NextRequest) {
       -- DO UPDATE, chaque fiche rafraichie serait comptee comme chargee : le rapport annoncerait
       -- 288 nouveaux leads la ou il n y en a que 91. Un compteur qui gonfle avec les doublons est
       -- exactement le genre d ecran qui ment.
+      -- ⚠️ On renvoie AUSSI l ancien statut. Sans lui, « reveillees » comptait toute ligne mise a
+      -- jour dont le statut FINAL etait 'new' — donc celles qui l etaient deja. J ai annonce
+      -- 306 fiches reveillees alors que le funnel n avait pas bouge d une ligne. Un compteur doit
+      -- mesurer un CHANGEMENT, pas un etat.
       RETURNING place_id, (xmax = 0) AS insere, status
     `) as Array<{ place_id: string; insere: boolean; status: string }>
     charges += res.filter(r => r.insere).length
     rafraichies += res.filter(r => !r.insere).length
-    reveilles += res.filter(r => !r.insere && r.status === 'new').length
+    reveilles += res.filter(r => !r.insere && r.status === 'new' && statutAvant.get(r.place_id) !== 'new').length
     traitees += lot.length
   }
 
