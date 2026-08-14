@@ -294,7 +294,28 @@ async function handler(req: NextRequest) {
       if (exemplesEnseignes.length < 8) exemplesEnseignes.push(`${nom} — ${avis} avis`)
       continue
     }
-    if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) { dejaConnus++; continue }
+    /**
+     * ⚠️ ON NE SAUTE PLUS LES FICHES DÉJÀ CONNUES — on les fait passer par l'écriture.
+     *
+     * Elles étaient écartées ici, avant la requête d'insertion. Conséquence : le nombre d'avis
+     * qu'on venait d'acheter dans le nouveau fichier n'atteignait JAMAIS la base, et les 400 fiches
+     * dormant en `skipped_lowreviews` ne pouvaient pas se réveiller — le rafraîchissement posé sur
+     * le `ON CONFLICT` n'aurait servi à rien.
+     *
+     * Elles ne comptent pas comme exploitables (ce ne sont pas de nouveaux prospects), mais elles
+     * traversent l'écriture pour que leurs avis soient remis à jour gratuitement.
+     */
+    if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) {
+      dejaConnus++
+      aCharger.push({
+        place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
+        name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
+        postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
+        category: categorie || null, sector: deduireMetier(categorie, val(l, 'query')),
+        email: val(l, 'email') || null,
+      })
+      continue
+    }
     if (avis < SEUIL_AVIS) { sousSeuil++; continue }
     /**
      * ⚠️ On jetait toute fiche sans site — y compris celles qui portaient DÉJÀ une adresse email
@@ -353,6 +374,8 @@ async function handler(req: NextRequest) {
   const BUDGET_MS = 45_000
   const PAQUET = 50
   let charges = 0
+  let rafraichies = 0
+  let reveilles = 0
   let traitees = 0
 
   for (let i = 0; i < aCharger.length; i += PAQUET) {
@@ -370,10 +393,31 @@ async function handler(req: NextRequest) {
       })))}::jsonb)
         AS x(place_id text, name text, site text, phone text, city text, postal_code text,
              rating text, reviews text, category text, sector text, email text)
-      ON CONFLICT (place_id) DO NOTHING
-      RETURNING place_id
-    `) as Array<{ place_id: string }>
-    charges += res.length
+      -- DO NOTHING jetait une information qu'on venait de payer : 400 fiches dorment en
+      -- skipped_lowreviews, ecartees pour moins de 20 avis le jour de leur import. Ce critere est
+      -- temporaire par nature. Les repecher via Google Places coute ~2,40 EUR par contact ; or un
+      -- nouveau fichier achete sur la meme zone porte deja leur nombre d avis a jour. On l avait
+      -- sous les yeux et on le jetait. Cout marginal du rattrapage : zero.
+      -- On ne reveille QUE skipped_lowreviews : importe / no_email / hors_metier / blockliste
+      -- traduisent une decision deja prise ou une opposition, les rejouer serait une faute.
+      ON CONFLICT (place_id) DO UPDATE SET
+        reviews = EXCLUDED.reviews,
+        rating  = COALESCE(EXCLUDED.rating, outscraper_leads.rating),
+        email   = COALESCE(outscraper_leads.email, EXCLUDED.email),
+        status  = CASE
+          WHEN outscraper_leads.status = 'skipped_lowreviews' AND EXCLUDED.reviews >= ${SEUIL_AVIS}
+            THEN 'new'
+          ELSE outscraper_leads.status
+        END
+      -- xmax = 0 distingue une INSERTION d une MISE A JOUR. Sans ca, depuis le passage a
+      -- DO UPDATE, chaque fiche rafraichie serait comptee comme chargee : le rapport annoncerait
+      -- 288 nouveaux leads la ou il n y en a que 91. Un compteur qui gonfle avec les doublons est
+      -- exactement le genre d ecran qui ment.
+      RETURNING place_id, (xmax = 0) AS insere, status
+    `) as Array<{ place_id: string; insere: boolean; status: string }>
+    charges += res.filter(r => r.insere).length
+    rafraichies += res.filter(r => !r.insere).length
+    reveilles += res.filter(r => !r.insere && r.status === 'new').length
     traitees += lot.length
   }
 
@@ -420,6 +464,10 @@ async function handler(req: NextRequest) {
     mode: restants === 0 ? 'importé' : 'importé PARTIELLEMENT',
     ...analyse,
     charges_en_base: charges,
+    fiches_rafraichies: rafraichies,
+    // Fiches qui dormaient sous le seuil d'avis et qui viennent de le franchir : elles repartent
+    // en prospection sans qu'on ait rien payé de plus.
+    reveillees_seuil_atteint: reveilles,
     lignes_traitees: traitees,
     // Jamais tronquer en silence : sans ce chiffre, un import à moitié fait se lit comme un succès.
     non_traitees_faute_de_temps: restants,
