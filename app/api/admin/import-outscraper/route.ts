@@ -138,16 +138,36 @@ export async function GET(request: NextRequest) {
   if (!camp[0]) return NextResponse.json({ ok: false, error: 'aucune campagne active' })
 
   const todo = g(await db.execute(sql`
-    SELECT place_id, name, site, phone, city, postal_code, rating, reviews, sector
+    SELECT place_id, name, site, phone, city, postal_code, rating, reviews, sector, email
     FROM outscraper_leads WHERE status = 'new' ORDER BY reviews DESC LIMIT ${batch}
-  `)) as Array<{ place_id: string; name: string; site: string; phone: string | null; city: string | null; postal_code: string | null; rating: number | null; reviews: number; sector: string | null }>
+  `)) as Array<{ place_id: string; name: string; site: string; phone: string | null; city: string | null; postal_code: string | null; rating: number | null; reviews: number; sector: string | null; email: string | null }>
 
   const results: string[] = []
   let importes = 0
   for (const l of todo) {
     if (Date.now() - started > 45000) break
     try {
-      const em = await scrapeEmailFromWebsite(l.site)
+      /**
+       * ⚠️ ON N'ALLAIT JAMAIS CHERCHER L'EMAIL DÉJÀ FOURNI PAR LE FICHIER.
+       *
+       * L'import conserve bien la colonne `email` d'un export enrichi, mais cette boucle appelait
+       * `scrapeEmailFromWebsite()` dans TOUS les cas. Deux conséquences, chacune suffisante :
+       *  - payer l'enrichissement email chez Outscraper n'aurait servi à RIEN, l'adresse achetée
+       *    était ignorée puis re-cherchée sur le site ;
+       *  - le lead était classé « sans email » quand le site n'en publiait pas, alors qu'on avait
+       *    l'adresse sous la main.
+       *
+       * Et surtout, c'est ce qui débloque le VOLUME. Visiter un site coûte ~1,8 s, ce qui plafonne
+       * la promotion à ~290 leads/jour : un fichier de 12 000 fiches demanderait six semaines rien
+       * que pour être lu. Avec l'email fourni, l'étape disparaît et l'import devient immédiat.
+       *
+       * Confiance 95 : une adresse achetée chez un fournisseur vaut mieux qu'une adresse devinée
+       * sur une page « contact » — MillionVerifier tranchera de toute façon avant tout envoi.
+       */
+      const fourni = (l.email ?? '').trim().toLowerCase()
+      const em = fourni
+        ? { email: fourni, confidence: 95 }
+        : await scrapeEmailFromWebsite(l.site)
       if (!em?.email) {
         await db.execute(sql`UPDATE outscraper_leads SET status = 'no_email', processed_at = NOW() WHERE place_id = ${l.place_id}`)
         results.push(`∅ email: ${l.name}`)
