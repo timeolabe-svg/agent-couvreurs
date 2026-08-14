@@ -85,6 +85,31 @@ export async function GET(request: NextRequest) {
        * pour rejouer un filtre a posteriori — impossible aujourd'hui puisqu'on ne la gardait pas),
        * et `sector` normalisé, celui qu'on écrira dans contacts.
        */
+      /**
+       * ⚠️ MÉMOIRE DE COUVERTURE — quelles combinaisons métier × ville ont DÉJÀ été achetées.
+       *
+       * Outscraper ne se souvient pas de ce qu'il a livré : relancer « pisciniste + Marseille »
+       * rend les mêmes entreprises et les REFACTURE. Notre import jette bien les doublons (clé
+       * `place_id`), donc l'argent est dépensé pour rien, sans que rien ne le signale.
+       *
+       * On enregistre donc ce qui a été ratissé, au moment de l'import, depuis la colonne `query`
+       * du fichier (« pisciniste, 06001 CEDEX 1, Nice, Provence-Alpes-Côte d'Azur, FR »).
+       * Sans trace écrite, la seule mémoire serait celle de Timéo — et elle ne tiendra pas trois
+       * commandes.
+       */
+      nom: 'scrape_couverture : metier x ville deja achetes',
+      run: () => db.execute(sql`
+        CREATE TABLE IF NOT EXISTS scrape_couverture (
+          id          SERIAL PRIMARY KEY,
+          categorie   TEXT NOT NULL,
+          ville       TEXT NOT NULL,
+          fiches      INTEGER NOT NULL DEFAULT 0,
+          importe_le  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (categorie, ville)
+        )
+      `),
+    },
+    {
       nom: 'outscraper_leads: category + sector',
       run: () => db.execute(sql`
         ALTER TABLE outscraper_leads

@@ -377,6 +377,42 @@ async function handler(req: NextRequest) {
     traitees += lot.length
   }
 
+  /**
+   * MÉMOIRE DE COUVERTURE — on note quelles combinaisons métier × ville ont été ACHETÉES.
+   *
+   * ⚠️ Outscraper ne se souvient pas de ce qu'il a livré : relancer « pisciniste + Marseille »
+   * rend les mêmes entreprises et les REFACTURE. Notre import jette bien les doublons (clé
+   * `place_id`), donc l'argent partirait sans que rien ne le signale — le pire des cas : une
+   * dépense invisible.
+   *
+   * On enregistre TOUTES les lignes du fichier, pas seulement celles qui passent les filtres :
+   * la ville a été ratissée et payée même si aucune de ses fiches n'était exploitable. La
+   * racheter serait exactement la même erreur.
+   */
+  const couverture = new Map<string, { categorie: string; ville: string; fiches: number }>()
+  for (const l of lignes) {
+    const q = val(l, 'query')
+    if (!q) continue
+    // « pisciniste, 06001 CEDEX 1, Nice, Provence-Alpes-Côte d'Azur, FR »
+    // Le pays ferme la liste, la région le précède : la ville est l'avant-avant-dernier champ.
+    const p = q.split(',').map(s => s.trim()).filter(Boolean)
+    if (p.length < 3) continue
+    const categorie = p[0].toLowerCase()
+    const ville = p[p.length - 3]
+    const k = `${categorie}|${ville.toLowerCase()}`
+    const e = couverture.get(k) ?? { categorie, ville, fiches: 0 }
+    e.fiches++
+    couverture.set(k, e)
+  }
+  for (const c of couverture.values()) {
+    await sql`
+      INSERT INTO scrape_couverture (categorie, ville, fiches)
+      VALUES (${c.categorie}, ${c.ville}, ${c.fiches})
+      ON CONFLICT (categorie, ville) DO UPDATE
+        SET fiches = scrape_couverture.fiches + EXCLUDED.fiches, importe_le = NOW()
+    `.catch(() => { /* la trace ne doit jamais faire échouer un import */ })
+  }
+
   const restants = aCharger.length - traitees
 
   return NextResponse.json({
