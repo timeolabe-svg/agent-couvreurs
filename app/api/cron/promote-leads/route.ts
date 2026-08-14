@@ -33,30 +33,68 @@ async function handler(req: NextRequest) {
 
   const debut = Date.now()
   /**
-   * ⚠️ 12 s et non 22 : ce cron fait DEUX choses, et la seconde est indispensable.
+   * ⚠️ ENCHAÎNER LES DEUX ÉTAPES DANS LE MÊME PASSAGE NE TENAIT PAS.
+   * Mesuré : 29,7 s pour promotion (12 s de budget, mais un lot en cours déborde) + validation
+   * (~12 s). À 300 ms de la coupe des 30 s, un passage sur deux aurait échoué — et j'aurais
+   * réintroduit exactement la panne que je venais de réparer.
    *
-   * Promouvoir un lead crée un contact dont l'adresse n'est PAS encore validée. Or le moteur
-   * d'envoi exige `email_validated = true` avant d'écrire à qui que ce soit. Les contacts créés ici
-   * resteraient donc bloqués juste avant l'envoi — le même chaînon manquant que celui qu'on vient
-   * de réparer, déplacé d'un cran.
+   * On ALTERNE donc : un passage promeut, le suivant valide. À 30 min de cadence, chaque étape
+   * tourne toutes les heures et chaque passage reste autour de 24 s.
    *
-   * `validate-emails` a bien son propre cron dans le code, avec battement… mais rien ne l'appelait
-   * non plus sur cron-job.org. Plutôt que de réclamer une quatrième tâche à Timéo, on enchaîne :
-   * ~12 s de promotion puis une passe de validation (~12 s), soit ~24 s, sous la coupe des 30 s.
+   * ⚠️ L'alternance repose sur un compteur PERSISTANT en base, jamais sur l'heure : une bascule
+   * dérivée de l'horloge devient dégénérée dès que la période du cron est un multiple du pas —
+   * une des deux étapes ne tournerait alors JAMAIS, sans la moindre erreur visible.
    *
-   * Débits obtenus, à cadence de 30 min : ~10 leads promus et 5 adresses validées par passage,
-   * soit ~480 et ~240 par jour. La validation suit la promotion (35 % des leads donnent un email),
+   * Pourquoi la validation est indispensable ici : promouvoir un lead crée un contact dont
+   * l'adresse n'est PAS encore validée, or le moteur d'envoi exige `email_validated` avant
+   * d'écrire à qui que ce soit. Les contacts créés resteraient bloqués juste avant l'envoi — le
+   * même chaînon manquant que celui qu'on vient de réparer, déplacé d'un cran. `validate-emails`
+   * a bien son propre cron dans le code, avec battement… mais rien ne l'appelait non plus.
+   *
+   * Débits à cadence de 30 min : ~20 leads promus et ~10 adresses validées par heure, soit ~480 et
+   * ~240 par jour. La validation suit la promotion (35 % des leads donnent un email exploitable),
    * donc aucune des deux files ne s'accumule.
    */
-  const BUDGET_MS = 12_000
+  const BUDGET_MS = 22_000
 
   const { sql } = await import('@/lib/db')
+  const base = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
+  const cle = process.env.CRON_SECRET ?? ''
+
+  const compteur = (await sql`
+    INSERT INTO agent_config (key, value, updated_at) VALUES ('promote_leads_tour', '1', now())
+    ON CONFLICT (key) DO UPDATE SET
+      value = ((COALESCE(NULLIF(agent_config.value, ''), '0')::bigint + 1))::text, updated_at = now()
+    RETURNING value
+  `) as Array<{ value: string }>
+  const tour = Number(compteur[0]?.value ?? 0)
+
   const restant = (await sql`
     SELECT COUNT(*)::int AS n FROM outscraper_leads WHERE status = 'new'
   `) as Array<{ n: number }>
 
-  if (!restant[0]?.n) {
-    return NextResponse.json({ ok: true, traites: 0, importes: 0, restant: 0, note: 'aucun lead à promouvoir' })
+  // Tour PAIR → validation. Sauf s'il n'y a plus rien à promouvoir : dans ce cas on valide à
+  // chaque passage, il n'y a aucune raison d'attendre.
+  const plusRienAPromouvoir = !restant[0]?.n
+  if (tour % 2 === 0 || plusRienAPromouvoir) {
+    const v = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
+      headers: { 'user-agent': 'promote-leads-cron' },
+    }).catch(() => null)
+    const r1 = v && v.ok ? await v.json().catch(() => null) : null
+    // Une seconde passe si la première dit qu'il en reste, et si le temps le permet largement.
+    let r2 = null
+    if (r1 && String(r1.remaining ?? '').startsWith('oui') && Date.now() - debut < 14_000) {
+      const v2 = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
+        headers: { 'user-agent': 'promote-leads-cron' },
+      }).catch(() => null)
+      r2 = v2 && v2.ok ? await v2.json().catch(() => null) : null
+    }
+    return NextResponse.json({
+      ok: true, tour, mode: 'validation',
+      passes: [r1, r2].filter(Boolean),
+      restant_a_promouvoir: restant[0]?.n ?? 0,
+      duree_s: Math.round((Date.now() - debut) / 100) / 10,
+    })
   }
 
   /**
@@ -65,9 +103,6 @@ async function handler(req: NextRequest) {
    * garantirait qu'une des deux copies dérive — c'est exactement ce qui est arrivé au pied de page
    * légal, corrigé deux fois au même endroit.
    */
-  const base = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
-  const cle = process.env.CRON_SECRET ?? ''
-
   let traites = 0, importes = 0
   const detail: string[] = []
 
@@ -87,28 +122,13 @@ async function handler(req: NextRequest) {
     SELECT COUNT(*)::int AS n FROM outscraper_leads WHERE status = 'new'
   `) as Array<{ n: number }>
 
-  /**
-   * SECONDE MOITIÉ DU CYCLE : valider les adresses des contacts fraîchement créés.
-   * Sans cette passe, ils restent visibles en base mais ne partent jamais — le moteur refuse
-   * d'écrire à une adresse non validée. Un échec ici ne doit PAS faire échouer la promotion :
-   * les leads promus le restent, la validation reprendra au passage suivant.
-   */
-  let validation: unknown = 'non lancée (budget épuisé)'
-  if (Date.now() - debut < 16_000) {
-    const v = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
-      headers: { 'user-agent': 'promote-leads-cron' },
-    }).catch(() => null)
-    validation = v && v.ok
-      ? await v.json().catch(() => 'réponse illisible')
-      : `échec (${v?.status ?? 'injoignable'})`
-  }
-
   return NextResponse.json({
     ok: true,
+    tour,
+    mode: 'promotion',
     traites,
     contacts_crees: importes,
     restant_a_promouvoir: apres[0]?.n ?? 0,
-    validation,
     duree_s: Math.round((Date.now() - debut) / 100) / 10,
     apercu: detail.slice(0, 10),
   })
