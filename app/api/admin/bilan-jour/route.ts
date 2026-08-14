@@ -37,7 +37,8 @@ async function handler(req: NextRequest) {
     ORDER BY jour DESC
   `) as Array<Record<string, unknown>>
 
-  const total = lignes.reduce((acc, l) => ({
+  type Cumul = { nouveaux: number; relances: number; conversation: number; mails: number }
+  const total = lignes.reduce<Cumul>((acc, l) => ({
     nouveaux: acc.nouveaux + Number(l.nouveaux_contacts ?? 0),
     relances: acc.relances + Number(l.relances_sequence ?? 0),
     conversation: acc.conversation + Number(l.relances_conversation ?? 0),
