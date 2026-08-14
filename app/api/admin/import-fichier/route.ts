@@ -265,13 +265,45 @@ async function handler(req: NextRequest) {
   const exemplesEnseignes: string[] = []
   const aCharger: Array<Record<string, unknown>> = []
 
+  /**
+   * ⚠️ ON NE JETTE PLUS RIEN — on classe.
+   *
+   * Jusqu'ici, tout ce qui ne passait pas les filtres était simplement COMPTÉ puis abandonné : sur
+   * un fichier de 288 lignes, 165 disparaissaient. Or elles ont été payées, et surtout la plus
+   * grosse part (129 lignes) l'était pour « moins de 20 avis » — un critère TEMPORAIRE. Ce sont
+   * précisément les fiches que le réveil automatique doit rattraper quand elles franchissent le
+   * seuil… mais elles n'étaient jamais entrées en base, donc il n'y avait rien à réveiller.
+   *
+   * Désormais chaque ligne est écrite avec un STATUT qui dit pourquoi elle n'est pas démarchée.
+   * Seul `new` alimente la prospection ; les autres dorment et restent consultables. Garder coûte
+   * quelques octets, rejeter coûte une donnée achetée.
+   */
+  const enregistrer = (l: Record<string, unknown>, nom: string, avis: number, statut: string) => {
+    const site = val(l, 'site')
+    const categorie = val(l, 'category')
+    aCharger.push({
+      place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
+      name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
+      postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
+      category: categorie || null, sector: deduireMetier(categorie, val(l, 'query')),
+      email: val(l, 'email') || null,
+      statut,
+    })
+  }
+
   for (const l of lignes) {
     const nom = val(l, 'name')
+    // Sans nom, la fiche n'est identifiable par rien : c'est la seule qu'on abandonne vraiment.
     if (!nom) { sansNom++; continue }
+    const avisLigne = nombre(val(l, 'reviews'))
     // ⚠️ Le test portait sur le NOM seul : « Linkeo » ne dit rien, sa CATÉGORIE dit « Agence de
     // marketing ». Un concurrent direct entrait donc dans la file d'envoi du client.
-    if (estConcurrent(nom) || estConcurrent(val(l, 'category'))) { concurrents++; continue }
-    if (estFermee(val(l, 'business_status'))) { fermees++; continue }
+    if (estConcurrent(nom) || estConcurrent(val(l, 'category'))) {
+      concurrents++; enregistrer(l, nom, avisLigne, 'concurrent'); continue
+    }
+    if (estFermee(val(l, 'business_status'))) {
+      fermees++; enregistrer(l, nom, avisLigne, 'ferme'); continue
+    }
     // Le métier se lit sur la catégorie ET les sous-types : Google range parfois l'activité
     // réelle dans le second seulement.
     // ⚠️ ON NE TESTE QUE LA CATÉGORIE PRINCIPALE. Croiser aussi les `subtypes` paraissait plus sûr —
@@ -285,6 +317,9 @@ async function handler(req: NextRequest) {
     if (HORS_METIER.test(metier) || CATEGORIE_SEULE_KO.has(sansAccents(categorie))) {
       horsMetier++
       if (exemplesHorsMetier.length < 8) exemplesHorsMetier.push(`${nom} — ${val(l, 'category')}`)
+      // Conservées : ce sont de mauvaises cibles pour Hdigiweb, pas pour tout le monde. C'est ce
+      // vivier qu'exporte /api/admin/export-vers-labegaria.
+      enregistrer(l, nom, avisLigne, 'hors_metier')
       continue
     }
     const site = val(l, 'site')
@@ -292,6 +327,7 @@ async function handler(req: NextRequest) {
     if (avis > PLAFOND_AVIS) {
       enseignes++
       if (exemplesEnseignes.length < 8) exemplesEnseignes.push(`${nom} — ${avis} avis`)
+      enregistrer(l, nom, avis, 'enseigne')
       continue
     }
     /**
@@ -307,16 +343,13 @@ async function handler(req: NextRequest) {
      */
     if (sitesConnus.has(site.toLowerCase()) || nomsConnus.has(nom.toLowerCase())) {
       dejaConnus++
-      aCharger.push({
-        place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
-        name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
-        postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
-        category: categorie || null, sector: deduireMetier(categorie, val(l, 'query')),
-        email: val(l, 'email') || null,
-      })
+      enregistrer(l, nom, avis, 'deja_en_base')
       continue
     }
-    if (avis < SEUIL_AVIS) { sousSeuil++; continue }
+    // ⚠️ LE STATUT LE PLUS IMPORTANT DE TOUS. « Moins de 20 avis » est un critère TEMPORAIRE : ces
+    // fiches franchiront le seuil un jour, et le rafraîchissement les remettra seules en 'new'.
+    // Les jeter revenait à racheter plus tard, au prix fort, ce qu'on avait déjà payé.
+    if (avis < SEUIL_AVIS) { sousSeuil++; enregistrer(l, nom, avis, 'skipped_lowreviews'); continue }
     /**
      * ⚠️ On jetait toute fiche sans site — y compris celles qui portaient DÉJÀ une adresse email
      * dans le fichier, et l'email reconnu n'était de toute façon jamais enregistré. Un export
@@ -324,16 +357,9 @@ async function handler(req: NextRequest) {
      * Le site ne sert qu'à TROUVER l'email ; l'avoir déjà rend le site superflu.
      */
     const email = val(l, 'email')
-    if (!site && !email) { sansSite++; continue }
+    if (!site && !email) { sansSite++; enregistrer(l, nom, avis, 'no_website'); continue }
     exploitables++
-    aCharger.push({
-      email: email || null,
-      place_id: val(l, 'place_id') || `imp-${Buffer.from(nom + site).toString('base64').slice(0, 40)}`,
-      name: nom, site, phone: val(l, 'phone'), city: val(l, 'city'),
-      postal_code: val(l, 'postal_code'), rating: parseFloat(val(l, 'rating')) || null, reviews: avis,
-      category: categorie || null,
-      sector: deduireMetier(categorie, val(l, 'query')),
-    })
+    enregistrer(l, nom, avis, 'new')
   }
 
   const analyse = {
@@ -385,14 +411,15 @@ async function handler(req: NextRequest) {
       INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, category, sector, email, status)
       SELECT x.place_id, x.name, x.site, NULLIF(x.phone, ''), NULLIF(x.city, ''), NULLIF(x.postal_code, ''),
              NULLIF(x.rating, '')::real, x.reviews::int, NULLIF(x.category, ''), x.sector,
-             NULLIF(x.email, ''), 'new'
+             NULLIF(x.email, ''), x.statut
       FROM jsonb_to_recordset(${JSON.stringify(lot.map(r => ({
         place_id: r.place_id, name: r.name, site: r.site, phone: r.phone ?? '', city: r.city ?? '',
         postal_code: r.postal_code ?? '', rating: r.rating === null ? '' : String(r.rating),
         reviews: String(r.reviews), category: r.category ?? '', sector: r.sector, email: r.email ?? '',
+        statut: r.statut ?? 'new',
       })))}::jsonb)
         AS x(place_id text, name text, site text, phone text, city text, postal_code text,
-             rating text, reviews text, category text, sector text, email text)
+             rating text, reviews text, category text, sector text, email text, statut text)
       -- DO NOTHING jetait une information qu'on venait de payer : 400 fiches dorment en
       -- skipped_lowreviews, ecartees pour moins de 20 avis le jour de leur import. Ce critere est
       -- temporaire par nature. Les repecher via Google Places coute ~2,40 EUR par contact ; or un
