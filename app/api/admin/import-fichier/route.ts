@@ -464,12 +464,28 @@ async function handler(req: NextRequest) {
   for (const l of lignes) {
     const q = val(l, 'query')
     if (!q) continue
-    // « pisciniste, 06001 CEDEX 1, Nice, Provence-Alpes-Côte d'Azur, FR »
-    // Le pays ferme la liste, la région le précède : la ville est l'avant-avant-dernier champ.
+    /**
+     * ⚠️ DEUX FORMATS DE REQUÊTE, SELON LE MODE CHOISI CHEZ OUTSCRAPER.
+     *   liste déroulante   → « pisciniste, 06001 CEDEX 1, Nice, Provence-Alpes-Côte d'Azur, FR »
+     *   emplacements libres → « swimming pool contractor, Rennes »
+     *
+     * Ma première version prenait l'avant-avant-dernier champ. Sur le format court elle sortait de
+     * la liste et n'enregistrait RIEN : la couverture serait restée vide pour toutes les commandes
+     * passées en mode personnalisé — sans erreur, sans trace, et Timéo aurait racheté les mêmes
+     * villes en croyant l'outil à jour. Une mémoire silencieusement vide est pire qu'une absence
+     * de mémoire : on lui fait confiance.
+     *
+     * On raisonne donc par élimination plutôt que par position : on retire le code pays et tout ce
+     * qui porte des chiffres (code postal, CEDEX), et la ville est le premier champ qui reste.
+     */
     const p = q.split(',').map(s => s.trim()).filter(Boolean)
-    if (p.length < 3) continue
+    if (p.length < 2) continue
     const categorie = p[0].toLowerCase()
-    const ville = p[p.length - 3]
+    const reste = p.slice(1)
+      .filter(s => !/^[A-Z]{2}$/.test(s))   // code pays
+      .filter(s => !/\d/.test(s))            // code postal / CEDEX
+    const ville = reste[0]
+    if (!ville) continue
     const k = `${categorie}|${ville.toLowerCase()}`
     const e = couverture.get(k) ?? { categorie, ville, fiches: 0 }
     e.fiches++
@@ -479,8 +495,14 @@ async function handler(req: NextRequest) {
     await sql`
       INSERT INTO scrape_couverture (categorie, ville, fiches)
       VALUES (${c.categorie}, ${c.ville}, ${c.fiches})
+      -- ⚠️ GREATEST et non une ADDITION. Le cumul paraissait logique — il comptait en realite les
+      -- REIMPORTS : rejouer le meme fichier doublait le total, et j ai annonce 1354 fiches sur
+      -- Paris la ou il y en avait 677. Un compteur qui grandit quand on relit la meme donnee ne
+      -- mesure pas la donnee, il mesure mes manipulations.
+      -- GREATEST est stable : reimporter ne change rien, et une nouvelle commande plus fournie sur
+      -- la meme ville met bien le chiffre a jour.
       ON CONFLICT (categorie, ville) DO UPDATE
-        SET fiches = scrape_couverture.fiches + EXCLUDED.fiches, importe_le = NOW()
+        SET fiches = GREATEST(scrape_couverture.fiches, EXCLUDED.fiches), importe_le = NOW()
     `.catch(() => { /* la trace ne doit jamais faire échouer un import */ })
   }
 
