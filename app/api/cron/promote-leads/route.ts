@@ -80,18 +80,19 @@ async function handler(req: NextRequest) {
     const v = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
       headers: { 'user-agent': 'promote-leads-cron' },
     }).catch(() => null)
+    /**
+     * ⚠️ UNE SEULE PASSE, et c'est une correction. J'en avais mis deux, gardées par « s'il reste
+     * moins de 14 s d'écoulées » — mesure réelle du tour de validation : 34,4 s, donc COUPÉ.
+     * Une passe coûte 12 à 17 s selon la lenteur de MillionVerifier ; en autoriser une seconde à
+     * la 14ᵉ seconde revient à parier que la première était rapide. Un budget ne se raisonne pas
+     * sur le cas favorable.
+     * Le débit se règle par la TAILLE du lot (batch de validate-emails), pas par le nombre de
+     * passes : c'est borné et prévisible.
+     */
     const r1 = v && v.ok ? await v.json().catch(() => null) : null
-    // Une seconde passe si la première dit qu'il en reste, et si le temps le permet largement.
-    let r2 = null
-    if (r1 && String(r1.remaining ?? '').startsWith('oui') && Date.now() - debut < 14_000) {
-      const v2 = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
-        headers: { 'user-agent': 'promote-leads-cron' },
-      }).catch(() => null)
-      r2 = v2 && v2.ok ? await v2.json().catch(() => null) : null
-    }
     return NextResponse.json({
       ok: true, tour, mode: 'validation',
-      passes: [r1, r2].filter(Boolean),
+      passes: [r1].filter(Boolean),
       restant_a_promouvoir: restant[0]?.n ?? 0,
       duree_s: Math.round((Date.now() - debut) / 100) / 10,
     })
