@@ -19,10 +19,21 @@ export const maxDuration = 60
 // timeout par appel, démarrer un appel à 21,9s menait à ~34s > coupe 30s (même classe de bug que
 // l'incident MillionVerifier labegaria du 27/07, cf. leçon 77). Resserré : timeout par appel 8s
 // (AbortSignal) + budget 16s → pire cas ~24s + updates SQL, marge confortable.
-const BATCH = 5
+/**
+ * ⚠️ RELEVÉ DE 5 À 8 LE 15/08 — le débit de validation était devenu le goulot du pipeline.
+ *
+ * Depuis que l'import exploite l'email fourni par les fichiers enrichis, la création de contacts a
+ * bondi : ~211 en une journée. Or la validation tournait à 5 adresses par passage, soit ~120/jour.
+ * Le retard s'accumulait, et des mails restaient bloqués en attente de validation — invisibles,
+ * puisque rien n'est en erreur : le moteur refuse simplement d'écrire à une adresse non validée.
+ *
+ * 8 × ~2,4 s = ~19 s, sous le budget de 18 s + la marge d'un appel en cours. On reste très en
+ * dessous de la coupe de 30 s de cron-job.org, qui est la seule limite dure.
+ */
+const BATCH = 8
 // ⚠️ Ramené de 16000 à 13000 le 07/08 : le nettoyage de la file zombie (requête CTE) tourne
 // APRÈS la boucle, donc en dehors du budget. Mesuré 22,9s sur 30s de coupe — marge trop mince.
-const TIME_BUDGET_MS = 13000
+const TIME_BUDGET_MS = 18000
 
 // ⚠️ INCIDENT 2026-07-24 : la sélection triait uniquement par created_at ASC. Un domaine qui
 // échoue systématiquement chez MillionVerifier (timeout, ip_blocked) reste alors éligible pour
