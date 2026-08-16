@@ -56,8 +56,21 @@ async function handler(req: NextRequest) {
    *      Revele — un chantier filmé n'a rien à voir avec la notoriété Google de l'entreprise).
    */
   const contacts = (await sql`
+    /**
+     * ⚠️ ON EXPORTE L'ÉTAT DE VÉRIFICATION, pas seulement l'adresse.
+     * Fabien va écrire depuis SES boîtes : lui livrer des adresses non vérifiées, c'est lui faire
+     * porter le rebond, et le rebond abîme la réputation d'expédition — le dégât est pour lui, pas
+     * pour nous. Une adresse validée par MillionVerifier et une adresse simplement scrapée n'ont
+     * pas la même valeur ; les mélanger sans le dire serait lui livrer un fichier qui ment.
+     */
     SELECT c.email, c.company, c.website, c.phone, c.city, c.postal_code, c.sector,
-           'demarche_hdigiweb' AS origine
+           'demarche_hdigiweb' AS origine,
+           CASE
+             WHEN c.email_validated IS TRUE THEN 'verifiee_millionverifier'
+             WHEN EXISTS (SELECT 1 FROM email_queue q
+                          WHERE q.contact_id = c.id AND q.status = 'sent') THEN 'mail_deja_delivre'
+             ELSE 'non_verifiee'
+           END AS fiabilite
     FROM contacts c
     WHERE c.email IS NOT NULL
       AND (c.sector IS NULL OR LOWER(c.sector) = ANY(${METIERS_BTP}))
@@ -79,7 +92,8 @@ async function handler(req: NextRequest) {
 
   const leads = (await sql`
     SELECT ol.email, ol.name AS company, ol.site AS website, ol.phone, ol.city, ol.postal_code,
-           ol.sector, 'jamais_contacte' AS origine
+           ol.sector, 'jamais_contacte' AS origine,
+           'non_verifiee' AS fiabilite
     FROM outscraper_leads ol
     WHERE ol.email IS NOT NULL
       AND ol.status IN ('skipped_lowreviews', 'no_website', 'deja_en_base')
@@ -121,6 +135,9 @@ async function handler(req: NextRequest) {
       dont_deja_demarches_par_hdigiweb: tout.filter(r => r.origine === 'demarche_hdigiweb').length,
       dont_jamais_contactes: tout.filter(r => r.origine === 'jamais_contacte').length,
       par_metier: parSecteur,
+      par_fiabilite: tout.reduce<Record<string, number>>((a, r) => {
+        const k = String(r.fiabilite ?? '?'); a[k] = (a[k] ?? 0) + 1; return a
+      }, {}),
       exclus_pour_opposition: exclus[0],
       regle: 'Aucune personne opposée, ayant refusé, signalé du spam ou exercé un droit RGPD n\'est exportée. L\'opposition suit la personne, jamais la campagne.',
       suite: 'Ajouter ?csv=1 pour le fichier.',
@@ -133,8 +150,8 @@ async function handler(req: NextRequest) {
     return /[",;\n]/.test(s) ? `"${s}"` : s
   }
   const lignes = [
-    'email,company,website,phone,city,postal_code,sector,origine',
-    ...tout.map(r => [r.email, r.company, r.website, r.phone, r.city, r.postal_code, r.sector, r.origine].map(echap).join(',')),
+    'email,company,website,phone,city,postal_code,sector,origine,fiabilite',
+    ...tout.map(r => [r.email, r.company, r.website, r.phone, r.city, r.postal_code, r.sector, r.origine, r.fiabilite].map(echap).join(',')),
   ]
   return new NextResponse(lignes.join('\n'), {
     headers: {
