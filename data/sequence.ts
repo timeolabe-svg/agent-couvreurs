@@ -1,3 +1,5 @@
+import { verifierAffirmations } from '@/lib/verifier-affirmations'
+
 // SÉQUENCE OFFICIELLE HDIGIWEB — v6.0
 // ⚠️ TEXTES FIGÉS, VALIDÉS PAR LE CLIENT (Gabin/Haris) ET PAR TIMÉO. Ne pas réécrire librement :
 // seules les VARIABLES sont substituées (nom, métier, ville, boîte d'envoi) + le défaut audité au
@@ -37,12 +39,44 @@ export function auditHookSentence(level?: string | null, weaknesses?: string[] |
       ? "Je n'ai pas trouvé de site à votre nom, donc quand quelqu'un vous cherche en ligne il ne tombe sur rien."
       : null
   }
-  if (has('viewport') || has('mobile')) return "Depuis un téléphone, votre site s'affiche mal et oblige à zoomer pour lire."
-  if (has('https') || has('sécuris')) return "Votre site s'affiche comme non sécurisé sur les navigateurs, ce qui fait hésiter les gens."
-  if (has('lent')) return "Votre site met du temps à s'afficher, et beaucoup de visiteurs partent avant la fin du chargement."
-  if (has('description') || has('fiche')) return "Votre fiche Google n'a pas de description, donc Google n'affiche presque rien sur vous."
-  if (has('avis')) return "Votre fiche Google a peu d'avis récents, ce qui pèse dans le choix des gens."
+  /**
+   * ⚠️ INCIDENT DU 17/08 — UN SEUL MOT A SUFFI.
+   *
+   * La ligne était : `if (has('viewport') || has('mobile'))`. Or l'audit produit la faiblesse
+   * « pas de numéro cliquable (appel en 1 clic impossible depuis un MOBILE) ». Le mot « mobile » y
+   * traîne, sans aucun rapport avec l'affichage. MUMCULAR PVC a donc reçu
+   * « Depuis un téléphone, votre site s'affiche mal et oblige à zoomer pour lire »
+   * alors que son site est noté 88, moderne, parfaitement lisible sur téléphone.
+   *
+   * On teste désormais LE défaut, pas un mot qui apparaît dans la description d'un autre. Et le
+   * repli reste `null` : sans défaut certain, le mail 1 part sans phrase d'audit. Il marche très
+   * bien comme ça — l'offre de Haris (être visible, avoir des demandes de devis, 1er mois offert)
+   * se vend toute seule, elle n'a jamais eu besoin qu'on reproche quelque chose au prospect.
+   */
+  if (has('viewport') || has('flash')) return "Depuis un téléphone, votre site s'affiche mal et oblige à zoomer pour lire."
+  if (has('https') || has('sécuris') || has('ssl')) return "Votre site s'affiche comme non sécurisé sur les navigateurs, ce qui fait hésiter les gens."
+  if (has('lenteur') || has('trop lent') || has('site lent')) return "Votre site met du temps à s'afficher, et beaucoup de visiteurs partent avant la fin du chargement."
+  if (has('meta description') || has('pas de description')) return "Votre fiche Google n'a pas de description, donc Google n'affiche presque rien sur vous."
+  if (has('peu d\'avis') || has('aucun avis')) return "Votre fiche Google a peu d'avis récents, ce qui pèse dans le choix des gens."
   if (level === 'abandoned' || level === 'very-outdated') return "Votre site n'a pas l'air d'avoir bougé depuis un moment, et ça se voit côté visiteur."
+  return null
+}
+
+/**
+ * CEINTURE ET BRETELLES — la phrase d'audit est relue avant d'être insérée dans le mail.
+ *
+ * `auditHookSentence` ci-dessus décide, `verifierAffirmations` vérifie. Si un jour quelqu'un
+ * réintroduit une correspondance trop large (c'est exactement ce qui est arrivé avec le mot
+ * « mobile »), la phrase est jetée au lieu de partir chez un prospect. Un mail sans phrase d'audit
+ * est un mail qui vend l'offre de Haris ; un mail avec une phrase fausse est un mail perdu, et un
+ * professionnel qui comprend qu'on ne l'a jamais regardé.
+ */
+export function auditHookVerifie(level?: string | null, weaknesses?: string[] | null): string | null {
+  const phrase = auditHookSentence(level, weaknesses)
+  if (!phrase) return null
+  const controle = verifierAffirmations(phrase, weaknesses, level !== 'no-website')
+  if (controle.ok) return phrase
+  console.error('[sequence] phrase d\'audit NON FONDÉE, retirée du mail:', controle.inventions.join(' | '), '| faiblesses:', (weaknesses ?? []).join(' ; '))
   return null
 }
 

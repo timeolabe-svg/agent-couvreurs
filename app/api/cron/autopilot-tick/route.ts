@@ -186,7 +186,7 @@ async function runTickHandler(request: NextRequest) {
   const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
   const { eq, and, or, gte, lte, sql, notInArray, isNull } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
-  const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
+  const { buildHdigiwebSequence, auditHookVerifie, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
   const { getNextInbox } = await import('@/lib/instantly/inbox-rotation')
 
   // ── RATTRAPAGE AUTOMATIQUE DES ORPHELINS (leçon 69/83) ──
@@ -787,7 +787,7 @@ async function runTickHandler(request: NextRequest) {
             sector: contact.sector ?? undefined,
             fromEmail: inbox.email,
             fromName: inbox.senderName,
-            auditHook: auditHookSentence(contact.audit_level, contact.audit_weaknesses),
+            auditHook: auditHookVerifie(contact.audit_level, contact.audit_weaknesses),
             agencyNom: agency.nom,
             agencyTelephone: agency.telephone,
             agencySite: agency.site,

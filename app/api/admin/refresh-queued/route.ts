@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
         occurrences: res,
       })
     }
-    const { buildHdigiwebSequence, auditHookSentence, SEQUENCE_DELAYS, SEQUENCE_LENGTH } =
+    const { buildHdigiwebSequence, auditHookVerifie, SEQUENCE_DELAYS, SEQUENCE_LENGTH } =
       await import('@/data/sequence')
     const { getInboxSenderName } = await import('@/lib/instantly/inbox-rotation')
     const { getAgencyInfo } = await import('@/lib/agency-signature')
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
       sector: c.sector ?? undefined,
       fromEmail,
       fromName: getInboxSenderName(fromEmail),
-      auditHook: auditHookSentence(c.audit_level, c.audit_weaknesses),
+      auditHook: auditHookVerifie(c.audit_level, c.audit_weaknesses),
       agencyNom: agency.nom,
       agencyTelephone: agency.telephone,
       agencySite: agency.site,
