@@ -219,11 +219,20 @@ async function processBox(box: { email: string; password: string }, started: num
     connectionTimeout: 5000,
   })
 
+  /**
+   * ⚠️ ON MESURE AU LIEU DE SUPPOSER. Trois passages de suite se sont terminés par « timeout box »
+   * sans qu'on sache si le temps partait dans la connexion Gmail, la recherche ou le chargement
+   * des enveloppes. Trois marqueurs coûtent trois lignes et évitent de régler au hasard un budget
+   * qu'on ne comprend pas.
+   */
+  const t0 = Date.now()
   await client.connect()
+  const tConnect = Date.now() - t0
   try {
     const lock = await client.getMailboxLock('INBOX')
     try {
       const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000)
+      const tSearch0 = Date.now()
       // TOUS les messages récents (plus seulement les non-lus) : une réponse OUVERTE dans Gmail
       // (marquée "lue") était ratée par seen:false. Dédup par Message-ID + filtre "vrai contact"
       // (le warmup vient d'adresses tierces → ignoré sans coût IA).
@@ -231,8 +240,9 @@ async function processBox(box: { email: string; password: string }, started: num
       // Du PLUS RÉCENT au plus ancien : une vraie réponse récente (ex. BJM) doit être traitée AVANT
       // que le budget temps (30s cron / 6s par boîte) ne coupe. Avant, on traitait les vieux d'abord
       // et on timeoutait avant d'atteindre les messages récents → réponse jamais lue.
+      const tSearch = Date.now() - tSearch0
       const uids = (Array.isArray(found) ? found : []).slice(-MAX_MSGS_PER_BOX).reverse()
-      results.push(`[${box.email}] ${uids.length} messages récents`)
+      const tEnv0 = Date.now()
 
       // ⚠️ AUDIT 07/08 — les 3 boîtes timeoutaient à 6s À CHAQUE RUN (« ⏱/❌ timeout box »).
       // Cause : la boucle faisait TROIS allers-retours réseau PAR MESSAGE (fetchOne enveloppe,
@@ -254,6 +264,7 @@ async function processBox(box: { email: string; password: string }, started: num
           })
         }
       } catch { /* repli : on continuera avec ce qui a été chargé */ }
+      results.push(`[${box.email}] ${uids.length} msg · connexion ${tConnect}ms · recherche ${tSearch}ms · enveloppes ${Date.now() - tEnv0}ms`)
 
       const tousMessageIds = [...envs.values()].map(v => 'imap:' + v.messageId)
       const tousFroms = [...new Set([...envs.values()].map(v => v.from).filter(Boolean))]
