@@ -47,6 +47,24 @@ export async function GET(req: NextRequest) {
     WHERE source = 'outscraper'
   `) as Array<Record<string, number>>
 
+  /**
+   * ⚠️ LES PERTES SE CHEVAUCHENT — ne jamais les additionner.
+   *
+   * Une fiche peut être à la fois sans email ET sous le seuil d'avis. Annoncer « 2 175 fiches
+   * récupérables en baissant le seuil » serait faux si la plupart n'ont de toute façon pas
+   * d'adresse. On mesure donc le levier RÉEL : celles qui ont un email ET qui n'attendent que le
+   * critère client.
+   */
+  const [levier] = (await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'skipped_lowreviews'
+                         AND email IS NOT NULL AND email <> '')::int AS sous_seuil_MAIS_avec_email,
+      COUNT(*) FILTER (WHERE (email IS NULL OR email = '')
+                         AND status NOT IN ('hors_metier')
+                         AND phone IS NOT NULL AND phone <> '')::int  AS sans_email_MAIS_avec_telephone
+    FROM outscraper_leads
+  `) as Array<Record<string, number>>
+
   const importees = Number(f?.fiches_importees ?? 0)
   const demarches = Number(c?.reellement_demarches ?? 0)
   const pct = (n: number) => (importees > 0 ? Math.round((n / importees) * 1000) / 10 : 0)
@@ -71,6 +89,12 @@ export async function GET(req: NextRequest) {
      * LE SEUL CHIFFRE QUI COMPTE POUR DÉCIDER D'UN ACHAT : combien de personnes réellement
      * démarchées pour 100 fiches payées. C'est lui qu'il faut multiplier par le prix de la fiche.
      */
+    leviers_disponibles: {
+      // Récupérables si Haris accepte des entreprises avec moins de 20 avis.
+      sous_seuil_avis_MAIS_avec_email: Number(levier?.sous_seuil_MAIS_avec_email ?? 0),
+      // Récupérables sur un autre canal : pas d'adresse, mais un numéro.
+      sans_email_MAIS_avec_telephone: Number(levier?.sans_email_MAIS_avec_telephone ?? 0),
+    },
     rendement_reel_pct: pct(demarches),
     lecture: `Sur 100 fiches achetées, ${pct(demarches)} personnes ont été réellement démarchées. Le taux de validité MillionVerifier ne porte QUE sur les fiches qui avaient déjà un email, il ne mesure pas la qualité du fichier.`,
   })
