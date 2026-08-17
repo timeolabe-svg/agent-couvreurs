@@ -155,9 +155,16 @@ export async function GET(request: NextRequest) {
       `),
     },
     {
-      nom: 'apprentissage : garder la version IA et les rejets',
+      // ⚠️ UNE SEULE INSTRUCTION PAR APPEL. Le driver Neon refuse deux ALTER separes par un
+      // point-virgule dans le meme execute — la migration echouait en bloc, et l apprentissage
+      // n avait donc AUCUNE de ses colonnes. Une migration qui echoue a moitie est pire qu une
+      // migration absente : le code croit les colonnes presentes.
+      nom: 'apprentissage : garder la version IA (reply_drafts)',
+      run: () => db.execute(sql`ALTER TABLE reply_drafts ADD COLUMN IF NOT EXISTS body_ia TEXT`),
+    },
+    {
+      nom: 'apprentissage : version IA + rejets (learned_replies)',
       run: () => db.execute(sql`
-        ALTER TABLE reply_drafts   ADD COLUMN IF NOT EXISTS body_ia TEXT;
         ALTER TABLE learned_replies
           ADD COLUMN IF NOT EXISTS answer_ia TEXT,
           ADD COLUMN IF NOT EXISTS rejete    BOOLEAN NOT NULL DEFAULT FALSE
