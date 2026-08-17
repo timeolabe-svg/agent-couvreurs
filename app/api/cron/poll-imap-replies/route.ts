@@ -1022,24 +1022,83 @@ function extractNewEmail(text: string, currentEmail: string): string | null {
 
 // ─── Absence : extrait la date de RETOUR d'un message d'absence (oof) ───
 // "fermé jusqu'au 15 juillet" → relance le 16 ; "de retour le 16" → relance le 16.
-const MONTHS_FR: Record<string, number> = { janvier: 0, 'février': 1, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5, juillet: 6, 'août': 7, aout: 7, septembre: 8, octobre: 9, novembre: 10, 'décembre': 11, decembre: 11 }
+const MOIS_FR: Record<string, number> = { janvier: 0, 'février': 1, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5, juillet: 6, 'août': 7, aout: 7, septembre: 8, octobre: 9, novembre: 10, 'décembre': 11, decembre: 11 }
+/**
+ * ⚠️ RÉÉCRIT LE 15/08/2026 APRÈS MESURE SUR LES VRAIS MESSAGES D'ABSENCE REÇUS.
+ *
+ * L'ancienne version prenait le PREMIER marqueur trouvé. Testée sur 9 absences réelles : 5 dates
+ * extraites, et l'une d'elles fausse D'UN AN.
+ *
+ * Le cas qui a tout révélé : « fermera à partir du 03 août […] Notre reprise est prévue au
+ * 31 août ». Elle a saisi « à partir du 03 août » — qui est la date de DÉPART en congés, pas du
+ * retour — puis, constatant que le 3 août était passé, l'a repoussée à… août 2027. Les relances
+ * de ce prospect partaient dans un an. Silencieusement : aucune erreur, aucun compteur, juste un
+ * lead évaporé.
+ *
+ * Une date fausse est bien pire qu'une absence de date : sans date, la séquence continue et le
+ * prospect reçoit une relance un peu tôt ; avec une date fausse, il n'est jamais recontacté.
+ *
+ * TROIS CHANGEMENTS :
+ *  1. on collecte TOUTES les dates candidates et on retient la PLUS TARDIVE — dans un texte
+ *     d'absence, la dernière date mentionnée est la reprise ;
+ *  2. les plages « du 8 au 24 août » sont comprises (l'ancienne version les ignorait : 3 des
+ *     4 échecs venaient de là) ;
+ *  3. FENÊTRE DE PLAUSIBILITÉ de 120 jours. Au-delà, on renonce plutôt que de deviner. C'est ce
+ *     garde-fou qui aurait évité le décalage d'un an.
+ */
 function extractReturnDate(text: string, now: Date): Date | null {
-  const t = (text || '').toLowerCase()
-  const m = t.match(/(jusqu'?\s*(?:au|à)|de retour le|à partir du|a partir du|reprise le|r[ée]ouverture le|retour le|reprenons le|reprend(?:s|rai|rons)? le)\s+(\d{1,2})(?:\s*[\/.]\s*(\d{1,2}))?(?:\s+(janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[uû]t|septembre|octobre|novembre|d[ée]cembre))?/)
-  if (!m) return null
-  const inclusive = /jusqu/.test(m[1])
-  const day = parseInt(m[2], 10)
-  if (day < 1 || day > 31) return null
-  let month = now.getMonth()
-  if (m[3]) month = parseInt(m[3], 10) - 1
-  else if (m[4]) month = MONTHS_FR[m[4]] ?? month
-  let d = new Date(now.getFullYear(), month, day, 9, 0, 0, 0)
-  // date déjà passée (>2j) → mois suivant (ou année suivante si le mois était précisé)
-  if (d.getTime() < now.getTime() - 2 * 86400000) {
-    d = (m[3] || m[4]) ? new Date(now.getFullYear() + 1, month, day, 9, 0, 0, 0) : new Date(now.getFullYear(), month + 1, day, 9, 0, 0, 0)
+  const t = (text || '').toLowerCase().replace(/\s+/g, ' ')
+  const MOIS = '(janvier|f[ée]vrier|fevrier|mars|avril|mai|juin|juillet|ao[uû]t|aout|septembre|octobre|novembre|d[ée]cembre|decembre)'
+  const candidats: Date[] = []
+
+  /** Construit une date à partir d'un jour et d'un mois éventuel, en restant dans le futur proche. */
+  const bâtir = (jour: number, moisTxt?: string, moisNum?: string): Date | null => {
+    if (!(jour >= 1 && jour <= 31)) return null
+    let mois = now.getMonth()
+    if (moisNum) mois = parseInt(moisNum, 10) - 1
+    else if (moisTxt) mois = MOIS_FR[moisTxt] ?? mois
+    let d = new Date(now.getFullYear(), mois, jour, 9, 0, 0, 0)
+    // Une date de quelques jours dans le passé reste crédible (message reçu la veille) ; au-delà,
+    // c'est le mois suivant — jamais l'année suivante, qui n'a aucun sens pour un congé.
+    if (d.getTime() < now.getTime() - 3 * 86400000) d = new Date(now.getFullYear(), mois + 1, jour, 9, 0, 0, 0)
+    return d
   }
-  if (inclusive) d.setDate(d.getDate() + 1) // "jusqu'au 15" → on relance le 16
-  return d
+
+  // 1) PLAGES : « du 8 au 24 août », « du 1er août au 31 août ». La FIN de la plage est le dernier
+  //    jour d'absence → le retour est le lendemain.
+  const plage = new RegExp(`du\\s+(\\d{1,2})(?:er)?\\s*(?:${MOIS})?\\s+(?:au|jusqu'?au)\\s+(\\d{1,2})(?:er)?\\s*(?:${MOIS})?`, 'g')
+  // ⚠️ ATTENTION AUX INDICES : la constante MOIS contient elle-même un groupe capturant, donc
+  // chaque `(?:${MOIS})?` inséré DÉCALE la numérotation. Ici : 1 = jour de début, 2 = mois de
+  // début, 3 = jour de fin, 4 = mois de fin. Mon premier essai lisait m[2] comme jour de fin et
+  // ratait les deux plages du jeu de test — un décalage d'indice ne lève aucune erreur, il rend
+  // juste un résultat faux.
+  for (const m of t.matchAll(plage)) {
+    const d = bâtir(parseInt(m[3], 10), m[4] ?? m[2])
+    if (d) { d.setDate(d.getDate() + 1); candidats.push(d) }
+  }
+
+  // 2) MARQUEURS DE RETOUR explicites. « à partir du » est VOLONTAIREMENT ABSENT : dans un message
+  //    d'absence il annonce presque toujours le départ, pas la reprise.
+  const retour = new RegExp(
+    `(?:de retour(?: le| a partir du| à partir du)?|retour le|reprise (?:est )?(?:pr[ée]vue )?(?:le|au)|r[ée]ouverture le|reprenons(?: du service)? le|reprend(?:s|rai|rons)?(?: du service)? le|jusqu'?\\s*(?:au|à))` +
+    `\\s+(?:lundi |mardi |mercredi |jeudi |vendredi |samedi |dimanche )?(\\d{1,2})(?:er)?(?:\\s*[\\/.]\\s*(\\d{1,2}))?\\s*(?:${MOIS})?`, 'g')
+  for (const m of t.matchAll(retour)) {
+    const d = bâtir(parseInt(m[1], 10), m[3], m[2])
+    if (!d) continue
+    if (/jusqu/.test(m[0])) d.setDate(d.getDate() + 1) // « jusqu'au 15 » → on repart le 16
+    candidats.push(d)
+  }
+
+  if (!candidats.length) return null
+
+  // La reprise est la date la plus tardive du message.
+  const choisie = candidats.reduce((a, b) => (b.getTime() > a.getTime() ? b : a))
+
+  // ⚠️ FENÊTRE DE PLAUSIBILITÉ. Un congé se compte en semaines ; au-delà de 120 jours on a mal lu,
+  // et décaler les relances de plusieurs mois équivaut à perdre le prospect.
+  const jours = (choisie.getTime() - now.getTime()) / 86400000
+  if (jours < -1 || jours > 120) return null
+  return choisie
 }
 
 // ─── Filtre langue : garde tout vrai prospect FR, ne saute que du warmup anglais évident ───
