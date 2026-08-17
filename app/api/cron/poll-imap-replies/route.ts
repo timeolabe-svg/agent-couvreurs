@@ -29,8 +29,8 @@ let sql!: NeonQueryFunction<false, false>
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const GLOBAL_DEADLINE_MS = 14_000 // cron-job.org coupe a 30s. Ne DEMARRE plus une boite au-dela de 14s : 14 + 12 (une boite) = 26s, marge sure. L ancien couple 21 + 8 tenait, 21 + 12 aurait dépassé.
-const PER_BOX_TIMEOUT_MS = 12_000 // 8s ne suffisait pas : le seul chargement des enveloppes de ~100 messages l epuisait, et la boite mourait sans avoir lu une seule reponse.
+const GLOBAL_DEADLINE_MS = 2_000  // une seule boite par passage : on ne doit jamais en DEMARRER une seconde. 2 + 22 = 24s, sous la coupe de 30s.
+const PER_BOX_TIMEOUT_MS = 22_000 // laisse finir UN traitement complet (IMAP 1,2s + IA ~10s + marge). Mesure du 17/08.
 const MAX_MSGS_PER_BOX = 180  // le warmup remplit vite la boîte : à 70, une vraie réponse un peu ancienne (ex. répondue tôt puis noyée sous le warmup) sortait de la fenêtre et n'était jamais lue. On élargit.
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
@@ -173,7 +173,22 @@ export async function POST(req: NextRequest) {
    * Deux boîtes par passage, 12 s chacune. Avec la rotation, chaque boîte est relevée à chaque
    * deuxième passage — soit toutes les 20 minutes à cadence de 10 min.
    */
-  const BOITES_PAR_PASSAGE = 2
+  /**
+   * ⚠️ UNE SEULE BOÎTE PAR PASSAGE — et c'est la mesure qui l'impose, pas une intuition.
+   *
+   * Mesuré le 17/08 : connexion 570 ms, recherche 360 ms, enveloppes 287 ms. La lecture IMAP coûte
+   * 1,2 s. Tout le reste du budget part dans le TRAITEMENT d'un seul message : classification puis
+   * génération de réponse par l'IA, une dizaine de secondes. Aucun budget de 8 ou 12 s ne peut
+   * contenir ça — j'ai réglé ce chiffre deux fois à l'aveugle avant de le mesurer.
+   *
+   * Une boîte par passage, avec un budget qui laisse finir un traitement complet. Mieux vaut une
+   * boîte lue jusqu'au bout toutes les 40 minutes que quatre boîtes coupées en plein milieu à
+   * chaque fois : une réponse à moitié lue n'est pas lue.
+   *
+   * ⚠️ Pour réduire la latence, c'est la CADENCE du cron qu'il faut augmenter (5 min → chaque
+   * boîte toutes les 20 min), pas le nombre de boîtes par passage.
+   */
+  const BOITES_PAR_PASSAGE = 1
   const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot)).slice(0, BOITES_PAR_PASSAGE)
   const loop = (async () => {
     for (const box of orderedBoxes) {
