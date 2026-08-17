@@ -65,6 +65,19 @@ export async function GET(req: NextRequest) {
     FROM outscraper_leads
   `) as Array<Record<string, number>>
 
+  /**
+   * ⚠️ UN ZÉRO NE SE CROIT PAS SUR PAROLE. Le calcul des leviers a d'abord rendu 0 sur les deux
+   * lignes — ce qui peut vouloir dire « aucun levier » comme « ma condition ne correspond à rien ».
+   * On sort donc le croisement brut statut × présence d'email : lui, on peut le lire.
+   */
+  const croisement = (await sql`
+    SELECT COALESCE(status, 'sans_statut') AS statut,
+           COUNT(*)::int AS n,
+           COUNT(*) FILTER (WHERE email IS NOT NULL AND email <> '')::int AS avec_email
+    FROM outscraper_leads
+    GROUP BY 1 ORDER BY 2 DESC
+  `) as Array<Record<string, string | number>>
+
   const importees = Number(f?.fiches_importees ?? 0)
   const demarches = Number(c?.reellement_demarches ?? 0)
   const pct = (n: number) => (importees > 0 ? Math.round((n / importees) * 1000) / 10 : 0)
@@ -89,6 +102,7 @@ export async function GET(req: NextRequest) {
      * LE SEUL CHIFFRE QUI COMPTE POUR DÉCIDER D'UN ACHAT : combien de personnes réellement
      * démarchées pour 100 fiches payées. C'est lui qu'il faut multiplier par le prix de la fiche.
      */
+    croisement_statut_email: croisement,
     leviers_disponibles: {
       // Récupérables si Haris accepte des entreprises avec moins de 20 avis.
       sous_seuil_avis_MAIS_avec_email: Number(levier?.sous_seuil_MAIS_avec_email ?? 0),
