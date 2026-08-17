@@ -145,7 +145,7 @@ async function runCron(req: Request) {
        * correctif ci-dessus : « Couvreur Jimmy » avait bien reçu sa réponse à 09h25, et le
        * rattrapage lui en a régénéré une seconde dix minutes plus tard.
        *
-       * La raison : le test précédent passe par `rd.incoming_reply_id`. Si ce lien manque ou a
+       * La raison : le test précédent passe par rd.incoming_reply_id. Si ce lien manque ou a
        * dérivé — ça arrive, c'est l'incident des leads invisibles du 08/08 — la réponse envoyée
        * devient introuvable et le message paraît orphelin.
        *
