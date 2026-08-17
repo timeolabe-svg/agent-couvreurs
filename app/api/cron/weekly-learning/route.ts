@@ -55,9 +55,21 @@ async function handler(req: Request) {
     const now = new Date()
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-    // ── Fetch week metrics ─────────────────────────────────────────────────────
+    /**
+     * ── LES CHIFFRES DE LA SEMAINE ─────────────────────────────────────────────
+     *
+     * ⚠️ Ce calcul divisait des MESSAGES reçus par des MAILS ENVOYÉS. Un prospect qui écrit trois
+     * fois comptait trois réponses, les relances gonflaient le dénominateur, et les auto-répondeurs
+     * comme le spam comptaient comme des réponses. Sur l'autre projet, la même formule a affiché un
+     * « taux de réponse de 300 % » présenté comme une performance exceptionnelle — et cette phrase
+     * partait modifier le prompt d'envoi de l'agent.
+     *
+     * Le seul taux qui a un sens : PERSONNES qui ont répondu ÷ PERSONNES démarchées.
+     */
     const [
       [{ sent }],
+      [{ contactes }],
+      [{ repondeurs }],
       [{ replies }],
       [{ rdvCount }],
     ] = await Promise.all([
@@ -65,6 +77,21 @@ async function handler(req: Request) {
         .select({ sent: count() })
         .from(email_queue)
         .where(and(eq(email_queue.status, 'sent'), sql`${email_queue.sent_at} >= ${weekAgo}`)),
+      db
+        .select({ contactes: sql<number>`count(distinct ${email_queue.contact_id})::int` })
+        .from(email_queue)
+        .where(and(
+          eq(email_queue.status, 'sent'),
+          eq(email_queue.sequence_step, 0),
+          sql`${email_queue.sent_at} >= ${weekAgo}`,
+        )),
+      db
+        .select({ repondeurs: sql<number>`count(distinct ${incoming_replies.contact_id})::int` })
+        .from(incoming_replies)
+        .where(and(
+          gte(incoming_replies.created_at, weekAgo),
+          sql`(${incoming_replies.classification} IS NULL OR ${incoming_replies.classification} NOT IN ('spam','oof'))`,
+        )),
       db
         .select({ replies: count() })
         .from(incoming_replies)
@@ -75,7 +102,15 @@ async function handler(req: Request) {
         .where(gte(rdvTable.created_at, weekAgo)),
     ])
 
-    const replyRate = sent > 0 ? +((replies / sent) * 100).toFixed(1) : 0
+    const replyRate = contactes > 0 ? +((repondeurs / contactes) * 100).toFixed(1) : 0
+
+    /**
+     * PAS ASSEZ DE VOLUME = PAS DE CONCLUSION. Un enseignement tiré d'un échantillon d'un, c'est du
+     * bruit promu en règle — et il se propage ensuite à tous les mails envoyés au nom du client.
+     * Le rapport s'écrit quand même (la trace compte) mais ON NE TOUCHE PAS AU PROMPT.
+     */
+    const VOLUME_MINIMUM = 30
+    const echantillonSuffisant = contactes >= VOLUME_MINIMUM
 
     // Sector breakdown
     const sectorRows = await db
@@ -121,8 +156,14 @@ async function handler(req: Request) {
     const endStr = now.toLocaleDateString('fr-FR')
 
     const userPrompt = `Données semaine du ${startStr} au ${endStr} :
-- Emails envoyés: ${sent}
-- Réponses reçues: ${replies} (${replyRate}%)
+- Personnes démarchées (1er mail): ${contactes}
+- Emails partis au total (relances comprises): ${sent}
+- Personnes ayant répondu: ${repondeurs} sur ${contactes}, soit ${replyRate}% (${replies} messages au total)
+${echantillonSuffisant ? '' : `
+⚠️ ÉCHANTILLON INSUFFISANT : ${contactes} personnes démarchées, seuil de lecture = ${VOLUME_MINIMUM}.
+Tu ne dois tirer AUCUNE conclusion ni proposer AUCUN ajustement de prompt. Dis-le, laisse
+"prompt_adjustments" vide et les listes vides, et ne qualifie pas la performance.
+`}
 - RDV générés: ${rdvCount}
 - Meilleurs secteurs: ${topSectors.join(', ') || 'N/A'}
 - Meilleurs objets: ${topSubjects.slice(0, 3).join(' | ') || 'N/A'}
@@ -187,7 +228,8 @@ Génère un rapport JSON structuré avec :
       .returning({ id: learning_reports.id })
 
     // ── Update agent_config if prompt_adjustments set ─────────────────────────
-    if (report.recommendations?.prompt_adjustments) {
+    // Garde-fou en CODE, pas seulement dans la consigne : une consigne à l'IA se contourne.
+    if (echantillonSuffisant && report.recommendations?.prompt_adjustments) {
       await db
         .insert(agent_config)
         .values({

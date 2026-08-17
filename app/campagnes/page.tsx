@@ -36,8 +36,18 @@ const VILLES_FRANCE = [
 
 const RAYONS = [10, 20, 30, 50]
 
-// Capacité globale quotidienne (calculée depuis les boîtes mails connectées)
-const DAILY_CAPACITY = 334
+/**
+ * ⚠️ CE NOMBRE ÉTAIT ÉCRIT EN DUR (334) SOUS UN TITRE QUI DIT « CALCULÉE DEPUIS VOS BOÎTES MAILS ».
+ *
+ * Le moteur autorise 40 NOUVEAUX contacts par boîte et par jour : 160 sur 4 boîtes. Le 334 venait
+ * d'une maquette. C'est pourtant sur ce chiffre qu'on répartit les campagnes en pourcentage et
+ * qu'on décide de racheter des leads — un plafond imaginaire fait acheter de la donnée pour
+ * remplir un volume qui ne partira jamais.
+ *
+ * On lit désormais /api/capacite. Le repli ci-dessous ne sert que pendant le chargement, et il est
+ * volontairement PRUDENT : afficher moins vaut mieux que promettre plus.
+ */
+const CAPACITE_REPLI = 160
 
 type Campaign = {
   id: string
@@ -104,6 +114,11 @@ export default function CampagnesPage() {
 
   const totalAllocated = campaigns.filter(c => c.status === 'active').reduce((sum, c) => sum + c.percentage, 0)
   const available = Math.max(0, 100 - totalAllocated)
+  const [capacite, setCapacite] = useState<{ nouveaux_par_jour: number; nombre_de_boites: number } | null>(null)
+  useEffect(() => {
+    fetch('/api/capacite').then(r => r.json()).then(setCapacite).catch(() => {})
+  }, [])
+  const DAILY_CAPACITY = capacite?.nouveaux_par_jour ?? CAPACITE_REPLI
   const monthlyCapacity = DAILY_CAPACITY * 22
 
   const filteredCities = VILLES_FRANCE.filter(v => v.toLowerCase().startsWith(cityQuery.toLowerCase())).slice(0, 8)
@@ -221,7 +236,7 @@ export default function CampagnesPage() {
               Capacité d&apos;envoi globale (calculée depuis vos boîtes mails)
             </p>
             <div className="grid grid-cols-4 gap-4 mb-4">
-              <Stat label="Capacité / jour" value={String(DAILY_CAPACITY)} sub="emails maximum" color="#5f83ac" icon={<Activity size={14} />} />
+              <Stat label="Capacité / jour" value={String(DAILY_CAPACITY)} sub={capacite ? `nouveaux contacts · ${capacite.nombre_de_boites} boîtes` : 'nouveaux contacts'} color="#5f83ac" icon={<Activity size={14} />} />
               <Stat label="Capacité / mois" value={monthlyCapacity.toLocaleString('fr-FR')} sub="22 jours ouvrés" color="#5c9b82" icon={<Flame size={14} />} />
               <Stat label="Allocation utilisée" value={`${totalAllocated}%`} sub={`${Math.round(DAILY_CAPACITY * totalAllocated / 100)} emails/jour`} color="#f97316" icon={<TrendingUp size={14} />} />
               <Stat label="Disponible" value={`${available}%`} sub={`${Math.round(DAILY_CAPACITY * available / 100)} emails/jour`} color="#7d6fb0" icon={<Mail size={14} />} />
@@ -250,6 +265,7 @@ export default function CampagnesPage() {
               {campaigns.map(c => (
                 <CampaignRow
                   key={c.id}
+                  capaciteJour={DAILY_CAPACITY}
                   campaign={c}
                   onUpdate={pct => updatePercentage(c.id, pct)}
                   onToggle={() => toggleStatus(c.id)}
@@ -522,9 +538,9 @@ function AllocationBar({ campaigns, available }: { campaigns: Campaign[]; availa
   )
 }
 
-function CampaignRow({ campaign, onUpdate, onToggle, onRemove }: { campaign: Campaign; onUpdate: (pct: number) => void; onToggle: () => void; onRemove: () => void }) {
+function CampaignRow({ campaign, onUpdate, onToggle, onRemove, capaciteJour }: { campaign: Campaign; onUpdate: (pct: number) => void; onToggle: () => void; onRemove: () => void; capaciteJour: number }) {
   const metier = METIERS.find(m => m.id === campaign.metier)
-  const dailyEmails = Math.round(DAILY_CAPACITY * campaign.percentage / 100)
+  const dailyEmails = Math.round(capaciteJour * campaign.percentage / 100)
   const monthlyEmails = dailyEmails * 22
 
   return (

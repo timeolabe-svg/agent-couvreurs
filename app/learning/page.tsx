@@ -255,15 +255,25 @@ export default function LearningPage() {
   }
 
   const latestReport = reports[0]
+  /**
+   * ⚠️ UNE MOYENNE NON PONDÉRÉE TRANSFORME UN ACCIDENT EN TENDANCE. Une semaine à un seul mail
+   * pesait autant qu'une semaine à 500, et le taux stocké pouvait dépasser 100 % (ancien calcul :
+   * messages reçus ÷ mails envoyés). On écarte donc les périodes non lisibles, et on préfère ne
+   * rien afficher plutôt qu'un chiffre faux : le vide se lit, un chiffre inventé non.
+   */
+  const SEUIL_LECTURE = 30
+  const rapportsLisibles = reports.filter(
+    r => (r.emails_sent ?? 0) >= SEUIL_LECTURE && (r.reply_rate ?? 0) <= 100,
+  )
   const avgReplyRate =
-    reports.length > 0
-      ? reports.reduce((s, r) => s + (r.reply_rate ?? 0), 0) / reports.length
+    rapportsLisibles.length > 0
+      ? rapportsLisibles.reduce((s, r) => s + (r.reply_rate ?? 0), 0) / rapportsLisibles.length
       : null
 
   // Trend: compare latest to previous
   const trend =
-    reports.length >= 2
-      ? (reports[0].reply_rate ?? 0) - (reports[1].reply_rate ?? 0)
+    rapportsLisibles.length >= 2
+      ? (rapportsLisibles[0].reply_rate ?? 0) - (rapportsLisibles[1].reply_rate ?? 0)
       : null
 
   return (
@@ -306,7 +316,7 @@ export default function LearningPage() {
                 <Brain size={16} style={{ color: '#5f83ac', flexShrink: 0 }} />
                 <div className="flex-1">
                   <p className="text-[11px]" style={{ color: 'var(--color-muted)' }}>
-                    PERFORMANCE AGENT (MOYENNE {reports.length} SEMAINE{reports.length > 1 ? 'S' : ''})
+                    PERFORMANCE AGENT (MOYENNE {rapportsLisibles.length} PÉRIODE{rapportsLisibles.length > 1 ? 'S' : ''} EXPLOITABLE{rapportsLisibles.length > 1 ? 'S' : ''})
                   </p>
                   <div className="flex items-center gap-2 mt-0.5">
                     <p className="text-[24px] font-semibold" style={{ color: '#5f83ac' }}>

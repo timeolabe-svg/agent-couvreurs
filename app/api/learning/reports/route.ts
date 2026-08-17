@@ -52,6 +52,12 @@ export async function GET() {
     return NextResponse.json({ data: rows })
   } catch (err) {
     console.error('[learning/reports] GET error:', err)
-    return NextResponse.json({ data: mockReports(), _demo: true, _error: String(err) })
+    /**
+     * ⚠️ ON NE FABRIQUE PAS UN RAPPORT QUAND LA LECTURE ÉCHOUE. Une panne de base renvoyait un
+     * rapport inventé (« 312 emails, 8,2 % de réponse ») : la panne s'affichait comme un bon mois,
+     * avec pour seul indice un petit badge « Démo ». Un écran d'apprentissage qui ment en cas de
+     * panne enseigne des choses fausses à celui qui le lit.
+     */
+    return NextResponse.json({ data: [], _error: String(err) }, { status: 500 })
   }
 }
