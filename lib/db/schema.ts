@@ -10,6 +10,7 @@ import {
   jsonb,
   index,
   uniqueIndex,
+  date,
 } from 'drizzle-orm/pg-core'
 
 // contacts — prospects scraped or imported
@@ -142,6 +143,12 @@ export const rdv = pgTable('rdv', {
   // Suivi de la commission de 5 % sur le CA apporté. Le client marque le RDV comme signé et
   // renseigne le CA HT réellement ENCAISSÉ (pas facturé), cumulé au fil des encaissements.
   ca_ht: numeric('ca_ht', { precision: 12, scale: 2 }),
+  // Abonnement MENSUEL que le client paie a Hdigiweb. La commission de 5 % court chaque mois
+  // tant que client_actif_jusqu_a est NULL (ou dans le futur) — elle n'est PAS ponctuelle.
+  montant_mensuel: numeric('montant_mensuel', { precision: 12, scale: 2 }),
+  // Date de fin d'abonnement. On ne SUPPRIME jamais un client perdu : effacer la ligne
+  // reecrirait les factures des mois deja preleves.
+  client_actif_jusqu_a: date('client_actif_jusqu_a'),
   // Classement commercial fait par le CLIENT (Haris) : a_venir / qualifie / signe / perdu /
   // non_qualifie. Distinct de `status`, qui est l'état technique du rendez-vous.
   crm_stage: text('crm_stage').default('a_venir'),

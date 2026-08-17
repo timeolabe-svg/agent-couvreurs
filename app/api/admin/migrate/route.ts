@@ -134,6 +134,27 @@ export async function GET(request: NextRequest) {
        * On conserve donc la proposition d'origine (`body_ia`), et `learned_replies` distingue
        * l'exemple à suivre de l'exemple à fuir.
        */
+      /**
+       * COMMISSION RÉCURRENTE — 5 % du montant MENSUEL, tant que le client reste client.
+       *
+       * ⚠️ MODÈLE CORRIGÉ LE 17/08. La première version stockait un CA ponctuel : le client signe,
+       * on prend 5 % une fois. Faux. Haris facture ses clients au mois, donc la commission court
+       * tant que le client reste — deux clients à 500 €/mois font 50 €/mois pour Timéo, chaque mois.
+       *
+       * ⚠️ ET SURTOUT : ON N'EFFACE JAMAIS UN CLIENT PERDU, on lui pose une DATE DE FIN.
+       * Supprimer la ligne ferait changer les factures des mois déjà prélevés — un client parti en
+       * novembre modifierait rétroactivement ce qui a été facturé en septembre. Une facture émise
+       * ne se réécrit pas : c'est ce qui permet aux deux parties de se mettre d'accord des mois
+       * plus tard. `client_actif_jusqu_a` NULL = toujours client.
+       */
+      nom: 'rdv : abonnement client (montant mensuel + date de fin)',
+      run: () => db.execute(sql`
+        ALTER TABLE rdv
+          ADD COLUMN IF NOT EXISTS montant_mensuel        NUMERIC(12,2),
+          ADD COLUMN IF NOT EXISTS client_actif_jusqu_a   DATE
+      `),
+    },
+    {
       nom: 'apprentissage : garder la version IA et les rejets',
       run: () => db.execute(sql`
         ALTER TABLE reply_drafts   ADD COLUMN IF NOT EXISTS body_ia TEXT;

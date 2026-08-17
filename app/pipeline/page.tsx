@@ -22,7 +22,11 @@ interface Rdv {
   status: string | null
   crm_stage: string | null
   unqualified_reason: string | null
-  ca_ht: number | null
+  montant_mensuel: number | null
+  client_actif_jusqu_a: string | null
+  client_actif: boolean
+  part_fixe: number
+  commission_mensuelle: number
   signed_at: string | null
   client_note: string | null
   notes: string | null
@@ -31,7 +35,6 @@ interface Rdv {
   city: string | null
   phone: string | null
   email: string | null
-  remuneration: number
 }
 
 type EtapeKey = 'a_venir' | 'qualifie' | 'signe' | 'perdu' | 'non_qualifie'
@@ -46,15 +49,15 @@ const estAClasser = (r: Rdv) => (r.crm_stage ?? 'a_venir') === 'a_venir' && new 
 const ETAPES: Array<{ key: EtapeKey; label: string; color: string; aide: string; badge: string | null; icon: React.ElementType }> = [
   { key: 'a_venir',      label: 'À venir',      color: '#5f83ac', badge: null,     aide: 'Calé, pas encore eu lieu — ne compte pas encore', icon: CalendarClock },
   { key: 'qualifie',     label: 'Qualifié',     color: '#c19653', badge: '+50 €',  aide: 'Honoré, décisionnaire, concerné (intéressé ou non)', icon: Target },
-  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+5 % CA', aide: 'Devenu client — saisis le CA encaissé', icon: CheckCircle2 },
-  { key: 'perdu',        label: 'Perdu',        color: '#7a6b6b', badge: null,     aide: 'Qualifié mais pas transformé — les 50 € restent dus', icon: CircleSlash },
+  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+50 € et 5 %/mois', aide: 'Devenu client — saisis son abonnement mensuel', icon: CheckCircle2 },
+  { key: 'perdu',        label: 'Perdu',        color: '#7a6b6b', badge: '+50 €',  aide: 'Qualifié mais pas transformé — les 50 € restent dus', icon: CircleSlash },
   { key: 'non_qualifie', label: 'Non qualifié', color: '#9a6b6b', badge: null,     aide: 'No-show, pas décisionnaire ou hors sujet — 0 €', icon: CircleSlash },
 ]
 
 const MOTIFS = [
   { key: 'no_show', label: "Ne s'est pas présenté" },
-  { key: 'not_decision_maker', label: 'Pas le décisionnaire' },
-  { key: 'off_topic', label: 'Pas concerné / hors sujet' },
+  { key: 'hors_offre', label: "N'est pas là pour l'offre qu'on propose" },
+  { key: 'pas_decisionnaire', label: "Ce n'est pas la personne décisionnaire qui est présente" },
 ]
 
 const meta = (k: string | null) => ETAPES.find(e => e.key === (k ?? 'a_venir')) ?? ETAPES[0]
@@ -111,9 +114,10 @@ export default function PipelinePage() {
         <Case label="Rendez-vous" valeur={String(kpi.total ?? 0)} />
         <Case label="À classer" valeur={String(kpi.aClasser ?? 0)} couleur={(kpi.aClasser ?? 0) > 0 ? "#e0a33e" : undefined} />
         <Case label="Qualifiés" valeur={String(kpi.qualifies ?? 0)} couleur="#c19653" />
-        <Case label="Clients signés" valeur={String(kpi.signes ?? 0)} couleur="#5c9b82" />
-        <Case label="CA généré" valeur={euros(kpi.caGenere ?? 0)} couleur="#5f83ac" />
-        <Case label="À facturer" valeur={euros(kpi.aFacturer ?? 0)} couleur="#5c9b82" fort />
+        <Case label="Clients actifs" valeur={String(kpi.clientsActifs ?? 0)} couleur="#5c9b82" />
+        <Case label="Fixe acquis" valeur={euros(kpi.fixeAcquis ?? 0)} couleur="#c19653" />
+        <Case label="Abonnements clients" valeur={euros(kpi.caMensuelClients ?? 0) + "/mois"} couleur="#5f83ac" />
+        <Case label="Récurrent 5 %" valeur={euros(kpi.commissionMensuelle ?? 0) + "/mois"} couleur="#5c9b82" fort />
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
@@ -155,8 +159,8 @@ export default function PipelinePage() {
               <span className="text-[11px] px-2 py-0.5 rounded-full flex-shrink-0"
                 style={{ background: (estAClasser(r) ? '#e0a33e' : m.color) + '22', color: estAClasser(r) ? '#e0a33e' : m.color }}>{estAClasser(r) ? 'À classer' : m.label}</span>
               <span className="text-sm font-semibold w-20 text-right flex-shrink-0"
-                style={{ color: r.remuneration > 0 ? '#5c9b82' : 'var(--color-muted-2)' }}>
-                {r.remuneration > 0 ? euros(r.remuneration) : '—'}
+                style={{ color: (r.commission_mensuelle > 0 || r.part_fixe > 0) ? '#5c9b82' : 'var(--color-muted-2)' }}>
+                {r.commission_mensuelle > 0 ? euros(r.commission_mensuelle) + "/m" : r.part_fixe > 0 ? euros(r.part_fixe) : "—"}
               </span>
             </button>
           )
@@ -222,27 +226,41 @@ export default function PipelinePage() {
               </div>
             )}
 
-            {/* Le CA n'est demandé QUE si le client a signé : réclamer un montant sur un rendez-vous
-                qui n'a rien donné n'a pas de sens et brouille l'écran. */}
+            {/* L'abonnement n'est demandé QUE si le client a signé. Et une fin d'abonnement se DATE,
+                elle ne s'efface pas : sinon les factures des mois déjà prélevés changeraient. */}
             {courant.crm_stage === 'signe' && (
               <div className="mb-4">
                 <div className="text-[11px] uppercase font-semibold mb-2 flex items-center gap-1" style={{ color: 'var(--color-muted-2)' }}>
-                  <Euro size={11} /> CA encaissé grâce à ce client (HT)
+                  <Euro size={11} /> Ce que ce client te paie chaque mois (HT)
                 </div>
                 <input
                   type="text"
                   inputMode="decimal"
-                  defaultValue={courant.ca_ht ?? ''}
-                  placeholder="ex. 4500"
-                  onBlur={e => void patch(courant.id, { caHt: e.target.value })}
+                  defaultValue={courant.montant_mensuel ?? ''}
+                  placeholder="ex. 500"
+                  onBlur={e => void patch(courant.id, { montantMensuel: e.target.value })}
                   className="w-full px-3 py-2 rounded-md text-sm"
                   style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                 />
-                <div className="text-[11px] mt-2" style={{ color: '#5c9b82' }}>
-                  Commission 5 % : <strong>{euros((courant.ca_ht ?? 0) * 0.05)}</strong> — total du rendez-vous {euros(courant.remuneration)}
+                <div className="text-[11px] mt-2" style={{ color: courant.client_actif ? '#5c9b82' : 'var(--color-muted-2)' }}>
+                  {courant.client_actif
+                    ? <>Commission 5 % : <strong>{euros((courant.montant_mensuel ?? 0) * 0.05)} par mois</strong>, tant qu'il reste client.</>
+                    : <>Abonnement terminé — plus aucune commission. Les mois déjà facturés restent inchangés.</>}
                 </div>
+
+                <div className="text-[11px] uppercase font-semibold mt-4 mb-2" style={{ color: 'var(--color-muted-2)' }}>
+                  Il n'est plus client depuis le
+                </div>
+                <input
+                  type="date"
+                  defaultValue={courant.client_actif_jusqu_a ?? ''}
+                  onChange={e => void patch(courant.id, { clientActifJusquA: e.target.value })}
+                  className="w-full px-3 py-2 rounded-md text-sm"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                />
                 <div className="text-[10px] mt-1" style={{ color: 'var(--color-muted-2)' }}>
-                  Saisis le montant réellement encaissé, pas le devis. Tu peux le mettre à jour au fil des règlements.
+                  Laisse vide tant qu'il est client. En indiquant une date, la commission s'arrête ce
+                  jour-là — les prélèvements passés ne sont jamais modifiés.
                 </div>
               </div>
             )}
