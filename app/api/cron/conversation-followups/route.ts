@@ -140,6 +140,25 @@ async function runCron(req: Request) {
           AND rd.status IN ('sent', 'pending', 'awaiting_validation', 'scheduled', 'sending')
       )
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
+      /**
+       * ⚠️ GARDE-FOU PAR LE CONTACT, ET PAS SEULEMENT PAR LE LIEN. Constaté dans la foulée du
+       * correctif ci-dessus : « Couvreur Jimmy » avait bien reçu sa réponse à 09h25, et le
+       * rattrapage lui en a régénéré une seconde dix minutes plus tard.
+       *
+       * La raison : le test précédent passe par `rd.incoming_reply_id`. Si ce lien manque ou a
+       * dérivé — ça arrive, c'est l'incident des leads invisibles du 08/08 — la réponse envoyée
+       * devient introuvable et le message paraît orphelin.
+       *
+       * On vérifie donc AUSSI qu'aucune réponse n'est partie à CE CONTACT depuis son message.
+       * Deux vérifications indépendantes sur la même question : si l'une déraille, l'autre tient.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM reply_drafts rd3
+        JOIN incoming_replies ir3 ON ir3.id = rd3.incoming_reply_id
+        WHERE ir3.contact_id = ir.contact_id
+          AND rd3.status = 'sent'
+          AND rd3.sent_at >= ir.created_at
+      )
       AND ir.created_at = (SELECT MAX(ir2.created_at) FROM incoming_replies ir2 WHERE ir2.contact_id = ir.contact_id)
     ORDER BY ir.created_at DESC
     LIMIT 5
