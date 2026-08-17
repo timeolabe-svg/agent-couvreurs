@@ -29,8 +29,8 @@ let sql!: NeonQueryFunction<false, false>
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const GLOBAL_DEADLINE_MS = 21_000 // cron-job.org (gratuit) coupe à 30s → on répond AVANT (21s + 8s/boîte max ≈ 29s)
-const PER_BOX_TIMEOUT_MS = 8_000 // marge pour le fetch groupé des enveloppes (jusqu-à 180 messages en 1 aller-retour)
+const GLOBAL_DEADLINE_MS = 14_000 // cron-job.org coupe a 30s. Ne DEMARRE plus une boite au-dela de 14s : 14 + 12 (une boite) = 26s, marge sure. L ancien couple 21 + 8 tenait, 21 + 12 aurait dépassé.
+const PER_BOX_TIMEOUT_MS = 12_000 // 8s ne suffisait pas : le seul chargement des enveloppes de ~100 messages l epuisait, et la boite mourait sans avoir lu une seule reponse.
 const MAX_MSGS_PER_BOX = 180  // le warmup remplit vite la boîte : à 70, une vraie réponse un peu ancienne (ex. répondue tôt puis noyée sous le warmup) sortait de la fenêtre et n'était jamais lue. On élargit.
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
@@ -144,8 +144,37 @@ export async function POST(req: NextRequest) {
   // Rotation de l'ordre des boîtes à chaque run (toutes les 10 min) : avec un budget
   // serré (<30s), on ne lit pas forcément les 4 boîtes en un run → on tourne l'ordre
   // pour qu'aucune boîte ne soit jamais oubliée. La dédup Message-ID évite tout doublon.
-  const rot = Math.floor(Date.now() / 600_000) % boxes.length
-  const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot))
+  /**
+   * ⚠️ ROTATION PERSISTANTE, JAMAIS DÉRIVÉE DE L'HORLOGE.
+   *
+   * `Math.floor(Date.now() / 600_000) % boxes.length` suppose que le cron passe exactement toutes
+   * les 10 minutes. Dès que la cadence change — et elle a changé plusieurs fois cette semaine —
+   * la bascule devient dégénérée : si la période est un multiple du pas, certaines boîtes ne sont
+   * JAMAIS lues, sans la moindre erreur pour le signaler. Un compteur en base ne dépend d'aucune
+   * hypothèse sur la fréquence.
+   */
+  const rotRow = (await sql`
+    INSERT INTO agent_config (key, value, updated_at) VALUES ('imap_rotation', '1', now())
+    ON CONFLICT (key) DO UPDATE SET
+      value = ((COALESCE(NULLIF(agent_config.value, ''), '0')::bigint + 1))::text, updated_at = now()
+    RETURNING value
+  `.catch(() => [] as Array<{ value: string }>)) as Array<{ value: string }>
+  const rot = Number(rotRow[0]?.value ?? 0) % boxes.length
+
+  /**
+   * ⚠️ MOINS DE BOÎTES PAR PASSAGE, MAIS DU TEMPS POUR CHACUNE.
+   *
+   * Constaté le 17/08 : « 101 messages récents » puis « timeout box », sur CHAQUE boîte, et
+   * seulement 2 messages traités en 25 secondes. Avec 8 s par boîte, le seul chargement des
+   * enveloppes d'une centaine de messages épuisait déjà le délai — la boîte mourait avant d'avoir
+   * examiné une seule réponse. Quatre boîtes traitées à moitié valent moins que deux traitées
+   * entièrement : une réponse à moitié lue n'est pas lue.
+   *
+   * Deux boîtes par passage, 12 s chacune. Avec la rotation, chaque boîte est relevée à chaque
+   * deuxième passage — soit toutes les 20 minutes à cadence de 10 min.
+   */
+  const BOITES_PAR_PASSAGE = 2
+  const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot)).slice(0, BOITES_PAR_PASSAGE)
   const loop = (async () => {
     for (const box of orderedBoxes) {
       if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push('⏱ budget global atteint'); break }
