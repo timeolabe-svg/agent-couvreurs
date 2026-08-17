@@ -48,6 +48,22 @@ export async function GET() {
            c.company, c.name, c.city, c.phone, c.email
     FROM rdv r
     LEFT JOIN contacts c ON c.id = r.contact_id
+    /**
+     * ⚠️ UN CRÉNEAU PROPOSÉ N'EST PAS UN RENDEZ-VOUS.
+     *
+     * Première version : toutes les lignes de la table rdv. Résultat affiché — 14 rendez-vous, alors que
+     * Timéo en comptait 9. Les 5 en trop étaient des créneaux au statut proposed : l'agent les a suggérés,
+     * le prospect n'a jamais dit oui. Trois d'entre eux faisaient même doublon avec le rendez-vous
+     * confirmé qui a suivi.
+     *
+     * Gonfler le nombre de rendez-vous est la pire erreur possible sur cet écran : c'est lui qui
+     * sert de base à la facturation. Un chiffre qui surestime ce qu'on a produit se retourne contre
+     * nous à la première vérification du client.
+     *
+     * Règle déjà posée pour l'agenda : rien n'est un rendez-vous tant que le prospect n'a pas
+     * confirmé. Les annulés sortent aussi — ils n'ont pas eu lieu.
+     */
+    WHERE r.status = 'confirmed'
     ORDER BY r.scheduled_at DESC
   `) as Array<Record<string, unknown>>
 
@@ -64,10 +80,23 @@ export async function GET() {
    * les statistiques — ils ont bien eu lieu — mais ne doivent produire aucune facturation. Un
    * compteur d'activité et un compteur d'argent ne mesurent pas la même chose.
    */
+  /**
+   * ⚠️ « À VENIR » NE VEUT RIEN DIRE POUR UN RENDEZ-VOUS PASSÉ.
+   *
+   * Tous les rendez-vous non classés tombaient dans « À venir », y compris ceux de juillet. Timéo
+   * l'a vu tout de suite : « il doit y avoir que celui de demain dans à venir ». Un rendez-vous
+   * passé et non classé n'est pas à venir — il ATTEND UNE DÉCISION, et c'est exactement ce que
+   * l'écran doit réclamer. Laisser dormir 8 rendez-vous dans une case au nom rassurant, c'est
+   * garantir que personne ne les classera jamais.
+   */
+  const passe = (r: Record<string, unknown>) =>
+    etape(r) === 'a_venir' && new Date(String(r.scheduled_at)).getTime() < Date.now()
+
   const total = lignes.length
   const qualifies = lignes.filter(r => ['qualifie', 'signe', 'perdu'].includes(etape(r))).length
   const signes = lignes.filter(r => etape(r) === 'signe').length
-  const aVenir = lignes.filter(r => etape(r) === 'a_venir').length
+  const aVenir = lignes.filter(r => etape(r) === 'a_venir' && !passe(r)).length
+  const aClasser = lignes.filter(passe).length
   const nonQualifies = lignes.filter(r => etape(r) === 'non_qualifie').length
   const caGenere = lignes.reduce((n, r) => n + (typeof r.ca_ht === 'number' ? r.ca_ht : 0), 0)
   const aFacturer = lignes.reduce((n, r) => n + (r.remuneration as number), 0)
@@ -75,7 +104,7 @@ export async function GET() {
   return NextResponse.json({
     rdvs: lignes,
     bareme: { fixe_par_rdv_qualifie: 50, commission_sur_ca: TAUX_COMMISSION },
-    kpi: { total, qualifies, signes, aVenir, nonQualifies, caGenere, aFacturer },
+    kpi: { total, qualifies, signes, aVenir, aClasser, nonQualifies, caGenere, aFacturer },
   })
 }
 

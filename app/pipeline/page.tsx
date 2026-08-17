@@ -36,6 +36,13 @@ interface Rdv {
 
 type EtapeKey = 'a_venir' | 'qualifie' | 'signe' | 'perdu' | 'non_qualifie'
 
+/**
+ * ⚠️ Un rendez-vous PASSÉ et non classé n'est pas « à venir » : il attend une décision.
+ * Les laisser dans une case au nom rassurant garantit que personne ne les classera jamais —
+ * c'est ainsi que 8 rendez-vous de juillet dormaient sans que rien ne le signale.
+ */
+const estAClasser = (r: Rdv) => (r.crm_stage ?? 'a_venir') === 'a_venir' && new Date(r.scheduled_at).getTime() < Date.now()
+
 const ETAPES: Array<{ key: EtapeKey; label: string; color: string; aide: string; badge: string | null; icon: React.ElementType }> = [
   { key: 'a_venir',      label: 'À venir',      color: '#5f83ac', badge: null,     aide: 'Calé, pas encore eu lieu — ne compte pas encore', icon: CalendarClock },
   { key: 'qualifie',     label: 'Qualifié',     color: '#c19653', badge: '+50 €',  aide: 'Honoré, décisionnaire, concerné (intéressé ou non)', icon: Target },
@@ -58,7 +65,7 @@ export default function PipelinePage() {
   const [rdvs, setRdvs] = useState<Rdv[]>([])
   const [kpi, setKpi] = useState<Record<string, number>>({})
   const [ouvert, setOuvert] = useState<string | null>(null)
-  const [filtre, setFiltre] = useState<EtapeKey | 'tous'>('tous')
+  const [filtre, setFiltre] = useState<EtapeKey | 'tous' | 'a_classer'>('tous')
   const [charge, setCharge] = useState(true)
 
   const load = useCallback(async () => {
@@ -83,7 +90,10 @@ export default function PipelinePage() {
   }
 
   const listes = useMemo(
-    () => filtre === 'tous' ? rdvs : rdvs.filter(r => (r.crm_stage ?? 'a_venir') === filtre),
+    () => filtre === 'tous' ? rdvs
+      : filtre === 'a_classer' ? rdvs.filter(estAClasser)
+      : filtre === 'a_venir' ? rdvs.filter(r => (r.crm_stage ?? 'a_venir') === 'a_venir' && !estAClasser(r))
+      : rdvs.filter(r => (r.crm_stage ?? 'a_venir') === filtre),
     [rdvs, filtre],
   )
   const courant = rdvs.find(r => r.id === ouvert) ?? null
@@ -99,6 +109,7 @@ export default function PipelinePage() {
       {/* Chiffres du haut : activité à gauche, argent à droite — ils ne mesurent pas la même chose. */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <Case label="Rendez-vous" valeur={String(kpi.total ?? 0)} />
+        <Case label="À classer" valeur={String(kpi.aClasser ?? 0)} couleur={(kpi.aClasser ?? 0) > 0 ? "#e0a33e" : undefined} />
         <Case label="Qualifiés" valeur={String(kpi.qualifies ?? 0)} couleur="#c19653" />
         <Case label="Clients signés" valeur={String(kpi.signes ?? 0)} couleur="#5c9b82" />
         <Case label="CA généré" valeur={euros(kpi.caGenere ?? 0)} couleur="#5f83ac" />
@@ -107,8 +118,11 @@ export default function PipelinePage() {
 
       <div className="flex flex-wrap gap-2 mb-4">
         <Onglet actif={filtre === 'tous'} onClick={() => setFiltre('tous')} label={`Tous (${rdvs.length})`} couleur="var(--color-accent)" />
+        <Onglet actif={filtre === 'a_classer'} onClick={() => setFiltre('a_classer')} label={`À classer (${rdvs.filter(estAClasser).length})`} couleur="#e0a33e" />
         {ETAPES.map(e => {
-          const n = rdvs.filter(r => (r.crm_stage ?? 'a_venir') === e.key).length
+          const n = e.key === 'a_venir'
+            ? rdvs.filter(r => (r.crm_stage ?? 'a_venir') === 'a_venir' && !estAClasser(r)).length
+            : rdvs.filter(r => (r.crm_stage ?? 'a_venir') === e.key).length
           return <Onglet key={e.key} actif={filtre === e.key} onClick={() => setFiltre(e.key)} label={`${e.label} (${n})`} couleur={e.color} />
         })}
       </div>
@@ -139,7 +153,7 @@ export default function PipelinePage() {
                 </div>
               </div>
               <span className="text-[11px] px-2 py-0.5 rounded-full flex-shrink-0"
-                style={{ background: m.color + '22', color: m.color }}>{m.label}</span>
+                style={{ background: (estAClasser(r) ? '#e0a33e' : m.color) + '22', color: estAClasser(r) ? '#e0a33e' : m.color }}>{estAClasser(r) ? 'À classer' : m.label}</span>
               <span className="text-sm font-semibold w-20 text-right flex-shrink-0"
                 style={{ color: r.remuneration > 0 ? '#5c9b82' : 'var(--color-muted-2)' }}>
                 {r.remuneration > 0 ? euros(r.remuneration) : '—'}
