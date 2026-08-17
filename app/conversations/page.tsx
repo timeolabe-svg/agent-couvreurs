@@ -230,12 +230,28 @@ export default function ConversationsPage() {
                 // Un état qui change ce qui va se passer doit se voir au premier coup d'œil.
                 const enAttente = m.role === 'agent' && m.status !== 'sent'
                 const aValider = m.role === 'agent' && (m.status === 'pending' || m.status === 'awaiting_validation')
+                /**
+                 * ⚠️ « Réponse envoyée » ÉTAIT LE CAS PAR DÉFAUT — et c'est ainsi qu'un brouillon
+                 * REJETÉ s'affichait comme parti (constaté le 17/08/2026).
+                 *
+                 * Cas réel : un couvreur du Cannet propose « je vous donne 20 % de mon bénéfice ».
+                 * Le brouillon de réponse finit en statut 'rejected', donc rien ne part — mais
+                 * l'écran annonce « Réponse envoyée · 7 août, 18:45 », avec le texte complet sous
+                 * les yeux. Dix jours plus tard le prospect attend toujours, et personne ne peut
+                 * s'en douter : la négociation la plus chaude de la semaine, perdue par un libellé.
+                 *
+                 * Un état inconnu doit se dire inconnu. On n'affiche « envoyée » que pour 'sent',
+                 * et tout autre statut est nommé explicitement — quitte à afficher un mot technique.
+                 */
                 const libelle = m.role === 'sent'
                   ? 'Email envoyé'
                   : m.role === 'agent'
                     ? (aValider ? 'BROUILLON — PAS ENVOYÉ, attend ta validation'
                       : m.status === 'scheduled' ? 'Réponse programmée — partira automatiquement'
-                      : 'Réponse envoyée')
+                      : m.status === 'sent' ? 'Réponse envoyée'
+                      : m.status === 'rejected' ? 'REJETÉ — jamais envoyé, le prospect attend'
+                      : m.status === 'failed' ? 'ÉCHEC D\'ENVOI — le prospect n\'a rien reçu'
+                      : `PAS ENVOYÉ (${m.status ?? 'état inconnu'})`)
                     : 'Reçu'
                 return (
                   <div key={i} className="flex flex-col" style={{ alignItems: isOut ? 'flex-end' : 'flex-start' }}>

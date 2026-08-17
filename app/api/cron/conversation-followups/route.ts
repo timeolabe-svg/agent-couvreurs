@@ -119,7 +119,26 @@ async function runCron(req: Request) {
     WHERE ir.created_at > NOW() - INTERVAL '30 days'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
       AND ir.contact_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id)
+      /**
+       * ⚠️ UN BROUILLON REJETÉ TOMBAIT ENTRE LES DEUX FILETS (constaté le 17/08/2026).
+       *
+       * Cette partie cherchait les réponses SANS AUCUN brouillon ; la partie A-bis, celles dont le
+       * brouillon avait été ENVOYÉ. Un brouillon en statut 'rejected' n'entre ni dans l'une ni dans
+       * l'autre : le prospect n'a jamais reçu de réponse, et aucun rattrapage ne se déclenche.
+       *
+       * Cas réel : un couvreur du Cannet propose « je vous donne 20 % de mon bénéfice » le 7 août.
+       * Un brouillon est créé, rejeté, et plus rien pendant dix jours. C'est une négociation
+       * commerciale — le lead le plus chaud de la semaine — perdue en silence.
+       *
+       * On ne considère donc plus « il existe un brouillon » mais « il existe un brouillon VIVANT ».
+       * Les statuts d'attente de validation sont exclus du rattrapage : ceux-là attendent
+       * légitimement une décision humaine, les régénérer créerait des doublons.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM reply_drafts rd
+        WHERE rd.incoming_reply_id = ir.id
+          AND rd.status IN ('sent', 'pending', 'awaiting_validation', 'scheduled', 'sending')
+      )
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
       AND ir.created_at = (SELECT MAX(ir2.created_at) FROM incoming_replies ir2 WHERE ir2.contact_id = ir.contact_id)
     ORDER BY ir.created_at DESC
