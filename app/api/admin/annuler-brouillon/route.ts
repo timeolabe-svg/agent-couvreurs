@@ -51,7 +51,7 @@ async function handler(req: NextRequest) {
 
   const annules = (await sql`
     UPDATE reply_drafts rd
-    SET status = 'rejected'
+    SET status = 'rejected', rejete_par = 'humain', rejete_le = NOW()
     FROM incoming_replies ir, contacts c
     WHERE ir.id = rd.incoming_reply_id
       AND c.id = ir.contact_id

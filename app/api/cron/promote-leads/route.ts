@@ -73,10 +73,21 @@ async function handler(req: NextRequest) {
     SELECT COUNT(*)::int AS n FROM outscraper_leads WHERE status = 'new'
   `) as Array<{ n: number }>
 
-  // Tour PAIR → validation. Sauf s'il n'y a plus rien à promouvoir : dans ce cas on valide à
-  // chaque passage, il n'y a aucune raison d'attendre.
-  const plusRienAPromouvoir = !restant[0]?.n
-  if (tour % 2 === 0 || plusRienAPromouvoir) {
+  /**
+   * ⚠️ LA VALIDATION PASSE AVANT LA PROMOTION quand le stock brut est faible.
+   *
+   * L'alternance stricte un-tour-sur-deux plafonnait la vérification à ~190 adresses/jour, pour un
+   * objectif de 100 NOUVEAUX contacts quotidiens et un taux de validité mesuré autour de 50 % :
+   * on produisait ~95 adresses valides par jour, tout juste sous la cible. Le goulot n'était ni
+   * l'envoi (132/jour de capacité) ni le stock, mais cette étape.
+   *
+   * Règle : on ne promeut que s'il reste VRAIMENT des leads à promouvoir (plus de 40). En dessous,
+   * chaque passage valide — soit ~380 adresses testées par jour, ~190 valides. Largement au-dessus
+   * de la cible, et la promotion reprend le dessus dès qu'un nouveau fichier est importé.
+   */
+  const resteAPromouvoir = restant[0]?.n ?? 0
+  const stockBrutFaible = resteAPromouvoir < 40
+  if (tour % 2 === 0 || stockBrutFaible) {
     const v = await fetch(`${base}/api/cron/validate-emails?key=${encodeURIComponent(cle)}`, {
       headers: { 'user-agent': 'promote-leads-cron' },
     }).catch(() => null)
