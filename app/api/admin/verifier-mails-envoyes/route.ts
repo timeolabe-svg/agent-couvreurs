@@ -25,14 +25,14 @@ export async function GET(req: NextRequest) {
   const { sql } = await import('@/lib/db')
 
   const lignes = (await sql`
-    SELECT q.id, q.sent_at, q.body, q.sequence_step,
+    SELECT q.id, q.sent_at, q.status, q.body, q.sequence_step,
            c.email, c.company, c.audit_level, c.audit_score, c.audit_weaknesses
     FROM email_queue q
     JOIN contacts c ON c.id = q.contact_id
-    WHERE q.status = 'sent' AND q.body IS NOT NULL
-    ORDER BY q.sent_at DESC
+    WHERE q.status IN ('sent', 'queued') AND q.body IS NOT NULL
+    ORDER BY q.sent_at DESC NULLS LAST
   `) as Array<{
-    id: string; sent_at: string; body: string; sequence_step: number
+    id: string; sent_at: string; status: string; body: string; sequence_step: number
     email: string; company: string; audit_level: string | null
     audit_score: number | null; audit_weaknesses: string[] | null
   }>
@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
     .map(l => {
       const ctrl = verifierAffirmations(l.body, l.audit_weaknesses, l.audit_level !== 'no-website')
       return ctrl.ok ? null : {
+        etat: l.status,
         email: l.email,
         entreprise: l.company,
         envoye_le: l.sent_at,
