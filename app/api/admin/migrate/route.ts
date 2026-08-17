@@ -120,6 +120,29 @@ export async function GET(request: NextRequest) {
        * (confirmé, annulé). Les confondre reviendrait à laisser un classement commercial modifier
        * l'agenda — ou l'inverse.
        */
+      /**
+       * APPRENDRE DE CE QUE TIMÉO CORRIGE — et pas seulement de ce qu'il valide.
+       *
+       * ⚠️ L'apprentissage existait mais perdait l'essentiel. Quand Timéo modifiait un brouillon,
+       * `reply_drafts.body` était ÉCRASÉ par sa version : on savait qu'il avait corrigé (`edited`),
+       * jamais CE QU'IL AVAIT CORRIGÉ. L'agent recevait de bons exemples, jamais l'écart entre ce
+       * qu'il avait proposé et ce qu'un humain a jugé bon. Or c'est l'écart qui enseigne.
+       *
+       * Et un REJET n'apprenait rien du tout, alors que c'est le signal le plus net qui soit :
+       * « ne réponds jamais comme ça ».
+       *
+       * On conserve donc la proposition d'origine (`body_ia`), et `learned_replies` distingue
+       * l'exemple à suivre de l'exemple à fuir.
+       */
+      nom: 'apprentissage : garder la version IA et les rejets',
+      run: () => db.execute(sql`
+        ALTER TABLE reply_drafts   ADD COLUMN IF NOT EXISTS body_ia TEXT;
+        ALTER TABLE learned_replies
+          ADD COLUMN IF NOT EXISTS answer_ia TEXT,
+          ADD COLUMN IF NOT EXISTS rejete    BOOLEAN NOT NULL DEFAULT FALSE
+      `),
+    },
+    {
       nom: 'rdv : classement client (crm_stage) + motif de non-qualification',
       run: () => db.execute(sql`
         ALTER TABLE rdv

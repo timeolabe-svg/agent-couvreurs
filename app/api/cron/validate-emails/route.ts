@@ -45,6 +45,9 @@ const TIME_BUDGET_MS = 18000
 // le contact en fin de rotation au lieu de le retenter immédiatement. Plafond de tentatives pour
 // ne pas dépenser des crédits MV indéfiniment sur une adresse structurellement injoignable.
 const MAX_MV_ATTEMPTS = 5
+// Deux verdicts « unknown » suffisent : le second couvre un greylisting passager, au-dela le
+// domaine ne repondra jamais et chaque essai supplementaire est un credit perdu.
+const MAX_UNKNOWN_ATTEMPTS = 2
 
 /** ⚠️ ENVELOPPE D'ERREUR GLOBALE (leçon 48) : jamais de 500 muet, toujours le motif réel. */
 export async function GET(req: Request) {
@@ -116,8 +119,19 @@ async function runCron(req: Request) {
         `https://api.millionverifier.com/api/v3/?api=${mvKey}&email=${encodeURIComponent(c.email)}&timeout=6`,
         { signal: AbortSignal.timeout(8000) }
       )
+      /**
+       * ⚠️ UNE PANNE DE MILLIONVERIFIER NE DOIT PAS CONSOMMER LES ESSAIS DU CONTACT.
+       *
+       * Avant : toute issue — verdict « unknown », erreur HTTP, timeout, crédits épuisés —
+       * incrémentait `mv_attempts`. Au bout de 5, le contact était déclaré injoignable et sa file
+       * annulée. Autrement dit, une indisponibilité de MV d'une heure suffisait à condamner
+       * définitivement des adresses parfaitement valides, sans que rien ne le signale.
+       *
+       * On sépare donc ce qui est IMPUTABLE À L'ADRESSE (un verdict rendu) de ce qui est un
+       * incident technique de notre côté. Un incident se retente sans rien décompter.
+       */
       if (!resp.ok) {
-        await db.update(contacts).set(attemptFields).where(eq(contacts.id, c.id))
+        await db.update(contacts).set({ mv_last_attempt_at: new Date() }).where(eq(contacts.id, c.id))
         noter('http_' + resp.status)
         unknown++; continue
       }
@@ -135,15 +149,36 @@ async function runCron(req: Request) {
           .set({ status: 'cancelled' })
           .where(and(eq(email_queue.contact_id, c.id), inArray(email_queue.status, ['pending', 'queued'])))
         rejected++
+      } else if (data.error) {
+        // Crédits épuisés, clé invalide, quota : le problème est CHEZ NOUS. On ne décompte rien,
+        // sinon une panne de facturation condamnerait des adresses valides.
+        await db.update(contacts).set({ mv_last_attempt_at: new Date() }).where(eq(contacts.id, c.id))
+        unknown++
       } else {
-        // 'unknown' / 'error' (crédits) → on laisse, re-tenté plus tard (en fin de rotation).
-        await db.update(contacts).set(attemptFields).where(eq(contacts.id, c.id))
+        /**
+         * ⚠️ « unknown » EST UN VERDICT, PAS UNE PANNE — et le retenter cinq fois est du gaspillage.
+         *
+         * Mesuré le 17/08 : 6 adresses sur 8 revenaient « unknown ». Avec MAX_MV_ATTEMPTS à 5,
+         * chacune consommait jusqu'à cinq crédits pour un résultat qui ne change pas — le serveur
+         * du destinataire refuse simplement de dire si la boîte existe (greylisting, catch-all
+         * silencieux). C'est une propriété du domaine, pas un aléa.
+         *
+         * Deux essais suffisent : le second couvre le cas d'un greylisting temporaire. Au-delà, on
+         * arrête et le contact part en injoignable par le nettoyage habituel. Économie attendue :
+         * environ 60 % des crédits consommés aujourd'hui.
+         */
+        const essais = (c.mv_attempts ?? 0) + 1
+        await db.update(contacts).set({
+          ...attemptFields,
+          // On pousse directement au plafond au 2e « unknown » : inutile d'attendre 3 tours de plus.
+          mv_attempts: essais >= MAX_UNKNOWN_ATTEMPTS ? MAX_MV_ATTEMPTS : essais,
+        }).where(eq(contacts.id, c.id))
         unknown++
       }
     } catch (e) {
       noter('exception:' + String((e as Error)?.name ?? e).slice(0, 30))
-      // MV indisponible / timeout → on laisse pour re-tenter, même logique de rotation.
-      await db.update(contacts).set(attemptFields).where(eq(contacts.id, c.id)).catch(() => {})
+      // Timeout ou réseau : incident technique de notre côté, on ne décompte pas d'essai.
+      await db.update(contacts).set({ mv_last_attempt_at: new Date() }).where(eq(contacts.id, c.id)).catch(() => {})
       unknown++
     }
   }

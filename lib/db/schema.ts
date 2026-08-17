@@ -117,6 +117,9 @@ export const reply_drafts = pgTable('reply_drafts', {
   sent_at: timestamp('sent_at'),
   // Qui a rejeté : 'humain' (Timéo, dans « À valider ») ou null/'systeme'. Une décision humaine
   // ne se rediscute pas — le rattrapage ne régénère jamais un brouillon rejeté par un humain.
+  // Proposition ORIGINALE de l'IA, conservée quand Timéo modifie le texte : sans elle on sait
+  // qu'il a corrigé, jamais ce qu'il a corrigé — et c'est l'écart qui enseigne.
+  body_ia: text('body_ia'),
   rejete_par: text('rejete_par'),
   rejete_le: timestamp('rejete_le'),
   created_at: timestamp('created_at').defaultNow(),
@@ -180,6 +183,8 @@ export const learned_replies = pgTable('learned_replies', {
   answer: text('answer').notNull(),            // réponse finale validée/écrite par le client
   classification: text('classification'),      // question/objection/interest/rdv_request...
   edited: boolean('edited').default(false),    // le client a-t-il modifié la proposition IA ?
+  answer_ia: text('answer_ia'),                // ce que l'IA avait proposé (pour apprendre de l'écart)
+  rejete: boolean('rejete').default(false),    // exemple NÉGATIF : réponse écartée par le client
   times_reused: integer('times_reused').default(0),
   created_at: timestamp('created_at').defaultNow(),
 }, (table) => ({
