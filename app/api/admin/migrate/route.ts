@@ -110,6 +110,24 @@ export async function GET(request: NextRequest) {
        *
        * Une décision humaine ne se rediscute pas. On trace donc son auteur.
        */
+      /**
+       * SUIVI DES RENDEZ-VOUS — le classement que Haris doit pouvoir faire lui-même.
+       *
+       * Barème Hdigiweb (différent de Revele) : 50 € par RDV qualifié + 5 % du CA généré. Le client
+       * renseigne le montant qu'il encaisse réellement, et la commission se calcule seule.
+       *
+       * ⚠️ `crm_stage` est le classement de Haris, `status` reste l'état technique du rendez-vous
+       * (confirmé, annulé). Les confondre reviendrait à laisser un classement commercial modifier
+       * l'agenda — ou l'inverse.
+       */
+      nom: 'rdv : classement client (crm_stage) + motif de non-qualification',
+      run: () => db.execute(sql`
+        ALTER TABLE rdv
+          ADD COLUMN IF NOT EXISTS crm_stage          TEXT DEFAULT 'a_venir',
+          ADD COLUMN IF NOT EXISTS unqualified_reason TEXT
+      `),
+    },
+    {
       nom: 'reply_drafts : qui a rejete le brouillon',
       run: () => db.execute(sql`
         ALTER TABLE reply_drafts

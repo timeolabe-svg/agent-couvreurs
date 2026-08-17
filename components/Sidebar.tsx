@@ -3,13 +3,14 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, MessageSquare, Brain, Users, LogOut, Inbox, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Calendar, Cpu, BarChart2, Megaphone, SlidersHorizontal, MessageSquare, Brain, Users, LogOut, Inbox, Menu, X, Target } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 
 const NAV_BEFORE_BELL = [
   { href: '/',          label: 'Suivi leads', icon: LayoutDashboard },
   { href: '/leads',     label: 'Leads',       icon: Users },
   { href: '/agenda',    label: 'Agenda',      icon: Calendar },
+  { href: '/pipeline',  label: 'Suivi RDV',   icon: Target },
 ]
 
 const NAV_AFTER_BELL = [

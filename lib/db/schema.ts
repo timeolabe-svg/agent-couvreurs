@@ -139,6 +139,10 @@ export const rdv = pgTable('rdv', {
   // Suivi de la commission de 5 % sur le CA apporté. Le client marque le RDV comme signé et
   // renseigne le CA HT réellement ENCAISSÉ (pas facturé), cumulé au fil des encaissements.
   ca_ht: numeric('ca_ht', { precision: 12, scale: 2 }),
+  // Classement commercial fait par le CLIENT (Haris) : a_venir / qualifie / signe / perdu /
+  // non_qualifie. Distinct de `status`, qui est l'état technique du rendez-vous.
+  crm_stage: text('crm_stage').default('a_venir'),
+  unqualified_reason: text('unqualified_reason'),
   signed_at: timestamp('signed_at'),
   client_note: text('client_note'),
   created_at: timestamp('created_at').defaultNow(),
