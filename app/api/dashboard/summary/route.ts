@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
 
 function getMockSummary() {
   const rdvThisMonth = 12
-  const revenue = rdvThisMonth * PRIX_PAR_RDV
+  const revenue = rdvThisMonth * PRIX_PAR_RDV // (données de démonstration uniquement)
 
   const now = new Date()
   const day = now.getDay()
@@ -119,12 +119,12 @@ export async function GET() {
     return NextResponse.json(getMockSummary())
   }
 
-  const { db } = await import('@/lib/db')
+  const { db, sql: sqlBrut } = await import('@/lib/db')
   const {
     email_queue, incoming_replies, reply_drafts, rdv, contacts,
     dashboard_events, campaigns, agent_config, learning_reports,
   } = await import('@/lib/db/schema')
-  const { count, eq, gte, and, desc, sql, lte, ne, or, isNull } = await import('drizzle-orm')
+  const { count, eq, gte, and, desc, sql, lte, ne, or, isNull, inArray } = await import('drizzle-orm')
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -439,7 +439,21 @@ export async function GET() {
       cnt: count(),
     })
     .from(rdv)
-    .where(and(gte(rdv.created_at, sixMonthsAgo), ne(rdv.status, 'proposed')))
+    /**
+     * ⚠️ SEULS LES RENDEZ-VOUS QUALIFIÉS SE FACTURENT.
+     *
+     * Avant : nombre de RDV × 80 €, sans regarder leur classement. Le tableau de bord annonçait
+     * donc 560 € pour juillet alors que les 7 rendez-vous du mois se sont révélés NON QUALIFIÉS
+     * (no-show, mauvais interlocuteur) et ne valent rien. Deux écrans, deux calculs, deux vérités.
+     *
+     * Le classement fait par Haris dans « Suivi RDV » est la SEULE source de ce qui est dû. Ici on
+     * la lit, on ne la recalcule pas.
+     */
+    .where(and(
+      gte(rdv.created_at, sixMonthsAgo),
+      eq(rdv.status, 'confirmed'),
+      inArray(rdv.crm_stage, ['qualifie', 'signe', 'perdu']),
+    ))
     .groupBy(sql`TO_CHAR(${rdv.created_at}, 'Month YYYY'), TO_CHAR(${rdv.created_at}, 'YYYY-MM')`)
     .orderBy(sql`TO_CHAR(${rdv.created_at}, 'YYYY-MM') DESC`)
 
@@ -452,6 +466,72 @@ export async function GET() {
       rdv: r.cnt,
       revenue: r.cnt * PRIX_PAR_RDV,
     }))
+
+  /**
+   * CE QUI EST RÉELLEMENT DÛ — et rien d'autre.
+   *
+   * ⚠️ Le tableau de bord affichait « VALEUR CE MOIS » = tous les rendez-vous × 80 €. Il annonçait
+   * donc de l'argent sur des rendez-vous que Haris venait de classer NON QUALIFIÉS (personne
+   * absente, mauvais interlocuteur, hors sujet). Un compteur qui gonfle tout seul sur une
+   * rémunération, c'est la première chose qui fait perdre confiance dans la facture.
+   *
+   * Le classement fait dans « Suivi RDV » (crm_stage) est la seule source. Ici on le LIT.
+   */
+  const [{ rdvFacturablesMois }] = await db
+    .select({ rdvFacturablesMois: count() })
+    .from(rdv)
+    .where(and(
+      gte(rdv.created_at, monthStart),
+      eq(rdv.status, 'confirmed'),
+      inArray(rdv.crm_stage, ['qualifie', 'signe', 'perdu']),
+    ))
+  const revenueFacturable = rdvFacturablesMois * PRIX_PAR_RDV
+
+  /**
+   * NOUVEAUX CONTACTS, PAS MAILS ENVOYÉS.
+   *
+   * ⚠️ « 6 816 emails envoyés » ne mesure pas la prospection : les relances comptent dedans, donc
+   * le nombre monte même si plus personne de nouveau n'est démarché. Ce qui compte, c'est le
+   * nombre de PERSONNES touchées pour la première fois (étape 0).
+   */
+  const nouveauxRows = (await sqlBrut`
+    SELECT
+      COUNT(DISTINCT contact_id)::int AS total,
+      COUNT(DISTINCT contact_id) FILTER (WHERE sent_at >= CURRENT_DATE)::int AS aujourdhui
+    FROM email_queue
+    WHERE status = 'sent' AND sequence_step = 0
+  `) as Array<{ total: number; aujourdhui: number }>
+  const nouveauxContactsTotal = nouveauxRows[0]?.total ?? 0
+  const nouveauxContactsAujourdhui = nouveauxRows[0]?.aujourdhui ?? 0
+
+  /**
+   * STOCK RESTANT — combien de personnes n'ont JAMAIS reçu de premier mail.
+   *
+   * Même calcul que /api/admin/bilan-jour : le tampon outscraper_leads ne mesure qu'un bout du
+   * tuyau, un contact déjà créé mais jamais démarché est du stock lui aussi.
+   */
+  const stockRows = (await sqlBrut`
+    WITH jamais AS (
+      SELECT c.email_validated, c.google_reviews_count, c.mv_status
+      FROM contacts c
+      WHERE NOT EXISTS (
+        SELECT 1 FROM email_queue q
+        WHERE q.contact_id = c.id AND q.sequence_step = 0 AND q.status = 'sent'
+      )
+    )
+    SELECT
+      COUNT(*)::int AS jamais_demarches,
+      COUNT(*) FILTER (WHERE email_validated IS TRUE
+                         AND COALESCE(google_reviews_count, 0) >= 20)::int AS prets_a_partir,
+      COUNT(*) FILTER (WHERE email_validated IS NOT TRUE
+                         AND mv_status IS DISTINCT FROM 'injoignable')::int AS attendent_verification
+    FROM jamais
+  `) as Array<{ jamais_demarches: number; prets_a_partir: number; attendent_verification: number }>
+  const stockRestant = {
+    prets_a_partir: stockRows[0]?.prets_a_partir ?? 0,
+    attendent_verification: stockRows[0]?.attendent_verification ?? 0,
+    jamais_demarches: stockRows[0]?.jamais_demarches ?? 0,
+  }
 
   const weeklyLearning = weeklyLearningRaw[0]
     ? {
@@ -484,7 +564,7 @@ export async function GET() {
     activeCampaigns: activeCampaignsCount[0]?.cnt ?? 0,
     totalCampaigns: totalCampaignsCount[0]?.cnt ?? 0,
     lastTickMinutesAgo,
-    revenue_this_month: rdvThisMonth * PRIX_PAR_RDV,
+    revenue_this_month: revenueFacturable,
     // new
     repliesReceived,
     clientsSigned,
@@ -495,7 +575,11 @@ export async function GET() {
     topCampaigns,
     recentActivity,
     weeklyLearning,
-    revenue: rdvThisMonth * PRIX_PAR_RDV,
+    revenue: revenueFacturable,
+    rdvFacturablesMois,
+    nouveauxContactsTotal,
+    nouveauxContactsAujourdhui,
+    stockRestant,
     monthlyHistory,
     // legacy
     recentEvents,

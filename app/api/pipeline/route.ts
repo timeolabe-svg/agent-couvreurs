@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 /**
  * SUIVI DES RENDEZ-VOUS ET RÉMUNÉRATION — la source unique de ce que Timéo facture.
  *
- * ⚠️ BARÈME HDIGIWEB, DIFFÉRENT DE CELUI DE REVELE : **50 € par rendez-vous qualifié**, plus
+ * ⚠️ BARÈME HDIGIWEB, DIFFÉRENT DE CELUI DE REVELE : **80 € par rendez-vous qualifié**, plus
  * **5 % du montant MENSUEL de chaque client signé, tant qu'il reste client**. Chez Revele c'est
  * 10 € + 400 € à la signature. Les deux projets partagent le code, jamais les montants — les
  * recopier reviendrait à facturer un client au tarif d'un autre.
@@ -27,9 +27,9 @@ export const dynamic = 'force-dynamic'
 
 export const ETAPES = [
   { key: 'a_venir',      label: 'À venir',      fixe: 0,  abonnement: false },
-  { key: 'qualifie',     label: 'Qualifié',     fixe: 50, abonnement: false },
-  { key: 'signe',        label: 'Client signé', fixe: 50, abonnement: true  },
-  { key: 'perdu',        label: 'Perdu',        fixe: 50, abonnement: false },
+  { key: 'qualifie',     label: 'Qualifié',     fixe: 80, abonnement: false },
+  { key: 'signe',        label: 'Client signé', fixe: 80, abonnement: true  },
+  { key: 'perdu',        label: 'Perdu',        fixe: 80, abonnement: false },
   { key: 'non_qualifie', label: 'Non qualifié', fixe: 0,  abonnement: false },
 ] as const
 
@@ -101,7 +101,7 @@ export async function GET() {
     nonQualifies: lignes.filter(r => etape(r) === 'non_qualifie').length,
 
     // ── L'ARGENT ─────────────────────────────────────────────────────────────
-    // Acquis une fois : 50 € par rendez-vous qualifié (signés et perdus compris).
+    // Acquis une fois : 80 € par rendez-vous qualifié (signés et perdus compris).
     fixeAcquis: lignes.reduce((n, r) => n + Number(r.part_fixe ?? 0), 0),
     // Récurrent : 5 % du total mensuel des clients ENCORE actifs — ce qui tombe chaque mois.
     clientsActifs: clientsActifs.length,
@@ -111,7 +111,7 @@ export async function GET() {
 
   return NextResponse.json({
     rdvs: lignes,
-    bareme: { fixe_par_rdv_qualifie: 50, commission_sur_abonnement: TAUX_COMMISSION },
+    bareme: { fixe_par_rdv_qualifie: 80, commission_sur_abonnement: TAUX_COMMISSION },
     motifs: MOTIFS_NON_QUALIFIE,
     kpi,
   })

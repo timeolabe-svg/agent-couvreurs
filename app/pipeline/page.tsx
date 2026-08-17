@@ -6,7 +6,7 @@ import { CalendarClock, Target, CheckCircle2, CircleSlash, Phone, Mail, MapPin, 
 /**
  * SUIVI DES RENDEZ-VOUS — l'écran de Haris.
  *
- * ⚠️ BARÈME HDIGIWEB : 50 € par rendez-vous qualifié + 5 % du CA généré. Ce n'est PAS celui de
+ * ⚠️ BARÈME HDIGIWEB : 80 € par rendez-vous qualifié + 5 % du CA généré. Ce n'est PAS celui de
  * Revele (10 € + 400 €). Les deux pages se ressemblent ; leurs montants ne doivent jamais être
  * recopiés de l'une à l'autre.
  *
@@ -48,9 +48,9 @@ const estAClasser = (r: Rdv) => (r.crm_stage ?? 'a_venir') === 'a_venir' && new 
 
 const ETAPES: Array<{ key: EtapeKey; label: string; color: string; aide: string; badge: string | null; icon: React.ElementType }> = [
   { key: 'a_venir',      label: 'À venir',      color: '#5f83ac', badge: null,     aide: 'Calé, pas encore eu lieu — ne compte pas encore', icon: CalendarClock },
-  { key: 'qualifie',     label: 'Qualifié',     color: '#c19653', badge: '+50 €',  aide: 'Honoré, décisionnaire, concerné (intéressé ou non)', icon: Target },
-  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+50 € et 5 %/mois', aide: 'Devenu client — saisis son abonnement mensuel', icon: CheckCircle2 },
-  { key: 'perdu',        label: 'Perdu',        color: '#7a6b6b', badge: '+50 €',  aide: 'Qualifié mais pas transformé — les 50 € restent dus', icon: CircleSlash },
+  { key: 'qualifie',     label: 'Qualifié',     color: '#c19653', badge: '+80 €',  aide: 'Honoré, décisionnaire, concerné (intéressé ou non)', icon: Target },
+  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+80 € et 5 %/mois', aide: 'Devenu client — saisis son abonnement mensuel', icon: CheckCircle2 },
+  { key: 'perdu',        label: 'Perdu',        color: '#7a6b6b', badge: '+80 €',  aide: 'Qualifié mais pas transformé — les 80 € restent dus', icon: CircleSlash },
   { key: 'non_qualifie', label: 'Non qualifié', color: '#9a6b6b', badge: null,     aide: 'No-show, pas décisionnaire ou hors sujet — 0 €', icon: CircleSlash },
 ]
 
@@ -105,7 +105,7 @@ export default function PipelinePage() {
     <div className="p-6 max-w-6xl mx-auto" style={{ color: 'var(--color-text)' }}>
       <h1 className="text-lg font-semibold mb-1">Suivi des rendez-vous</h1>
       <p className="text-sm mb-5" style={{ color: 'var(--color-muted)' }}>
-        50 € par rendez-vous qualifié, plus 5 % du chiffre d&apos;affaires généré. Classe chaque
+        80 € par rendez-vous qualifié, plus 5 % du chiffre d&apos;affaires généré. Classe chaque
         rendez-vous et saisis le CA encaissé : le montant se calcule tout seul.
       </p>
 

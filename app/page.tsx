@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Mail, MessageSquare, Calendar, User, RefreshCw, Zap,
   Bell, Target, Trophy, Settings, BarChart2, Sparkles, Bot,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, Database,
 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -87,6 +87,12 @@ interface DashboardSummary {
   weeklyLearning: WeeklyLearning | null
   revenue: number
   monthlyHistory?: { month: string; rdv: number; revenue: number }[]
+  /** Rendez-vous du mois réellement facturables (classés qualifié / signé / perdu). */
+  rdvFacturablesMois?: number
+  /** Personnes démarchées pour la première fois — hors relances. */
+  nouveauxContactsTotal?: number
+  nouveauxContactsAujourdhui?: number
+  stockRestant?: { prets_a_partir: number; attendent_verification: number; jamais_demarches: number }
   _demo?: boolean
 }
 
@@ -167,7 +173,20 @@ export default function DashboardPage() {
   // KPI du haut = TOTAL de tous les RDV obtenus depuis le début (pas seulement le mois en cours).
   const rdvTotal = s?.totalRdv ?? rdvCount
   const clientsSigned = s?.clientsSigned ?? s?.totalSigned ?? 0
-  const revenue = s?.revenue ?? (rdvCount * 80)
+  /**
+   * ⚠️ NE JAMAIS RECALCULER LA RÉMUNÉRATION ICI.
+   *
+   * Le repli `rdvCount * 80` comptait TOUS les rendez-vous, y compris ceux que Haris a classés
+   * non qualifiés — l'écran annonçait donc de l'argent qui n'est pas dû. Deux calculs, c'est deux
+   * vérités, et sur une rémunération c'est la confiance dans la facture qui part. Le serveur (qui
+   * lit le classement crm_stage) est seul juge ; sans réponse on affiche 0, jamais une estimation.
+   */
+  const revenue = s?.revenue ?? 0
+  const rdvFacturables = s?.rdvFacturablesMois ?? 0
+  // Personnes démarchées pour la première fois — les relances ne comptent pas.
+  const nouveauxContacts = s?.nouveauxContactsTotal ?? 0
+  const stockPret = s?.stockRestant?.prets_a_partir ?? 0
+  const stockAttente = s?.stockRestant?.attendent_verification ?? 0
   const pendingReplies = s?.draftsAwaitingValidation ?? 0
   const rdvToday = s?.rdvToday ?? 0
   const pendingFollowups = s?.pendingFollowups ?? 0
@@ -302,14 +321,15 @@ export default function DashboardPage() {
         {/* ── SECTION 2: 4 KPI Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
           {[
-            { Icon: Mail, iconColor: '#5f83ac', label: 'EMAILS ENVOYÉS', value: emailsSent.toLocaleString('fr-FR'), href: '/campagnes' },
+            { Icon: Mail, iconColor: '#5f83ac', label: 'NOUVEAUX CONTACTS', value: nouveauxContacts.toLocaleString('fr-FR'), href: '/campagnes', aide: 'Personnes démarchées pour la première fois. Les relances ne sont pas comptées.' },
             { Icon: MessageSquare, iconColor: '#5c9b82', label: 'RÉPONSES REÇUES', value: String(repliesReceived), href: '/conversations' },
             { Icon: Calendar, iconColor: '#7d6fb0', label: 'RDV GÉNÉRÉS', value: String(rdvTotal), href: '/agenda' },
-            { Icon: User, iconColor: '#7d6fb0', label: 'CLIENTS SIGNÉS', value: String(clientsSigned), href: '/leads' },
+            { Icon: Database, iconColor: '#c19653', label: 'LEADS EN STOCK', value: stockPret.toLocaleString('fr-FR'), href: '/leads', aide: `${stockAttente} autres attendent la vérification de leur adresse` },
           ].map(card => (
             <a
               key={card.label}
               href={card.href}
+              title={(card as { aide?: string }).aide ?? undefined}
               style={{
                 display: 'block',
                 textDecoration: 'none',
@@ -351,6 +371,9 @@ export default function DashboardPage() {
             <div style={{ background: '#1a1a24', border: '1px solid #1e1e2e', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b6b80', marginBottom: 8 }}>Valeur ce mois</div>
               <div style={{ fontSize: 40, fontWeight: 700, color: '#e8e8f0', letterSpacing: '-0.03em' }}>{revenue.toLocaleString('fr-FR')} €</div>
+              <div style={{ fontSize: 11, color: '#6b6b80', marginTop: 6 }}>
+                {rdvFacturables} qualifié{rdvFacturables > 1 ? 's' : ''} sur {rdvCount} — seuls les qualifiés se facturent
+              </div>
             </div>
           </div>
 

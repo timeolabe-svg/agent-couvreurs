@@ -1,0 +1,2 @@
+Depose ici le fichier Excel/CSV des leads.
+Je le lis, je le verifie et je l injecte dans la campagne.
