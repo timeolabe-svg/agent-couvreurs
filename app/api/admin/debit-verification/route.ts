@@ -34,6 +34,20 @@ export async function GET(req: NextRequest) {
     GROUP BY 1 ORDER BY 1 DESC
   `) as Array<Record<string, number | string>>
 
+  /**
+   * ⚠️ « VÉRIFIÉE » NE VEUT PAS DIRE « UTILISABLE ». MillionVerifier rend plusieurs verdicts, et
+   * seuls les 'ok' donnent un lead. Le 17/08 : 155 adresses vérifiées, 19 seulement devenues
+   * envoyables — sans cette ventilation on lit « 155 » et on croit le stock reconstitué.
+   * catch_all = adresse acceptée par un serveur qui accepte tout : on ne l'envoie pas (source de
+   * rebond), elle part en réserve. C'est une décision, pas une panne.
+   */
+  const verdicts = (await sql`
+    SELECT COALESCE(mv_status, 'sans_verdict') AS verdict, COUNT(*)::int AS n
+    FROM contacts
+    WHERE mv_last_attempt_at >= NOW() - INTERVAL '7 days'
+    GROUP BY 1 ORDER BY 2 DESC
+  `) as Array<{ verdict: string; n: number }>
+
   // Ce qu'il reste à vérifier, et ce qui est déjà prêt.
   const [etat] = (await sql`
     WITH jamais AS (
@@ -76,6 +90,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     debit_par_jour: parJour,
+    verdicts_7_jours: verdicts,
     moyenne_7_jours: {
       adresses_verifiees: verifParJour,
       // LE chiffre : celles qui deviennent réellement envoyables.
