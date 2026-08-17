@@ -54,14 +54,20 @@ export async function GET(req: NextRequest) {
    * récupérables en baissant le seuil » serait faux si la plupart n'ont de toute façon pas
    * d'adresse. On mesure donc le levier RÉEL : celles qui ont un email ET qui n'attendent que le
    * critère client.
+   *
+   * ⚠️ ET LE PIÈGE QUI M'A EU : un alias SQL non quoté est mis en MINUSCULES par Postgres.
+   * `AS sous_seuil_avec_email` devient `sous_seuil_mais_avec_email`, la lecture JS sur la
+   * casse d'origine rendait undefined, et le `?? 0` transformait ça en un rassurant « 0 levier ».
+   * Le croisement brut ci-dessous disait 428. Un compteur qui affiche zéro doit toujours être
+   * confronté à une lecture brute avant d'être annoncé.
    */
   const [levier] = (await sql`
     SELECT
       COUNT(*) FILTER (WHERE status = 'skipped_lowreviews'
-                         AND email IS NOT NULL AND email <> '')::int AS sous_seuil_MAIS_avec_email,
+                         AND email IS NOT NULL AND email <> '')::int AS sous_seuil_avec_email,
       COUNT(*) FILTER (WHERE (email IS NULL OR email = '')
                          AND status NOT IN ('hors_metier')
-                         AND phone IS NOT NULL AND phone <> '')::int  AS sans_email_MAIS_avec_telephone
+                         AND phone IS NOT NULL AND phone <> '')::int  AS sans_email_avec_telephone
     FROM outscraper_leads
   `) as Array<Record<string, number>>
 
@@ -105,9 +111,9 @@ export async function GET(req: NextRequest) {
     croisement_statut_email: croisement,
     leviers_disponibles: {
       // Récupérables si Haris accepte des entreprises avec moins de 20 avis.
-      sous_seuil_avis_MAIS_avec_email: Number(levier?.sous_seuil_MAIS_avec_email ?? 0),
+      sous_seuil_avis_MAIS_avec_email: Number(levier?.sous_seuil_avec_email ?? 0),
       // Récupérables sur un autre canal : pas d'adresse, mais un numéro.
-      sans_email_MAIS_avec_telephone: Number(levier?.sans_email_MAIS_avec_telephone ?? 0),
+      sans_email_MAIS_avec_telephone: Number(levier?.sans_email_avec_telephone ?? 0),
     },
     rendement_reel_pct: pct(demarches),
     lecture: `Sur 100 fiches achetées, ${pct(demarches)} personnes ont été réellement démarchées. Le taux de validité MillionVerifier ne porte QUE sur les fiches qui avaient déjà un email, il ne mesure pas la qualité du fichier.`,
