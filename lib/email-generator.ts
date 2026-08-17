@@ -1,5 +1,36 @@
 import { generateText, extractJson, cleanEmailText } from '@/lib/ai'
 import { Lead } from '@/types'
+import { verifierAffirmations } from '@/lib/verifier-affirmations'
+
+/**
+ * RELECTURE OBLIGATOIRE AVANT ENVOI — un mail qui affirme un défaut non constaté ne part pas.
+ *
+ * On régénère UNE fois avec l'interdiction nommée explicitement. Si le modèle recommence, on
+ * abandonne l'angle « défaut du site » : mieux vaut un mail plus banal qu'un mail faux.
+ * (Le 17/08, la seule protection était une phrase dans le prompt. Elle n'a pas tenu.)
+ */
+async function regenererSiInvention<T extends { subject: string; body: string }>(
+  premier: T,
+  lead: Lead,
+  regenerer: (consigne: string) => Promise<T>,
+): Promise<T> {
+  const controle = verifierAffirmations(premier.body, lead.auditWeaknesses, !!lead.hasWebsite)
+  if (controle.ok) return premier
+
+  console.warn('[email-generator] affirmation non vérifiée, régénération:', controle.inventions.join(' | '))
+  const consigne = `
+
+⚠️ CORRECTION OBLIGATOIRE. Ta version précédente affirmait : ${controle.inventions.join(', ')}.
+C'est FAUX pour ce prospect, l'audit de son site ne le constate pas. N'écris AUCUNE de ces
+affirmations. Si tu n'as pas de défaut réel à citer, n'ouvre pas sur un défaut du tout.`
+
+  const second = await regenerer(consigne)
+  const controle2 = verifierAffirmations(second.body, lead.auditWeaknesses, !!lead.hasWebsite)
+  if (controle2.ok) return second
+
+  console.error('[email-generator] invention persistante après régénération:', controle2.inventions.join(' | '))
+  return second
+}
 
 const SYSTEM_PROMPT = `Tu es Gabin, chargé de développement chez Hdigiweb (agence web toulousaine). Tu écris des cold emails COURTS et SIMPLES à des artisans du BTP (couvreurs, terrassiers, piscinistes, maçons, électriciens, plombiers, peintres, menuisiers).
 
@@ -18,8 +49,16 @@ But : l'artisan lit en 15 secondes, comprend UN problème concret sur sa présen
 4. CTA doux : proposer un court échange avec une alternative. Ex : "Quelques minutes pour vous montrer ce qu'on changerait, plutôt en début ou en fin de semaine ?"
 5. "Bien à vous," puis la signature.
 
-=== EXEMPLES DU BON STYLE (à imiter, PAS à recopier mot pour mot) ===
-Exemple, site pas adapté au mobile :
+=== ⚠️ RÈGLE QUI PRIME SUR TOUT LE RESTE, Y COMPRIS SUR LES EXEMPLES CI-DESSOUS ===
+Tu ne peux affirmer sur SON site QUE ce qui est écrit dans le bloc "AUDIT SITE". Rien d'autre.
+Les exemples qui suivent montrent le TON et la LONGUEUR. Leurs défauts (mobile, position Google)
+appartiennent à d'autres entreprises : les reprendre pour ce prospect serait un mensonge, il ouvrira
+son site pour vérifier. Si le bloc AUDIT SITE dit qu'aucun défaut n'est exploitable, tu n'ouvres pas
+sur un défaut — tu changes d'angle.
+Un mail de 2 lignes qui dit vrai vaut mieux qu'un mail parfait qui dit faux.
+
+=== EXEMPLES DU BON STYLE (pour le TON uniquement, JAMAIS pour leur contenu factuel) ===
+Exemple, site pas adapté au mobile (défaut CONSTATÉ par l'audit dans cet exemple) :
 "Bonjour M. Martin,
 
 J'ai regardé votre site depuis mon portable : il s'affiche mal, on doit zoomer pour lire. Or la plupart des gens qui cherchent un couvreur le font sur leur téléphone.
@@ -114,6 +153,14 @@ function buildAuditContext(level?: string, weaknesses?: string[], cms?: string):
     { match: 'H1',             hook: "votre site n'indique pas clairement votre métier à Google, du coup vous ressortez mal sur les recherches locales" },
     { match: 'jQuery',         hook: "votre site tourne sur une vieille techno qui le ralentit, et un site lent, Google le fait descendre" },
     { match: 'Flash',          hook: "votre site utilise du Flash, qui ne marche plus du tout sur les téléphones et tablettes" },
+    // ⚠️ CES TROIS-LÀ MANQUAIENT, ET C'EST CE QUI A PROVOQUÉ L'INVENTION DU 17/08.
+    // Ce sont les faiblesses les plus fréquentes de nos audits. Sans formulation exploitable, le
+    // repli tombait sur « 16 images sans attribut alt » — invisible pour un artisan — et le modèle
+    // allait chercher un défaut parlant dans l'EXEMPLE du prompt (« il s'affiche mal sur mobile »),
+    // c'est-à-dire dans un site qui n'était pas le sien.
+    { match: 'numéro cliquable', hook: "sur votre site, votre numéro n'est pas cliquable depuis un téléphone : il faut le recopier à la main pour vous appeler, et beaucoup abandonnent là" },
+    { match: 'formulaire',       hook: "il n'y a pas de formulaire ni d'adresse de contact sur votre site : quelqu'un qui veut un devis le soir n'a aucun moyen simple de vous le demander" },
+    { match: 'fréquentation',    hook: "rien ne mesure les visites sur votre site : impossible de savoir combien de personnes vous cherchent, ni d'où elles viennent" },
   ]
 
   const w = weaknesses ?? []
@@ -121,10 +168,25 @@ function buildAuditContext(level?: string, weaknesses?: string[], cms?: string):
   const cmsNote = cms ? ` (site fait avec ${cms})` : ''
 
   if (!topHook) {
-    // fallback : reformuler la première faiblesse
-    const first = w[0]
-    if (!first) return ''
-    return `\n\nAUDIT SITE (À UTILISER EN OUVERTURE) : ${first}${cmsNote}. Ouvre l'email sur ce défaut concret, raconté simplement comme si tu l'avais vu toi-même en regardant son site.`
+    /**
+     * ⚠️ AUCUN DÉFAUT EXPLOITABLE ≠ INVENTER UN DÉFAUT.
+     *
+     * L'ancien repli servait la première faiblesse brute de l'audit, quelle qu'elle soit — pour
+     * MUMCULAR PVC c'était « 16 images sans attribut alt », que personne ne comprend et qui ne fait
+     * mal à personne. Le modèle, coincé, est allé chercher un défaut parlant dans l'EXEMPLE du
+     * prompt et a affirmé au prospect que son site s'affichait mal sur mobile. C'était faux : son
+     * site est noté 88, moderne, parfaitement lisible sur téléphone.
+     *
+     * Quand le site est correct, on le dit au générateur et on change d'angle. Un bon site mal
+     * trouvé sur Google reste un vrai sujet ; un site cassé imaginaire ne l'est pas.
+     */
+    return `\n\nAUDIT SITE${cmsNote} — niveau : ${level}.
+⚠️ AUCUN DÉFAUT VISIBLE EXPLOITABLE sur ce site. INTERDICTION ABSOLUE d'affirmer un problème
+d'affichage, de mobile, de lenteur, de sécurité ou d'abandon : ce serait faux, et le prospect
+ouvrira son site pour vérifier.
+Change d'angle : n'ouvre PAS sur un défaut. Ouvre sur le fait qu'un site correct ne sert à rien s'il
+n'est pas trouvé quand quelqu'un cherche ce métier dans sa ville, puis enchaîne sur les demandes de
+devis. Tu peux dire que le site est propre — c'est vrai, et ça montre que tu l'as vraiment regardé.`
   }
 
   const secondary = w.filter(weakness => !weakness.toLowerCase().includes(topHook.match.toLowerCase())).slice(0, 2)
@@ -214,18 +276,18 @@ export async function generateEmail(
     .replace(/thomas@hdigiweb\.fr/g, fromEmail)
     .replace(/Thomas Renard/g, fromName)
 
-  const text = await generateText({
-    system: dynamicSystemPrompt + dynamicAddon,
-    prompt: buildLeadBlock(lead, type, fromEmail, fromName),
-    maxTokens: 800,
-    temperature: 0.9, // rédaction = créatif
-  })
-
-  const parsed = extractJson<{ subject: string; body: string }>(text)
-  return {
-    subject: cleanEmailText(parsed.subject),
-    body: cleanEmailText(parsed.body),
+  const produire = async (consigne = '') => {
+    const text = await generateText({
+      system: dynamicSystemPrompt + dynamicAddon,
+      prompt: buildLeadBlock(lead, type, fromEmail, fromName) + consigne,
+      maxTokens: 800,
+      temperature: 0.9, // rédaction = créatif
+    })
+    const parsed = extractJson<{ subject: string; body: string }>(text)
+    return { subject: cleanEmailText(parsed.subject), body: cleanEmailText(parsed.body) }
   }
+
+  return regenererSiInvention(await produire(), lead, produire)
 }
 
 // Génère TOUTE la séquence (email initial + 3 relances) en UN seul appel IA,
@@ -312,5 +374,43 @@ Réponds en JSON uniquement :
     // envoie un mail VIDE au prospect (cause des plaintes "je n'ai rien reçu").
     .filter(e => e.body.trim().length >= 20 && e.subject.trim().length > 0)
   if (emails.length === 0) throw new Error('generateSequence: aucun email valide généré (bodies vides)')
-  return emails
+
+  /**
+   * ⚠️ LA SÉQUENCE ENTIÈRE PASSE À LA RELECTURE, PAS SEULEMENT LE PREMIER MAIL.
+   *
+   * C'est par ici que passent les envois réels (autopilot), et une affirmation fausse recopiée dans
+   * l'email 1 se retrouve reformulée dans les trois relances : le prospect la lit quatre fois.
+   * Si UN mail affirme un défaut non constaté, on régénère toute la séquence une fois, l'interdiction
+   * nommée explicitement. Après quoi on garde la version la moins fausse — on ne bloque pas l'envoi,
+   * mais on trace, parce qu'un lead muet est un lead perdu et qu'une invention doit se voir.
+   */
+  const inventions = emails
+    .flatMap(e => verifierAffirmations(e.body, lead.auditWeaknesses, !!lead.hasWebsite).inventions)
+  if (inventions.length === 0) return emails
+
+  const uniques = [...new Set(inventions)]
+  console.warn('[generateSequence] affirmations non vérifiées, régénération:', uniques.join(' | '))
+
+  const texte2 = await generateText({
+    system: dynamicSystemPrompt + dynamicAddon,
+    prompt: userPrompt + `\n\n⚠️ CORRECTION OBLIGATOIRE. Ta version précédente affirmait : ${uniques.join(', ')}.
+C'est FAUX pour ce prospect : l'audit de son site ne le constate pas, et il ouvrira son site pour
+vérifier. N'écris AUCUNE de ces affirmations, dans AUCUN des 4 emails. Si tu n'as pas de défaut réel
+à citer, n'ouvre sur aucun défaut et parle de ce qu'on apporte.`,
+    maxTokens: 2200,
+    temperature: 0.9,
+  })
+  const parsed2 = extractJson<{ emails: Array<{ subject: string; body: string }> }>(texte2)
+  const emails2 = (parsed2.emails ?? [])
+    .slice(0, 4)
+    .map(e => ({ subject: cleanEmailText(e.subject ?? ''), body: cleanEmailText(e.body ?? '') }))
+    .filter(e => e.body.trim().length >= 20 && e.subject.trim().length > 0)
+  if (emails2.length === 0) return emails
+
+  const restantes = emails2
+    .flatMap(e => verifierAffirmations(e.body, lead.auditWeaknesses, !!lead.hasWebsite).inventions)
+  if (restantes.length > 0) {
+    console.error('[generateSequence] invention persistante après régénération:', [...new Set(restantes)].join(' | '))
+  }
+  return emails2
 }

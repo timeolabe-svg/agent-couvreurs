@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
   const { sql } = await import('@/lib/db')
 
   try {
-  const contact = (await sql`SELECT id, email, company, city, phone, source, created_at FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`) as Array<Record<string, unknown>>
+  const contact = (await sql`SELECT id, email, company, city, phone, source, created_at, website, sector, audit_score, audit_level, audit_weaknesses, audit_done FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`) as Array<Record<string, unknown>>
   const cid = (contact[0]?.id as string | undefined) ?? null
 
   const incoming = (await sql`
@@ -40,7 +40,10 @@ export async function GET(req: NextRequest) {
 
   const rdvs = cid ? (await sql`SELECT id, scheduled_at, status, google_event_id, notes, created_at FROM rdv WHERE contact_id = ${cid}::uuid ORDER BY created_at ASC`) as Array<Record<string, unknown>> : []
 
-  const queue = cid ? (await sql`SELECT id, sequence_step, status, from_email, sent_at, scheduled_at FROM email_queue WHERE contact_id = ${cid}::uuid ORDER BY sequence_step ASC`) as Array<Record<string, unknown>> : []
+  // ⚠️ Le CONTENU des mails partis manquait ici. On pouvait donc voir qu'un mail avait été envoyé,
+  // jamais CE QU'IL DISAIT au prospect — impossible de vérifier qu'il correspond bien à l'offre du
+  // client, ce qui est pourtant la première question à se poser quand un prospect répond de travers.
+  const queue = cid ? (await sql`SELECT id, sequence_step, status, from_email, sent_at, scheduled_at, subject, body FROM email_queue WHERE contact_id = ${cid}::uuid ORDER BY sequence_step ASC`) as Array<Record<string, unknown>> : []
 
   return NextResponse.json({
     contact: contact[0] ?? null,
