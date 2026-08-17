@@ -52,16 +52,27 @@ export async function GET(req: NextRequest) {
     })
     .filter(Boolean)
 
-  const personnes = new Set(fautifs.map(f => f!.email))
+  const partis = fautifs.filter(f => f!.etat === 'sent')
+  const aPartir = fautifs.filter(f => f!.etat === 'queued')
+  const personnes = new Set(partis.map(f => f!.email))
 
   return NextResponse.json({
-    mails_envoyes_examines: lignes.length,
-    mails_fautifs: fautifs.length,
-    // LE chiffre : des personnes réelles, pas des lignes de base.
-    personnes_concernees: personnes.size,
-    detail: fautifs.slice(0, 50),
-    lecture: fautifs.length === 0
-      ? 'Aucun mail envoyé n\'affirme un défaut que l\'audit ne constate pas.'
-      : `${personnes.size} personne(s) ont reçu au moins une affirmation fausse sur leur site. Le correctif empêche les prochains, il ne rattrape pas ceux-là.`,
+    mails_examines: lignes.length,
+    // Ce qui est DÉJÀ parti : irréparable, on le chiffre honnêtement plutôt que de l'arrondir.
+    mails_fautifs_deja_partis: partis.length,
+    personnes_deja_touchees: personnes.size,
+    /**
+     * ⚠️ LE CHIFFRE QUI COMPTE MAINTENANT : ce qui n'est PAS encore parti.
+     *
+     * Consigne de Timéo le 17/08 : pour ces personnes, la relance ne doit surtout pas répéter
+     * l'affirmation fausse, elle doit repartir sur les templates validés comme si de rien n'était.
+     * Tant que ce nombre n'est pas 0, la faute est encore devant nous, pas derrière.
+     */
+    mails_fautifs_ENCORE_EN_FILE: aPartir.length,
+    detail_encore_en_file: aPartir.slice(0, 50),
+    detail_deja_partis: partis.slice(0, 20),
+    lecture: aPartir.length === 0
+      ? `Aucune relance en attente ne répète une affirmation non fondée. ${personnes.size} personne(s) l'ont reçue avant le correctif, ça ne se rattrape pas.`
+      : `⚠️ ${aPartir.length} mail(s) encore en file portent une affirmation fausse. Lancer /api/admin/refresh-queued?apply=1.`,
   })
 }
