@@ -106,6 +106,16 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  if (req.nextUrl.searchParams.get('liste') === '1') {
+    const rows = (await sql`
+      SELECT entreprise, site, a_page_company, a_profil_perso, urls
+      FROM linkedin_presence
+      WHERE a_page_company OR a_profil_perso
+      ORDER BY a_profil_perso DESC
+    `) as Array<Record<string, unknown>>
+    return NextResponse.json({ n: rows.length, rows })
+  }
+
   const batch = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('batch') || '40', 10)))
   const cibles = (await sql`
     SELECT DISTINCT ON (l.site) l.site, l.name
