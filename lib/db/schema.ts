@@ -115,6 +115,10 @@ export const reply_drafts = pgTable('reply_drafts', {
   status: text('status').default('pending'), // pending/sent/rejected/modified/scheduled
   send_after: timestamp('send_after'), // for auto_reply: don't send before this time (human delay simulation)
   sent_at: timestamp('sent_at'),
+  // Qui a rejeté : 'humain' (Timéo, dans « À valider ») ou null/'systeme'. Une décision humaine
+  // ne se rediscute pas — le rattrapage ne régénère jamais un brouillon rejeté par un humain.
+  rejete_par: text('rejete_par'),
+  rejete_le: timestamp('rejete_le'),
   created_at: timestamp('created_at').defaultNow(),
 }, (table) => ({
   statusIdx: index('rd_status_idx').on(table.status),

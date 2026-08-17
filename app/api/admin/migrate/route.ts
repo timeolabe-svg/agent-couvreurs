@@ -97,6 +97,27 @@ export async function GET(request: NextRequest) {
        * Sans trace écrite, la seule mémoire serait celle de Timéo — et elle ne tiendra pas trois
        * commandes.
        */
+      /**
+       * ⚠️ QUI A REJETÉ ? La question décide de tout ce qui suit.
+       *
+       * Le 17/08, Timéo rejette un brouillon dans « À valider ». Treize minutes plus tard, le
+       * rattrapage en régénère un identique : pour lui, la machine passe outre son refus. Rien
+       * n'était parti, mais l'effet est le même — il ne peut plus faire confiance à ce bouton.
+       *
+       * La cause : un rejet HUMAIN et un rejet SYSTÈME portent le même statut 'rejected'. Le
+       * rattrapage, qui doit régénérer ce que la machine a raté, régénérait aussi ce que l'humain
+       * avait volontairement écarté.
+       *
+       * Une décision humaine ne se rediscute pas. On trace donc son auteur.
+       */
+      nom: 'reply_drafts : qui a rejete le brouillon',
+      run: () => db.execute(sql`
+        ALTER TABLE reply_drafts
+          ADD COLUMN IF NOT EXISTS rejete_par  TEXT,
+          ADD COLUMN IF NOT EXISTS rejete_le   TIMESTAMPTZ
+      `),
+    },
+    {
       nom: 'scrape_couverture : metier x ville deja achetes',
       run: () => db.execute(sql`
         CREATE TABLE IF NOT EXISTS scrape_couverture (

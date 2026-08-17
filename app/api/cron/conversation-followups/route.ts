@@ -139,6 +139,37 @@ async function runCron(req: Request) {
         WHERE rd.incoming_reply_id = ir.id
           AND rd.status IN ('sent', 'pending', 'awaiting_validation', 'scheduled', 'sending')
       )
+      /**
+       * ⚠️ UN REFUS HUMAIN NE SE REDISCUTE PAS.
+       *
+       * Le 17/08, Timéo rejette un brouillon dans « À valider ». Treize minutes plus tard ce
+       * rattrapage en régénère un identique. Rien n'est parti — mais de son point de vue la machine
+       * est passée outre son refus, et le bouton « rejeter » ne veut plus rien dire.
+       *
+       * Le rattrapage existe pour réparer ce que la MACHINE a raté (génération tombée, brouillon
+       * jamais créé), jamais pour revenir sur ce qu'un HUMAIN a écarté volontairement.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM reply_drafts rdh
+        WHERE rdh.incoming_reply_id = ir.id AND rdh.rejete_par = 'humain'
+      )
+      /**
+       * ⚠️ NE PAS RÉPONDRE À UN SIMPLE ACQUIESCEMENT.
+       *
+       * Cas réel : « je vous rappelle mardi 18 août à 10:00 » → le prospect répond « Ok » → l'agent
+       * lui renvoie MOT POUR MOT la même phrase. Répondre n'est pas une obligation : quand le
+       * rendez-vous est calé et que le message ne contient qu'un accord, le silence est la bonne
+       * réponse. Un mail de plus n'apporte rien et donne l'impression d'un robot.
+       */
+      AND NOT (
+        LENGTH(REGEXP_REPLACE(COALESCE(ir.body, ''), '(^|\n)>.*', '', 'g')) < 240
+        AND REGEXP_REPLACE(LOWER(COALESCE(ir.body, '')), '[^a-zà-ÿ]', '', 'g') ~
+            '^(ok|okay|dac|dacc|daccord|oui|parfait|trescebien|tresbien|superbien|super|nickel|impeccable|impec|merci|mercibeaucoup|entendu|bienrecu|noté|note|cavamerci|ca marche|camarche)'
+        AND EXISTS (
+          SELECT 1 FROM rdv r
+          WHERE r.contact_id = ir.contact_id AND r.status = 'confirmed' AND r.scheduled_at > NOW()
+        )
+      )
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
       /**
        * ⚠️ GARDE-FOU PAR LE CONTACT, ET PAS SEULEMENT PAR LE LIEN. Constaté dans la foulée du

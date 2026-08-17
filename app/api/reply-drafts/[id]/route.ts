@@ -25,7 +25,9 @@ export async function PATCH(
   if (!draft) return NextResponse.json({ error: 'Draft not found' }, { status: 404 })
 
   if (action === 'reject') {
-    await db.update(reply_drafts).set({ status: 'rejected' }).where(eq(reply_drafts.id, id))
+    // ⚠️ On TRACE que c'est Timéo qui rejette, pas la machine. Sans cette marque, le rattrapage
+    // régénérait le brouillon quelques minutes plus tard : un refus humain contourné par un cron.
+    await db.update(reply_drafts).set({ status: 'rejected', rejete_par: 'humain', rejete_le: new Date() }).where(eq(reply_drafts.id, id))
     return NextResponse.json({ ok: true })
   }
 
