@@ -44,10 +44,28 @@ export function formatDate(dateStr: string): string {
  * On nettoie aussi la ponctuation orpheline que le retrait laisse derrière lui : parenthèses vides,
  * espaces avant une virgule, doubles espaces. Sinon on remplace un emoji par une coquille.
  */
+/** La classe de caractères « emoji », partagée par les deux nettoyages ci-dessous. */
+const EMOJIS = /[\u{1F000}-\u{1FAFF}\u{1FB00}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu
+
+/**
+ * VERSION POUR TEXTE MIS EN FORME (corps de mail) : retire les emojis, ET RIEN D'AUTRE.
+ *
+ * ⚠️ `stripEmojis` ci-dessous normalise les espaces avec `\s{2,}` — or `\s` couvre le RETOUR À LA
+ * LIGNE. Appliqué à un corps de mail, il transforme les sauts de paragraphe en simples espaces et
+ * aplatit tout le message en un bloc. L'aperçu l'a montré : 4 989 des 4 995 mails en attente
+ * étaient « modifiés », alors qu'aucun ne contenait d'emoji — c'était leur mise en page qui partait.
+ *
+ * Un nom d'entreprise tient sur une ligne, pas un mail. Deux usages, deux fonctions.
+ */
+export function stripEmojisPreservingLayout(s: string | null | undefined): string {
+  if (!s) return ''
+  return s.replace(EMOJIS, '').replace(/[ \t]{2,}/g, ' ')
+}
+
 export function stripEmojis(s: string | null | undefined): string {
   if (!s) return ''
   return s
-    .replace(/[\u{1F000}-\u{1FAFF}\u{1FB00}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, '')
+    .replace(EMOJIS, '')
     .replace(/\(\s+/g, '(')
     /**
      * ⚠️ NE PAS TOUCHER À L'ESPACE AVANT ; : ! ? — IL EST CORRECT EN FRANÇAIS.

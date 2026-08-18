@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
-import { stripEmojis } from '@/lib/utils'
+import { stripEmojis, stripEmojisPreservingLayout } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -67,7 +67,8 @@ export async function GET(req: NextRequest) {
 
   for (const m of mails) {
     const subject = m.subject ? stripEmojis(m.subject) : m.subject
-    const body = m.body ? stripEmojis(m.body) : m.body
+    // Le corps garde sa mise en page : on n'y retire QUE les emojis (cf. stripEmojisPreservingLayout).
+    const body = m.body ? stripEmojisPreservingLayout(m.body) : m.body
     if (subject === m.subject && body === m.body) continue
     mailsCorriges++
     if (apply) {
