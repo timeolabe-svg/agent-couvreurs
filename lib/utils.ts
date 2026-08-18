@@ -49,7 +49,19 @@ export function stripEmojis(s: string | null | undefined): string {
   return s
     .replace(/[\u{1F000}-\u{1FAFF}\u{1FB00}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, '')
     .replace(/\(\s+/g, '(')
-    .replace(/\s+([)\].,;:!?])/g, '$1')
+    /**
+     * ⚠️ NE PAS TOUCHER À L'ESPACE AVANT ; : ! ? — IL EST CORRECT EN FRANÇAIS.
+     *
+     * La version d'origine de ce nettoyage retirait l'espace devant toute ponctuation. L'aperçu sur
+     * la base l'a montré tout de suite : « Aqua pensez-vous ? » devenait « Aqua pensez-vous? », et
+     * « Couvreur Gers : AK Toiture » perdait son espace. Pire, la règle touchait 4 989 des 4 995
+     * mails en attente — dont AUCUN ne contenait le moindre emoji. On aurait dégradé la typographie
+     * de toute la file d'envoi pour corriger 83 noms d'entreprise.
+     *
+     * On ne recolle donc que la ponctuation qui, en français, ne prend jamais d'espace avant :
+     * la parenthèse et le crochet fermants, le point et la virgule.
+     */
+    .replace(/\s+([)\].,])/g, '$1')
     .replace(/\(\s*\)/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
