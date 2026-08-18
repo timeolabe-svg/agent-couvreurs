@@ -263,9 +263,25 @@ export async function GET() {
          * que soit son âge.
          */
         {
+          const parDate = [...g.messages].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
           const lastTs = Math.max(0, ...g.messages.map(m => new Date(m.date).getTime() || 0))
-          const dernier = [...g.messages].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).pop()
-          const prospectAttend = dernier?.role === 'received'
+
+          /**
+           * ⚠️ « QUI A PARLÉ EN DERNIER » N'EST PAS LE BON TEST.
+           *
+           * Premier essai : garder la conversation visible si le dernier message vient du prospect.
+           * Insuffisant — eseveranpeinture écrit le 25/06 « je n'ai reçu aucun document », personne
+           * ne lui répond, mais la SÉQUENCE AUTOMATIQUE continue de lui envoyer des mails en juillet.
+           * Le dernier message est donc « de nous », la conversation passe pour close, et elle
+           * disparaît. Un mail de séquence n'est pas une réponse : il n'a pas lu sa question.
+           *
+           * Le vrai test : le dernier message REÇU a-t-il obtenu une RÉPONSE DE L'AGENT après lui ?
+           * Sinon, quelqu'un attend — et on n'archive jamais quelqu'un qui attend.
+           */
+          const idxDernierRecu = parDate.map(m => m.role).lastIndexOf('received')
+          const repondu = idxDernierRecu >= 0 && parDate.slice(idxDernierRecu + 1).some(m => m.role === 'agent')
+          const prospectAttend = idxDernierRecu >= 0 && !repondu
+
           if (!g.rdvBooked && !prospectAttend && lastTs > 0 && Date.now() - lastTs > 14 * 86400000) return false
         }
         return true
