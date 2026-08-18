@@ -68,6 +68,20 @@ export async function GET(req: NextRequest) {
     FROM jamais
   `) as Array<Record<string, number>>
 
+  /**
+   * Y A-T-IL VRAIMENT DES ADRESSES EN DOUBLE ?
+   *
+   * La dédup inter-fiches ne se justifie que si le cas existe. Sur ce projet, `contacts` porte une
+   * contrainte d'unicité sur l'email (`ON CONFLICT (email) DO NOTHING` à l'import) : le doublon
+   * observé sur les autres agents peut très bien être impossible ici. On mesure avant de coder.
+   */
+  const doublons = (await sql`
+    SELECT LOWER(email) AS email, COUNT(*)::int AS fiches
+    FROM contacts WHERE email IS NOT NULL
+    GROUP BY 1 HAVING COUNT(*) > 1
+    ORDER BY 2 DESC LIMIT 20
+  `) as Array<{ email: string; fiches: number }>
+
   // Rythme d'envoi réel : personnes démarchées par jour sur 7 jours.
   const [rythme] = (await sql`
     SELECT COALESCE(ROUND(COUNT(DISTINCT contact_id)::numeric / 7), 0)::int AS par_jour
@@ -89,6 +103,7 @@ export async function GET(req: NextRequest) {
   const tientLeRythme = validesParJour >= envoiParJour
 
   return NextResponse.json({
+    adresses_en_double: { groupes: doublons.length, detail: doublons },
     debit_par_jour: parJour,
     verdicts_7_jours: verdicts,
     moyenne_7_jours: {
