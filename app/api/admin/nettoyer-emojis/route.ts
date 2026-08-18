@@ -22,8 +22,17 @@ export const maxDuration = 60
  * ?apply=1 pour écrire (sans ce paramètre : aperçu, rien n'est modifié).
  */
 
-// Détection SQL large : sert seulement à SÉLECTIONNER les candidats, le nettoyage réel est en JS.
-const MOTIF_SQL = '[\\u{1F000}-\\u{1FAFF}\\u{1FB00}-\\u{1FBFF}\\u{2600}-\\u{27BF}\\u{2B00}-\\u{2BFF}\\u{2190}-\\u{21FF}\\u{2300}-\\u{23FF}\\u{1F1E6}-\\u{1F1FF}]'
+/**
+ * ⚠️ PAS DE FILTRE REGEX EN SQL.
+ *
+ * Premier jet : un WHERE avec une classe de caractères écrite en syntaxe JavaScript. Résultat,
+ * HTTP 500 — cette syntaxe d'échappement est du JavaScript, Postgres ne la connaît pas (son moteur
+ * attend 4 ou 8 chiffres hexadécimaux, et les emojis vivent hors du plan de base).
+ *
+ * Plutôt que de traduire la même règle dans un second dialecte — deux écritures, deux comportements,
+ * une base à moitié nettoyée — on rapatrie les lignes et on filtre avec la MÊME fonction que celle
+ * qui nettoie à l'insertion. Les volumes le permettent largement (quelques milliers de lignes).
+ */
 
 export async function GET(req: NextRequest) {
   const auth = checkCronAuth(req)
@@ -34,15 +43,11 @@ export async function GET(req: NextRequest) {
 
   const contacts = (await sql`
     SELECT id, company, name FROM contacts
-    WHERE company ~ ${MOTIF_SQL} OR name ~ ${MOTIF_SQL}
-    LIMIT 2000
   `) as Array<{ id: string; company: string | null; name: string | null }>
 
   const mails = (await sql`
     SELECT id, subject, body FROM email_queue
     WHERE status IN ('pending', 'queued')
-      AND (subject ~ ${MOTIF_SQL} OR body ~ ${MOTIF_SQL})
-    LIMIT 3000
   `) as Array<{ id: string; subject: string | null; body: string | null }>
 
   const exemples: string[] = []
@@ -72,9 +77,9 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     mode: apply ? 'APPLIQUÉ' : 'APERÇU (rien écrit) — relancer avec &apply=1',
-    contacts_candidats: contacts.length,
+    contacts_examines: contacts.length,
     contacts_corriges: contactsCorriges,
-    mails_en_file_candidats: mails.length,
+    mails_en_file_examines: mails.length,
     mails_en_file_corriges: mailsCorriges,
     exemples,
     lecture: 'Les mails déjà envoyés ne sont pas touchés : on ne réécrit pas ce que le prospect a déjà lu.',
