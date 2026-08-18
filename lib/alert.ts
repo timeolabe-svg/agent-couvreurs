@@ -37,7 +37,18 @@ export async function alertIndependent(subject: string, body: string): Promise<{
 
   let emailOk = false
   try {
-    const recipients = (process.env.CLIENT_NOTIFY_EMAIL || "timeo.labe@gmail.com").split(",").map(s => s.trim()).filter(Boolean)
+    /**
+     * ⚠️ JAMAIS `CLIENT_NOTIFY_EMAIL` ICI — C'ÉTAIT UNE FUITE.
+     *
+     * `alertIndependent` porte les alertes OPÉRATEUR : pannes, garde-fous, et surtout messages
+     * RGPD/CNIL. Le repli email réutilisait l'adresse du CLIENT : il suffisait que ntfy tombe pour
+     * qu'une mise en demeure ou une plainte CNIL atterrisse dans la boîte de Haris. Ce n'est pas son
+     * problème, ça l'inquiète pour rien, et c'est notre responsabilité juridique, pas la sienne.
+     *
+     * Variable DÉDIÉE `ALERT_EMAIL`, repli sur l'adresse de Timéo. Les deux canaux ne doivent jamais
+     * se croiser : ce qui va au client passe par `notifyTeam`, ce qui vient ici reste chez nous.
+     */
+    const recipients = (process.env.ALERT_EMAIL || "timeo.labe@gmail.com").split(",").map(s => s.trim()).filter(Boolean)
     const boxes = getGmailBoxes()
     if (boxes.length > 0) {
       for (const to of recipients) {

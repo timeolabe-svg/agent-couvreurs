@@ -1345,6 +1345,28 @@ async function sendNotificationEmail(params: {
     ``,
     `Valider / modifier : ${BASE_URL}/reponses-a-valider`,
   ].join('\n')
+
+  /**
+   * GARDE-FOU « LE CLIENT NE REÇOIT JAMAIS DE JURIDIQUE ».
+   *
+   * La branche légale traite normalement ces messages en amont, vers l'opérateur seul. Mais si une
+   * demande RGPD ou une plainte CNIL passe entre les mailles de la détection, elle finit en
+   * « réponse à valider » — et `notifyTeam`, c'est le canal CLIENT. Haris recevrait donc une mise en
+   * demeure adressée à notre traitement de données.
+   *
+   * On re-teste ici, en dernier rideau : tout ce qui sent le juridique part vers l'OPÉRATEUR
+   * (alertIndependent → ntfy + ALERT_EMAIL) et s'arrête là. Une détection en double coûte un test ;
+   * une fuite coûte la confiance du client et une réponse légale hors délai.
+   */
+  try {
+    const { isRgpdRequestOrComplaint } = await import('@/lib/rgpd')
+    if (isRgpdRequestOrComplaint(params.replyBody).match) {
+      const { alertIndependent } = await import('@/lib/alert')
+      await alertIndependent(`Message juridique a verifier — ${params.contactCompany}`, text)
+      return
+    }
+  } catch { /* détection indisponible → on retombe sur la notification standard */ }
+
   await notifyTeam(`Réponse à valider — ${params.contactCompany}`, text)
 }
 
