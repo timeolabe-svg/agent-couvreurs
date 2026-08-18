@@ -480,6 +480,25 @@ async function runCron(req: NextRequest) {
       }
     }
 
+    /**
+     * DÉCLENCHEUR DES RAPPELS DE RENDEZ-VOUS.
+     *
+     * ⚠️ UN CHAÎNON SANS DÉCLENCHEUR NE TOURNE JAMAIS — l'erreur déjà commise sur ce projet avec
+     * promote-leads, écrit et appelé par personne. Plutôt que de dépendre d'un enregistrement de
+     * plus sur cron-job.org, qu'il faut penser à créer et qui peut être supprimé sans que rien ne
+     * le signale, le moteur d'envoi déclenche lui-même les rappels : tant que les mails partent,
+     * les rappels partent.
+     *
+     * Borné à 6 s et entièrement isolé : un rappel qui échoue ne doit jamais faire tomber l'envoi,
+     * qui est la fonction vitale.
+     */
+    try {
+      const base = process.env.PUBLIC_APP_URL || BASE_URL
+      await fetch(`${base}/api/cron/rappels-rdv?key=${process.env.CRON_SECRET ?? ''}`, {
+        signal: AbortSignal.timeout(6000),
+      })
+    } catch { /* les rappels réessaieront au prochain run */ }
+
     return NextResponse.json({ ok: true, sent, skipped, failed, results })
   } catch (err) {
     return NextResponse.json(

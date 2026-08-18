@@ -301,13 +301,31 @@ export async function classifyReply(params: {
     }
   }
 
-  // Plainte "mail vide / je n'ai rien reçu" → spam/no_action immédiat
+  /**
+   * ⚠️ « JE N'AI RIEN REÇU » N'EST PAS DU SPAM — C'EST UN PROSPECT ENGAGÉ ET UN BUG CHEZ NOUS.
+   *
+   * Cette branche classait la plainte en spam/no_action, avec pour motif « confusion sans valeur
+   * commerciale ». Constaté le 18/08 en cherchant les leads invisibles : QUATRE personnes réelles
+   * s'étaient ainsi volatilisées, jamais affichées, jamais répondues —
+   * « J'ai rien reçu », « Votre mail ne contient aucune phrase »,
+   * « Bonjour votre message est vide, il n'y a rien », « je n'ai reçu aucun document ».
+   *
+   * Deux erreurs dans un même raisonnement :
+   *  1. Commercialement, quelqu'un qui ouvre un mail et prend la peine de répondre est PLUS engagé
+   *     que la moyenne. On jetait les mieux disposés.
+   *  2. Techniquement, c'est notre SEUL signal que des mails partent vides. En le classant spam, on
+   *     se rendait aveugle à notre propre panne — celle-là même qui figure dans l'audit des causes
+   *     racines de « zéro RDV ».
+   *
+   * On ne répond pas automatiquement (le bon geste est de renvoyer le vrai message, pas de discuter)
+   * mais on rend la personne VISIBLE et on laisse la décision à l'humain.
+   */
   if (isEmptyEmailComplaint(cleanBody, params.replySubject)) {
     return {
-      classification: 'spam',
-      action: 'no_action',
-      confidence: 97,
-      reasoning: 'Plainte "mail vide / je n\'ai rien reçu" détectée — confusion sans valeur commerciale, aucune réponse générée.',
+      classification: 'question',
+      action: 'draft_for_validation',
+      confidence: 95,
+      reasoning: 'Le prospect signale un mail vide ou non reçu : il a répondu, donc il est engagé, et notre envoi a échoué. À traiter à la main (renvoyer le vrai message), jamais à ignorer.',
     }
   }
 

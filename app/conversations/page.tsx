@@ -69,7 +69,18 @@ export default function ConversationsPage() {
   const [convs, setConvs] = useState<Conversation[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<Tab>('positive')
+  /**
+   * ⚠️ L'ÉCRAN S'OUVRAIT SUR « POSITIVES », QUI NE CONTIENT QUE LES RDV CALÉS.
+   *
+   * Mesuré le 18/08 : 9 personnes dans « Positives », 75 dans « En attente ». Timéo cherchait le
+   * prospect qui demandait le prix et concluait qu'il n'était « nulle part dans le logiciel » — il
+   * était là, dans l'onglet d'à côté. Un écran qui s'ouvre sur 7 % de son contenu fait croire que
+   * le reste n'existe pas.
+   *
+   * On ouvre désormais sur « En attente » : c'est le seul onglet qui demande une action. Les RDV
+   * déjà calés, eux, n'attendent rien de personne.
+   */
+  const [tab, setTab] = useState<Tab>('pending')
 
   const load = async () => {
     setLoading(true)
