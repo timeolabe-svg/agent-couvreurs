@@ -300,10 +300,28 @@ async function runCron(req: NextRequest) {
 
     // Sélection de boîte : PRÉFÈRE la boîte assignée (from_email) — signature = enveloppe.
     // capMap = null pour les relances de conversation (pas de plafond per-boîte, juste le global convoCapacity).
-    const pickBox = (preferred: string, capMap: Map<string, number> | null): GmailBox | null => {
+    /**
+     * ⚠️ UNE RELANCE NE CHANGE JAMAIS DE BOÎTE — MÊME SI CETTE BOÎTE EST PLEINE.
+     *
+     * Le prospect voit une conversation, pas une infrastructure. Recevoir la relance d'un fil depuis
+     * une AUTRE adresse casse le fil chez lui (nouveau thread, expéditeur inconnu), fait retomber le
+     * message en indésirable, et sa réponse repart vers une boîte qui n'a pas l'historique.
+     *
+     * L'ancienne version basculait sur n'importe quelle boîte disponible dès que la boîte assignée
+     * était pleine. Pour une relance, mieux vaut ATTENDRE demain que partir de la mauvaise adresse :
+     * la ligne retourne en file, rien n'est perdu, le fil reste intact.
+     *
+     * Le premier mail (step 0), lui, garde la rotation libre : aucun fil n'existe encore.
+     */
+    const pickBox = (preferred: string, capMap: Map<string, number> | null, sticky: boolean): GmailBox | null => {
       if (!capMap) return boxes.find(b => b.email.toLowerCase() === preferred.toLowerCase()) ?? boxes[0] ?? null
       const pref = boxes.find(b => b.email.toLowerCase() === preferred.toLowerCase() && (capMap.get(b.email) ?? 0) > 0)
       if (pref) return pref
+      // Boîte assignée pleine, mais toujours vivante (elle est dans `boxes`, donc ni morte ni en
+      // pause) → on attend. Si elle a disparu de `boxes`, on autorise le repli : mieux vaut une
+      // autre adresse qu'un lead qui n'est jamais relancé.
+      const assigneeVivante = boxes.some(b => b.email.toLowerCase() === preferred.toLowerCase())
+      if (sticky && assigneeVivante) return null
       return boxes.find(b => (capMap.get(b.email) ?? 0) > 0) ?? null
     }
 
@@ -340,10 +358,12 @@ async function runCron(req: NextRequest) {
       }
       const capMap = bucket === 'new' ? capNew : bucket === 'relance' ? capRelance : null
 
-      let box = pickBox(row.from_email, capMap)
+      // sticky = relance : la boîte du fil ne se remplace pas (cf. pickBox).
+      let box = pickBox(row.from_email, capMap, row.sequence_step >= 1)
       if (!box) {
-        // Plus de capacité DANS CETTE ENVELOPPE : on remet la ligne en file, mais on continue
-        // avec les lignes suivantes (une autre enveloppe peut encore avoir de la place).
+        // Soit l'enveloppe est pleine, soit c'est une relance dont la boîte est saturée : dans les
+        // deux cas la ligne retourne en file et repart au prochain run. On continue les suivantes,
+        // une autre enveloppe (ou une autre boîte) peut encore avoir de la place.
         await sql`UPDATE email_queue SET status = 'queued' WHERE id = ${row.id}`
         results.push(`Plus de capacité (${bucket}) — ligne remise en file`)
         continue
@@ -420,6 +440,25 @@ async function runCron(req: NextRequest) {
 
       if (r.ok) {
         await sql`UPDATE email_queue SET status = 'sent', sent_at = NOW(), sent_via = ${box.email}, body = ${finalBody} WHERE id = ${row.id}`
+
+        /**
+         * LA BOÎTE RÉELLE DEVIENT LA BOÎTE DU FIL.
+         *
+         * ⚠️ Quand le premier mail part d'une autre boîte que celle assignée (rotation libre au
+         * step 0, ou repli après une boîte HS), les relances gardaient l'ANCIENNE adresse en base.
+         * Le prospect recevait donc le premier message d'une adresse et la relance d'une autre :
+         * fil cassé chez lui, risque d'indésirable, et sa réponse partant vers une boîte qui n'a pas
+         * l'historique. Rendre les relances « sticky » ne sert à rien si on les colle à la mauvaise
+         * boîte — on propage donc l'adresse réellement utilisée.
+         */
+        if (box.email.toLowerCase() !== (row.from_email ?? '').toLowerCase()) {
+          await sql`
+            UPDATE email_queue SET from_email = ${box.email}
+            WHERE contact_id = ${row.contact_id} AND sequence_step > 0 AND status IN ('queued', 'pending')
+          `
+          results.push(`↪ boîte du fil alignée sur ${box.email} (assignée: ${row.from_email})`)
+        }
+
         if (capMap) capMap.set(box.email, (capMap.get(box.email) ?? 1) - 1)
         else convoRemaining--
         sent++
