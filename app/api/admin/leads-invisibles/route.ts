@@ -75,12 +75,21 @@ export async function GET(req: NextRequest) {
     ORDER BY 2 DESC
   `) as Array<Record<string, unknown>>
 
+  /**
+   * ⚠️ COMBIEN DE MESSAGES AU TOTAL ? La messagerie n'en lit que les 500 plus récents : au-delà,
+   * les conversations anciennes disparaissent de l'écran sans que rien ne le signale.
+   */
+  const [{ messages }] = (await sql`SELECT COUNT(*)::int AS messages FROM incoming_replies`) as Array<{ messages: number }>
+
   const [{ total }] = (await sql`
     SELECT COUNT(DISTINCT LOWER(from_email))::int AS total FROM incoming_replies
   `) as Array<{ total: number }>
 
   return NextResponse.json({
     personnes_ayant_ecrit: total,
+    messages_en_base: messages,
+    plafond_de_lecture_messagerie: 500,
+    tronque: messages > 500,
     // Invisibles dans la messagerie : classées spam ou sans fiche rattachée.
     invisibles_dans_la_messagerie: { n: invisibles.length, detail: invisibles },
     // Où se rangent les autres — l'écran s'ouvre sur « Positives ».
