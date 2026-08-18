@@ -164,9 +164,30 @@ function isAutoResponder(body: string, subject: string, fromEmail: string): bool
 // Détecte les plaintes "mail vide / je n'ai rien reçu" AVANT Gemini.
 // Ces messages n'ont aucune valeur commerciale → spam/no_action immédiat.
 export function isEmptyEmailComplaint(body: string, subject = ''): boolean {
-  const text = (body + ' ' + subject).toLowerCase()
+  /**
+   * ⚠️ NORMALISER L'APOSTROPHE AVANT TOUT TEST.
+   *
+   * Les clients mail modernes produisent l'apostrophe typographique (’), pas l'apostrophe droite.
+   * Tous les motifs ci-dessous étaient écrits avec la droite : « J’ai rien reçu » — le vrai message
+   * d'un vrai prospect — ne matchait rien. Corriger motif par motif aurait laissé le prochain
+   * passer ; on normalise une fois, en entrée.
+   */
+  const text = (body + ' ' + subject).toLowerCase().replace(/[’‘‛`´]/g, "'")
   const patterns = [
     /n'ai (rien|pas|aucun|aucune) re[çc]u/,             // "je n'ai rien reçu", "je n'ai pas reçu"
+    /**
+     * ⚠️ LE FRANÇAIS RÉEL N'EST PAS CELUI DE LA GRAMMAIRE. Vérifié sur les messages en base le
+     * 18/08 : sur quatre personnes signalant un mail vide, DEUX passaient à travers la détection.
+     *  - « J'ai rien reçu » : le « ne » de négation saute à l'oral, et le motif l'exigeait.
+     *  - « votre message et vide vide il y a rien » : « et » pour « est », et le mot « vide »
+     *    n'est pas collé au mot « message ».
+     * Une expression écrite pour du français correct rate les gens pressés, c'est-à-dire tout le
+     * monde. Ces deux-là étaient invisibles depuis juin.
+     */
+    /\bj'?ai\s+rien\s+re[çc]u/,                          // "j'ai rien reçu" (négation orale)
+    /(mail|message|email|courriel|courrier)\s+(et|est|es|é)\s+vide/, // "votre message et vide"
+    /(mail|message|email)\b[^.!?]{0,30}\bvide\b/,        // "votre message ... vide"
+    /il\s*n?'?y\s*a\s*rien\b/,                           // "il y a rien", "il n'y a rien"
     /pas re[çc]u (votre|le|ce|cet|un|mon|de) ?(mail|message|email|document|courrier|fichier)/,
     /mail (vide|vierge|sans contenu|sans message|sans rien)/,
     /message (vide|vierge|sans contenu|sans rien)/,
