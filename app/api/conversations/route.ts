@@ -223,8 +223,17 @@ export async function GET() {
         // 3) Spam uniquement → masqué. Les ABSENCES ('oof') restent VISIBLES : c'est un vrai
         //    prospect à relancer à son retour, il ne faut surtout pas les perdre.
         if (lastReceived.classification === 'spam') return false
-        // 4) Filtre RÉTROACTIF : vieux leads mal classés (plaintes "mail vide / rien reçu").
-        if (isEmptyEmailComplaint(lastReceived.body, '')) return false
+        /**
+         * ⚠️ FILTRE SUPPRIMÉ LE 18/08 — IL MASQUAIT DE VRAIS PROSPECTS.
+         *
+         * Cette ligne cachait les gens qui répondent « je n'ai rien reçu », « votre message est
+         * vide ». Quatre personnes réelles ont ainsi disparu de la messagerie depuis juin, sans
+         * jamais recevoir de réponse. Le classifieur les jetait déjà en spam ; ce filtre d'écran
+         * les cachait UNE SECONDE FOIS, si bien que corriger le classement seul ne changeait rien.
+         *
+         * Quelqu'un qui ouvre un mail et prend la peine d'écrire est engagé, et son message est en
+         * plus notre seul signal qu'on envoie des mails vides. On l'affiche.
+         */
         // 5) Anti-spam challenge-response (SpamEnMoins…) déjà stocké → masqué (pas une vraie conv).
         if (isChallengeResponseSpam(lastReceived.body, lastReceived.subject ?? '')) return false
         // 6) Auto-réponses (accusé de réception / absence = 'oof') → masquées de la messagerie
@@ -241,12 +250,23 @@ export async function GET() {
           const hasEnglish = /\b(the|thanks|thank you|please|regards|meeting|would|your|hello|hi there|no thank|i want|we can|best regards|sent from my iphone)\b/.test(b)
           if (!hasFrench && hasEnglish) return false
         }
-        // 9) AUTO-ARCHIVAGE : plus aucun échange (ni eux ni nous) depuis 14 jours et pas de
-        //    RDV calé → conversation morte, masquée automatiquement. (Une relance envoyée
-        //    compte comme un échange → elle la fait réapparaître, c'est voulu.)
+        /**
+         * 9) AUTO-ARCHIVAGE APRÈS 14 JOURS DE SILENCE — MAIS PLUS JAMAIS POUR QUELQU'UN QUI ATTEND.
+         *
+         * ⚠️ Ce filtre masquait TOUTE conversation sans échange depuis 14 jours. Combiné au reste,
+         * il a fait disparaître des prospects qui avaient posé une question et n'avaient jamais eu
+         * de réponse : plus le temps passe, moins on les voit, alors que c'est l'inverse qu'il
+         * faudrait. Un lead oublié devenait invisible PARCE QU'il était oublié.
+         *
+         * On archive donc seulement ce qui est réellement clos : la dernière parole est à NOUS.
+         * Si le dernier message vient du prospect, il attend une réponse — il reste affiché, quel
+         * que soit son âge.
+         */
         {
           const lastTs = Math.max(0, ...g.messages.map(m => new Date(m.date).getTime() || 0))
-          if (!g.rdvBooked && lastTs > 0 && Date.now() - lastTs > 14 * 86400000) return false
+          const dernier = [...g.messages].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).pop()
+          const prospectAttend = dernier?.role === 'received'
+          if (!g.rdvBooked && !prospectAttend && lastTs > 0 && Date.now() - lastTs > 14 * 86400000) return false
         }
         return true
       })
