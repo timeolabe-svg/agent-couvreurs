@@ -117,7 +117,7 @@ function ReportCard({
           {/* Metrics */}
           {metrics && (
             <div
-              className="grid grid-cols-4 gap-px rounded-lg overflow-hidden"
+              className="grid grid-cols-2 md:grid-cols-4 gap-px rounded-lg overflow-hidden"
               style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}
             >
               {[

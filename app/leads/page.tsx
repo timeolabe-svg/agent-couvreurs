@@ -125,7 +125,8 @@ export default function LeadsPage() {
             </span>
           </div>
         ) : (
-          <table className="w-full">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
                 {['Entreprise', 'Contact', 'Ville', 'Spécialité', 'Statut', 'Messages', 'Dernière activité', ''].map(h => (
@@ -197,6 +198,7 @@ export default function LeadsPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

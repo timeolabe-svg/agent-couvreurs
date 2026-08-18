@@ -241,7 +241,7 @@ export default function AgentPage() {
                 Chaque nouvelle boîte mail démarre en douceur pour habituer Google et Outlook à reconnaître vos envois comme légitimes. Sans warmup, vos emails finissent en spam dès la première campagne.
               </p>
 
-              <div className="grid grid-cols-4 gap-px rounded-lg overflow-hidden mb-4"
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-px rounded-lg overflow-hidden mb-4"
                 style={{ background: 'var(--color-border)', border: '1px solid var(--color-border)' }}>
                 {[
                   { week: 'Semaine 1', vol: '5 / jour',  pct: 14,  color: '#ef4444' },
@@ -259,7 +259,7 @@ export default function AgentPage() {
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {[
                   { icon: <CalendarRange size={12} />, label: 'Plage horaire', value: '9h00 → 17h30', desc: 'Lun-Ven uniquement', color: '#5f83ac' },
                   { icon: <TrendingUp size={12} />,    label: 'Incrément quotidien', value: '+2 emails/jour', desc: "Jusqu'à 35 emails/jour", color: '#7d6fb0' },

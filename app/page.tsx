@@ -680,7 +680,8 @@ export default function DashboardPage() {
               Tout voir →
             </Link>
           </div>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 {['Nom', 'Canal', 'Envois (mois)', 'Taux réponse', 'RDV', 'Statut'].map(col => (
@@ -728,6 +729,7 @@ export default function DashboardPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* ── SECTION 9: Calendrier de la semaine ── */}

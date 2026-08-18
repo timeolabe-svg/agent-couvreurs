@@ -312,7 +312,7 @@ function EmailTab() {
         <p className="text-[10px] font-medium mb-3 uppercase tracking-wide" style={{ color: 'var(--color-muted)' }}>
           Capacité d&apos;envoi globale
         </p>
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Stat label="Boîtes connectées" value={String(inboxes.length)} sub={`${inboxes.filter(i => i.status === 'active').length} actives`} color="#5f83ac" icon={<Mail size={14} />} />
           <Stat label="Domaines" value={String(domains.length)} sub={`${domains.filter(d => d.spf && d.dkim && d.dmarc).length} bien configurés`} color="#7d6fb0" icon={<Globe size={14} />} />
           <Stat label="Volume / jour" value={String(totalDaily)} sub="emails maximum" color="#f97316" icon={<Activity size={14} />} />
@@ -1243,7 +1243,7 @@ function ModeTab({ saveSignal }: { saveSignal: number }) {
 
       <div>
         <SectionTitle title="Ton des emails" />
-        <div className="grid grid-cols-3 gap-3 mt-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
           {TONS.map(t => {
             const active = ton === t.id
             const Icon = t.icon

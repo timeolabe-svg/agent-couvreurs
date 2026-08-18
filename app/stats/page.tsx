@@ -129,7 +129,7 @@ export default function StatsPage() {
           )}
 
           {/* SECTION 2 — 4 KPI Cards */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard
               icon={Mail}
               iconColor="#7d6fb0"

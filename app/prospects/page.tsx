@@ -65,7 +65,8 @@ export default function ProspectsPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
               {['Entreprise', 'Ville', 'Segment', 'Maturité', 'Statut', 'Dernière action'].map(h => (
@@ -89,6 +90,7 @@ export default function ProspectsPage() {
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

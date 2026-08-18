@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Phone, Globe, MapPin, RefreshCw, Cpu, Mail, Inbox } from 'lucide-react'
+import { Phone, Globe, MapPin, RefreshCw, Cpu, Mail, Inbox, ChevronLeft } from 'lucide-react'
 
 interface ConvMessage {
   role: 'sent' | 'received' | 'agent'
@@ -99,8 +99,20 @@ export default function ConversationsPage() {
 
   return (
     <div className="flex h-full" style={{ color: 'var(--color-text)' }}>
-      {/* Liste des conversations */}
-      <div className="w-80 flex-shrink-0 flex flex-col h-full" style={{ borderRight: '1px solid var(--color-border)' }}>
+      {/*
+        LISTE DES CONVERSATIONS — MAÎTRE / DÉTAIL SUR TÉLÉPHONE.
+
+        ⚠️ La liste était figée à 320 px À CÔTÉ du fil, quelle que soit la taille de l'écran. Sur un
+        téléphone de 375 px, il restait donc 55 px pour lire les messages : c'est ce que Timéo a vu.
+        Deux panneaux côte à côte n'ont de sens que si l'écran est large.
+
+        Sur mobile on affiche UN panneau à la fois : la liste, puis le fil quand on en ouvre un,
+        avec un retour. À partir de md, on retrouve les deux côte à côte.
+      */}
+      <div
+        className={`${current ? 'hidden' : 'flex'} md:flex w-full md:w-80 flex-shrink-0 flex-col h-full`}
+        style={{ borderRight: '1px solid var(--color-border)' }}
+      >
         <div className="h-14 px-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--color-border)' }}>
           <div className="flex items-center gap-2">
             <Inbox size={16} />
@@ -191,17 +203,27 @@ export default function ConversationsPage() {
         </div>
       </div>
 
-      {/* Fil de la conversation */}
-      <div className="flex-1 flex flex-col h-full min-w-0">
+      {/* Fil de la conversation — sur mobile il remplace la liste (voir ci-dessus). */}
+      <div className={`${current ? 'flex' : 'hidden'} md:flex flex-1 flex-col h-full min-w-0`}>
         {!current ? (
           <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--color-muted)' }}>
             <p className="text-sm">Sélectionne une conversation</p>
           </div>
         ) : (
           <>
-            <div className="h-auto px-6 py-3 flex flex-col gap-1" style={{ borderBottom: '1px solid var(--color-border)' }}>
-              <span className="font-semibold text-[15px]">{current.company}</span>
-              <div className="flex items-center gap-4 text-[12px]" style={{ color: 'var(--color-muted)' }}>
+            <div className="h-auto px-4 md:px-6 py-3 flex flex-col gap-1" style={{ borderBottom: '1px solid var(--color-border)' }}>
+              {/* Retour à la liste — indispensable sur mobile, où le fil REMPLACE la liste : sans
+                  ce bouton on ouvre une conversation et on ne peut plus en sortir. */}
+              <button
+                onClick={() => setSelected(null)}
+                className="md:hidden flex items-center gap-1 text-[12px] mb-1 self-start"
+                style={{ color: 'var(--color-accent)' }}
+              >
+                <ChevronLeft size={14} /> Toutes les conversations
+              </button>
+              <span className="font-semibold text-[15px] break-words">{current.company}</span>
+              {/* Les coordonnées passent à la ligne au lieu de déborder de l'écran. */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]" style={{ color: 'var(--color-muted)' }}>
                 <span className="flex items-center gap-1"><Mail size={12} />{current.email}</span>
                 {current.city && <span className="flex items-center gap-1"><MapPin size={12} />{current.city}</span>}
                 {current.phone && (
@@ -217,7 +239,7 @@ export default function ConversationsPage() {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-3">
+            <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4 flex flex-col gap-3">
               {current.messages.map((m, i) => {
                 const isOut = m.role === 'sent' || m.role === 'agent'
                 // 🚨 UN BROUILLON N'EST PAS UN MESSAGE ENVOYÉ (correctif 09/08).
@@ -265,7 +287,10 @@ export default function ConversationsPage() {
                       </span>
                     </div>
                     <div
-                      className="max-w-[80%] rounded-lg px-3 py-2 text-[13px] whitespace-pre-wrap leading-relaxed"
+                      /* 92 % sur téléphone : à 80 % d'un écran de 375 px, une bulle fait 300 px et
+                         chaque phrase se casse en trois. break-words coupe les longues URL au lieu
+                         de pousser la bulle au-delà de l'écran. */
+                      className="max-w-[92%] md:max-w-[80%] rounded-lg px-3 py-2 text-[13px] whitespace-pre-wrap break-words leading-relaxed"
                       style={{
                         background: m.role === 'received'
                           ? 'var(--color-surface-2)'
