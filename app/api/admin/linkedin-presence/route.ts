@@ -106,6 +106,66 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  /**
+   * ⚠️ LA QUESTION UTILE N'EST PAS « COMBIEN ONT UN LINKEDIN » MAIS « COMBIEN DE CEUX QU'ON NE PEUT
+   * PAS JOINDRE PAR MAIL ONT UN LINKEDIN ».
+   *
+   * Une entreprise déjà démarchée par email n'apporte rien de plus sur LinkedIn : c'est le même
+   * prospect, touché deux fois. Le canal ne se justifie que par ce qu'il RAJOUTE. Mesurer sur le
+   * fichier entier gonflerait le gisement d'un tiers de gens déjà couverts.
+   */
+  if (req.nextUrl.searchParams.get('non_contactes') === '1') {
+    const [r] = (await sql`
+      WITH testes AS (
+        SELECT p.site, p.erreur, p.a_page_company, p.a_profil_perso,
+               EXISTS (
+                 SELECT 1 FROM contacts c
+                 JOIN email_queue q ON q.contact_id = c.id
+                 WHERE c.website = p.site AND q.sequence_step = 0 AND q.status = 'sent'
+               ) AS deja_contacte
+        FROM linkedin_presence p
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE erreur IS NULL AND NOT deja_contacte)::int AS sites_lus_non_contactes,
+        COUNT(*) FILTER (WHERE erreur IS NULL AND NOT deja_contacte
+                           AND (a_page_company OR a_profil_perso))::int   AS avec_linkedin,
+        COUNT(*) FILTER (WHERE erreur IS NULL AND NOT deja_contacte
+                           AND a_profil_perso)::int                       AS avec_profil_dirigeant,
+        COUNT(*) FILTER (WHERE erreur IS NULL AND deja_contacte)::int     AS sites_lus_deja_contactes
+      FROM testes
+    `) as Array<Record<string, number>>
+
+    // Le gisement total à projeter : fiches jamais démarchées par mail ET qui ont un site.
+    const [g] = (await sql`
+      SELECT COUNT(*)::int AS non_contactes_avec_site
+      FROM outscraper_leads l
+      WHERE l.site IS NOT NULL AND l.site <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM contacts c
+          JOIN email_queue q ON q.contact_id = c.id
+          WHERE c.website = l.site AND q.sequence_step = 0 AND q.status = 'sent'
+        )
+    `) as Array<Record<string, number>>
+
+    const lus = Number(r?.sites_lus_non_contactes ?? 0)
+    const avec = Number(r?.avec_linkedin ?? 0)
+    const perso = Number(r?.avec_profil_dirigeant ?? 0)
+    const gisement = Number(g?.non_contactes_avec_site ?? 0)
+    const tx = (n: number) => (lus > 0 ? Math.round((n / lus) * 1000) / 10 : 0)
+
+    return NextResponse.json({
+      echantillon: { sites_lus_non_contactes: lus, sites_lus_deja_contactes: Number(r?.sites_lus_deja_contactes ?? 0) },
+      dans_l_echantillon: { avec_linkedin: avec, dont_profil_dirigeant: perso },
+      taux_pct: { avec_linkedin: tx(avec), profil_dirigeant: tx(perso) },
+      gisement_total_non_contactes_avec_site: gisement,
+      projection: {
+        entreprises_avec_linkedin: Math.round((avec / Math.max(1, lus)) * gisement),
+        profils_dirigeant_visibles: Math.round((perso / Math.max(1, lus)) * gisement),
+      },
+      lecture: 'Projection = taux observé sur l'échantillon appliqué au gisement. PLANCHER pour les profils dirigeants : la plupart ne publient pas leur profil perso sur le site de leur entreprise.',
+    })
+  }
+
   if (req.nextUrl.searchParams.get('liste') === '1') {
     const rows = (await sql`
       SELECT entreprise, site, a_page_company, a_profil_perso, urls
