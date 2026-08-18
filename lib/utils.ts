@@ -31,3 +31,26 @@ export function formatTime(dateStr: string): string {
 export function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
 }
+
+/**
+ * RETIRE LES EMOJIS DES NOMS D'ENTREPRISE SCRAPÉS.
+ *
+ * ⚠️ Les fiches Google sont truffées d'emojis mis là pour attirer l'oeil dans les résultats :
+ * « 🥇Dallau Couverture », « ✅Ferre Toiture », « 👷 Maçon 🧱 ». Stockés bruts, ils ressortent
+ * partout — dans l'interface que le client regarde, et surtout DANS LES MAILS envoyés en son nom.
+ * Un mail qui commence par « Bonjour 🥇Dallau Couverture » ne fait pas sérieux, et c'est le client
+ * qui le porte.
+ *
+ * On nettoie aussi la ponctuation orpheline que le retrait laisse derrière lui : parenthèses vides,
+ * espaces avant une virgule, doubles espaces. Sinon on remplace un emoji par une coquille.
+ */
+export function stripEmojis(s: string | null | undefined): string {
+  if (!s) return ''
+  return s
+    .replace(/[\u{1F000}-\u{1FAFF}\u{1FB00}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{2300}-\u{23FF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, '')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+([)\].,;:!?])/g, '$1')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}

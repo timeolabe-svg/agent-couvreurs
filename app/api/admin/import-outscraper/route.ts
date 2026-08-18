@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { scrapeEmailFromWebsite } from '@/lib/scraper/google-places'
 import { isFakeEmail } from '@/lib/fake-email'
@@ -207,7 +208,7 @@ export async function GET(request: NextRequest) {
       // vague, parce qu'il produit un message confiant et hors sujet.
       const ins = g(await db.execute(sql`
         INSERT INTO contacts (email, company, website, phone, sector, city, postal_code, google_place_id, google_rating, google_reviews_count, email_confidence_score, source, audit_done)
-        VALUES (${email}, ${l.name}, ${l.site}, ${l.phone}, ${l.sector || 'artisan du bâtiment'}, ${l.city}, ${l.postal_code}, ${l.place_id}, ${l.rating}, ${l.reviews}, ${em.confidence}, 'outscraper', false)
+        VALUES (${email}, ${stripEmojis(l.name)}, ${l.site}, ${l.phone}, ${l.sector || 'artisan du bâtiment'}, ${l.city}, ${l.postal_code}, ${l.place_id}, ${l.rating}, ${l.reviews}, ${em.confidence}, 'outscraper', false)
         ON CONFLICT (email) DO NOTHING
         RETURNING id
       `)) as Array<{ id: string }>

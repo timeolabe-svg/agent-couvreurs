@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { isFakeEmail } from '@/lib/fake-email'
 import { getPausedSectors } from '@/lib/experiments'
@@ -434,7 +435,7 @@ async function runTickHandler(request: NextRequest) {
               .insert(contacts)
               .values({
                 email: lead.email!,
-                company: lead.name,
+                company: stripEmojis(lead.name),
                 city: lead.city || scrapedCity,
                 postal_code: lead.postalCode || null,
                 phone: lead.phone,

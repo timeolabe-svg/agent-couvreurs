@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
 import { isFakeEmail } from '@/lib/fake-email'
@@ -294,7 +295,7 @@ async function runCron(req: Request) {
       // Insert contact (audit_done=false → audité plus tard par audit-sites).
       const [ins] = await db.insert(contacts).values({
         email,
-        company: lead.name,
+        company: stripEmojis(lead.name),
         city: lead.city || city,
         postal_code: lead.postalCode || null,
         phone: lead.phone,

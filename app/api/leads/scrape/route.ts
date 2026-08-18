@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 import { scrapeGooglePlaces } from '@/lib/scraper/google-places'
 import { validateEmail } from '@/lib/scraper/email-validator'
 
@@ -112,8 +113,8 @@ export async function POST(request: NextRequest) {
       // Insert
       await db.insert(contacts).values({
         email: validation.fixedEmail ?? lead.email,
-        name: lead.directorName,
-        company: lead.name,
+        name: lead.directorName ? stripEmojis(lead.directorName) : lead.directorName,
+        company: stripEmojis(lead.name),
         website: lead.website,
         phone: lead.phone,
         sector: lead.sector,

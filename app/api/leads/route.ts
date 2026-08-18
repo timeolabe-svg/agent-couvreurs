@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 
 // GET /api/leads — list with filters
 // POST /api/leads — create single lead
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
       .values({
         email: finalEmail,
         name: body.name ?? null,
-        company: body.company ?? finalEmail.split('@')[1],
+        company: stripEmojis(body.company ?? finalEmail.split('@')[1]),
         phone: body.phone ?? null,
         city: body.city ?? null,
         sector: body.sector ?? null,

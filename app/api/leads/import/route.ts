@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { stripEmojis } from '@/lib/utils'
 import { validateEmail } from '@/lib/scraper/email-validator'
 
 // Column aliases — maps normalized CSV header to canonical field name
@@ -200,7 +201,7 @@ export async function POST(request: NextRequest) {
       await db.insert(contacts).values({
         email: finalEmail,
         name: row.name ?? null,
-        company: row.company ?? finalEmail.split('@')[1],
+        company: stripEmojis(row.company ?? finalEmail.split('@')[1]),
         website: row.website ?? null,
         phone: row.phone ?? null,
         sector: row.sector ?? null,
