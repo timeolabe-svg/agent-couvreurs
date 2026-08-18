@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
         entreprises_avec_linkedin: Math.round((avec / Math.max(1, lus)) * gisement),
         profils_dirigeant_visibles: Math.round((perso / Math.max(1, lus)) * gisement),
       },
-      lecture: 'Projection = taux observé sur l'échantillon appliqué au gisement. PLANCHER pour les profils dirigeants : la plupart ne publient pas leur profil perso sur le site de leur entreprise.',
+      lecture: "Projection = taux observé sur l'échantillon appliqué au gisement. PLANCHER pour les profils dirigeants : la plupart ne publient pas leur profil perso sur le site de leur entreprise.",
     })
   }
 
