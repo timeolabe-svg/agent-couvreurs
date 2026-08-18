@@ -139,15 +139,37 @@ async function runCron(req: Request) {
       const r = data.result
       noter(data.error ? 'error:' + String(data.error).slice(0, 40) : (r ?? 'sans_resultat'))
 
+      /**
+       * ── UNE ADRESSE N'EST PAYÉE QU'UNE FOIS ────────────────────────────────
+       *
+       * Le verdict porte sur l'ADRESSE, pas sur la fiche. On l'applique donc à toutes les fiches qui
+       * partagent cette adresse (`LOWER(email)`), et non au seul `id` traité : deux fiches sur la
+       * même adresse feraient sinon deux appels facturés pour un résultat identique.
+       *
+       * ⚠️ MESURÉ AVANT DE CODER, le 17/08 : cette base compte **0 adresse en double** — `contacts`
+       * porte une contrainte d'unicité sur l'email (`ON CONFLICT (email) DO NOTHING` à l'import).
+       * La propagation est donc sans effet aujourd'hui ; elle est là pour le jour où une seconde
+       * source insérera, sans quoi le gaspillage réapparaîtrait en silence.
+       *
+       * Pour la même raison je n'ai PAS ajouté le court-circuit « fiche sœur » avant l'appel MV :
+       * ce serait une requête de plus par adresse, dans un cron déjà borné par la coupe à 30 s de
+       * cron-job.org, pour zéro ligne à trouver. Le jour où des doublons existent, il faudra
+       * l'ajouter — la mesure est dans /api/admin/debit-verification.
+       */
+      const memeAdresse = sql`LOWER(${contacts.email}) = LOWER(${c.email})`
+
       if (r === 'ok') {
-        await db.update(contacts).set({ ...attemptFields, email_validated: true, email_confidence_score: 99, updated_at: new Date() }).where(eq(contacts.id, c.id))
+        await db.update(contacts).set({ ...attemptFields, email_validated: true, email_confidence_score: 99, updated_at: new Date() }).where(memeAdresse)
         validated++
       } else if (r === 'invalid' || r === 'catch_all' || r === 'disposable') {
         // Adresse non fiable → on annule sa file (jamais envoyée) pour éviter le bounce.
-        await db.update(contacts).set(attemptFields).where(eq(contacts.id, c.id))
+        await db.update(contacts).set(attemptFields).where(memeAdresse)
         await db.update(email_queue)
           .set({ status: 'cancelled' })
-          .where(and(eq(email_queue.contact_id, c.id), inArray(email_queue.status, ['pending', 'queued'])))
+          .where(and(
+            sql`${email_queue.contact_id} IN (SELECT id FROM contacts WHERE LOWER(email) = LOWER(${c.email}))`,
+            inArray(email_queue.status, ['pending', 'queued']),
+          ))
         rejected++
       } else if (data.error) {
         // Crédits épuisés, clé invalide, quota : le problème est CHEZ NOUS. On ne décompte rien,
