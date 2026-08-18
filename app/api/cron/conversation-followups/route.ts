@@ -118,6 +118,29 @@ async function runCron(req: Request) {
     FROM incoming_replies ir
     WHERE ir.created_at > NOW() - INTERVAL '30 days'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
+      /**
+       * ⚠️ UN RENDEZ-VOUS CONFIRMÉ COUPE TOUTE RELANCE AUTOMATIQUE. RÈGLE ABSOLUE.
+       *
+       * INCIDENT DU 18/08, COUVREUR JIMMY. RDV confirmé pour 10:00. À 10:00:49 — quarante-neuf
+       * secondes après l'heure du rendez-vous — l'agent a généré un message, puis l'a envoyé à
+       * 11:07 : « Je peux vous appeler dès demain matin, à 10h ». Le prospect, qui avait dit oui et
+       * attendait un appel, reçoit une proposition de nouveau créneau comme si rien n'existait.
+       *
+       * La cause tenait à un seul mot : le garde-fou testait un rendez-vous STRICTEMENT FUTUR. Une
+       * seconde après l'heure dite, le rendez-vous n'est plus « futur », donc plus vu, donc l'agent
+       * recommence à démarcher quelqu'un avec qui l'affaire était déjà conclue.
+       *
+       * Un no-show n'est pas une situation à rattraper par un mail automatique une heure plus tard.
+       * C'est une décision humaine : rappeler, reprogrammer, ou laisser tomber. La machine s'arrête
+       * dès que le rendez-vous est pris, et elle ne reprend pas la main toute seule.
+       *
+       * Seul un RDV ANNULÉ rouvre la porte : là, il n'y a plus d'engagement à respecter.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM rdv r
+        WHERE r.contact_id = ir.contact_id
+          AND r.status IN ('confirmed', 'signed')
+      )
       AND ir.contact_id IS NOT NULL
       /**
        * ⚠️ UN BROUILLON REJETÉ TOMBAIT ENTRE LES DEUX FILETS (constaté le 17/08/2026).
@@ -206,6 +229,29 @@ async function runCron(req: Request) {
     JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
     WHERE ir.created_at > NOW() - INTERVAL '30 days'
       AND ir.classification IN ('interest', 'question', 'objection', 'rdv_request')
+      /**
+       * ⚠️ UN RENDEZ-VOUS CONFIRMÉ COUPE TOUTE RELANCE AUTOMATIQUE. RÈGLE ABSOLUE.
+       *
+       * INCIDENT DU 18/08, COUVREUR JIMMY. RDV confirmé pour 10:00. À 10:00:49 — quarante-neuf
+       * secondes après l'heure du rendez-vous — l'agent a généré un message, puis l'a envoyé à
+       * 11:07 : « Je peux vous appeler dès demain matin, à 10h ». Le prospect, qui avait dit oui et
+       * attendait un appel, reçoit une proposition de nouveau créneau comme si rien n'existait.
+       *
+       * La cause tenait à un seul mot : le garde-fou testait un rendez-vous STRICTEMENT FUTUR. Une
+       * seconde après l'heure dite, le rendez-vous n'est plus « futur », donc plus vu, donc l'agent
+       * recommence à démarcher quelqu'un avec qui l'affaire était déjà conclue.
+       *
+       * Un no-show n'est pas une situation à rattraper par un mail automatique une heure plus tard.
+       * C'est une décision humaine : rappeler, reprogrammer, ou laisser tomber. La machine s'arrête
+       * dès que le rendez-vous est pris, et elle ne reprend pas la main toute seule.
+       *
+       * Seul un RDV ANNULÉ rouvre la porte : là, il n'y a plus d'engagement à respecter.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM rdv r
+        WHERE r.contact_id = ir.contact_id
+          AND r.status IN ('confirmed', 'signed')
+      )
       AND rd.status = 'sent'
       AND (rd.body ILIKE '%je reviens vers vous%' OR rd.body ILIKE '%meilleures conditions%' OR rd.body ILIKE '%je transmets%')
       AND NOT EXISTS (SELECT 1 FROM reply_drafts rd2 WHERE rd2.incoming_reply_id = ir.id AND rd2.created_at > rd.created_at)
