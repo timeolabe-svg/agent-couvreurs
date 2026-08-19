@@ -685,10 +685,59 @@ async function processReply(params: {
   const phoneMatch = analysisText.match(/0[1-9]([\s. ]?\d{2}){4}/)
   const contactPhone = phoneMatch ? phoneMatch[0].replace(/[\s ]+/g, ' ').trim() : (contact?.phone ?? undefined)
 
-  // RDV DÉJÀ CALÉ (confirmé) = job terminé → l'agent n'envoie plus rien (l'humain gère).
-  const existRdv = contact?.id ? (await sql`SELECT scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ scheduled_at: string }> : []
+  /**
+   * ── RDV DÉJÀ CALÉ : L'AGENT N'ENVOIE PLUS RIEN, MAIS ON NE JETTE PLUS LE MESSAGE ──
+   *
+   * ⚠️ INCIDENT DU 19/08, TCT COUVERTURE. Rendez-vous confirmé pour le 20 à 10:00. Une heure plus
+   * tard le prospect écrit « Plutôt vers 11h ». Cette branche renvoyait `no_action` : pas de
+   * brouillon, pas de notification, pas de trace lisible. Le message a été ingéré puis abandonné.
+   * Le rendez-vous serait resté à 10:00 et personne n'aurait su que le prospect voulait 11h.
+   *
+   * La règle « une fois qu'il a dit oui, on arrête de lui envoyer des messages » reste entière :
+   * AUCUN envoi automatique. Mais « ne pas répondre tout seul » n'a jamais voulu dire « faire
+   * disparaître ». Un message qui arrive APRÈS un rendez-vous calé est même le plus important de
+   * tous : il le déplace, l'annule, ou apporte une information pour l'appel.
+   *
+   * On dépose donc un brouillon dans « À valider » et on prévient. La décision reste humaine.
+   */
+  const existRdv = contact?.id ? (await sql`SELECT id, scheduled_at FROM rdv WHERE contact_id = ${contact.id} AND status = 'confirmed' ORDER BY scheduled_at ASC LIMIT 1`) as Array<{ id: string; scheduled_at: string }> : []
   if (existRdv[0]?.scheduled_at) {
-    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'no_action_rdv_deja_cale', company: contact?.company ?? from })}::jsonb)`
+    const quandRdv = new Date(existRdv[0].scheduled_at).toLocaleString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
+    })
+
+    // Le prospect propose-t-il une AUTRE heure ? On le signale, sans trancher à sa place.
+    const nouvelleHeure = analysisText.match(/(?:plut[oô]t|plutot|vers|à|a)s*(d{1,2})s*(?:h|:)s*(d{2})?/i)
+    const indice = nouvelleHeure ? `Le prospect semble proposer ${nouvelleHeure[1]}h${nouvelleHeure[2] ?? ''} à la place.` : ''
+
+    const corps = [
+      'Bonjour,',
+      '',
+      indice ? 'Très bien pour ce nouvel horaire, je note.' : 'Bien noté, merci pour votre message.',
+      '',
+      'À très vite,',
+    ].join(String.fromCharCode(10))
+
+    await sql`
+      INSERT INTO reply_drafts (incoming_reply_id, body, status, created_at)
+      VALUES (${incomingReplyId}::uuid, ${corps}, 'pending', NOW())
+    `.catch(() => {})
+
+    await notifyTeam(
+      `Message APRÈS le rendez-vous calé — ${contact?.company ?? from}`,
+      [
+        `${contact?.company ?? from} a écrit alors que son rendez-vous est déjà calé (${quandRdv}).`,
+        indice,
+        '',
+        'Son message :',
+        cleanBody.slice(0, 700),
+        '',
+        `⚠️ Aucune réponse automatique n'a été envoyée. Un brouillon attend dans ${BASE_URL}/reponses-a-valider`,
+        `Si l'horaire change, corrige le rendez-vous dans l'agenda : ${BASE_URL}/agenda`,
+      ].filter(Boolean).join(String.fromCharCode(10)),
+    ).catch(() => {})
+
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, action: 'message_apres_rdv_cale', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
   }
 
