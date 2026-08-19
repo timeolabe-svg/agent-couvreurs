@@ -559,10 +559,23 @@ async function processReply(params: {
         await sql`UPDATE email_queue SET status = 'cancelled' WHERE contact_id = ${contact.id} AND status IN ('pending', 'queued', 'queued_instantly', 'sending')`
         // 2) Contact neuf (hérite de l'audit déjà fait ; email confirmé par le prospect).
         const nc = (await sql`
+          /**
+           * ⚠️ RECOPIER LE NOMBRE D'AVIS GOOGLE — SANS LUI, LE PROSPECT EST TUÉ EN SILENCE.
+           *
+           * La fiche créée sur la nouvelle adresse héritait de tout SAUF de google_reviews_count.
+           * Or le nettoyage de file annule les placeholders dont le contact a moins de 20 avis
+           * (critère client) : une colonne NULL vaut 0, donc CHAQUE contact issu d'un changement
+           * d'adresse voyait sa file annulée quelques jours plus tard, sans erreur ni trace.
+           *
+           * Mesuré le 19/08 : 2 des 3 changements d'adresse traités étaient dans ce cas. Ces gens
+           * nous avaient DONNÉ leur bonne adresse et n'ont jamais rien reçu dessus.
+           */
           INSERT INTO contacts (email, company, name, city, sector, phone, website, source,
-            email_validated, email_confidence_score, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms)
+            email_validated, email_confidence_score, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms,
+            google_place_id, google_rating, google_reviews_count)
           SELECT ${newEmail}, company, name, city, sector, phone, website, 'email_change',
-            true, 99, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms
+            true, 99, audit_done, audit_score, audit_level, audit_weaknesses, audit_cms,
+            NULL, google_rating, google_reviews_count
           FROM contacts WHERE id = ${contact.id}
           ON CONFLICT (email) DO NOTHING
           RETURNING id
