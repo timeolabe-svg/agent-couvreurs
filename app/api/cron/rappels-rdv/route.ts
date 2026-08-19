@@ -114,12 +114,12 @@ async function handler(req: NextRequest) {
       maintenant: new Date().toISOString(),
       rendez_vous_a_venir: rdvs.map(r => ({
         entreprise: r.company ?? r.email,
-        rdv_le: new Date(r.scheduled_at).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/Paris' }),
+        rdv_le: new Date(r.scheduled_at).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short', timeZone: 'UTC' }),
         rappels: ECHEANCES.map(e => {
           const t = new Date(new Date(r.scheduled_at).getTime() - e.minutesAvant * 60000)
           return {
             echeance: e.cle,
-            part_vers: t.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Paris' }),
+            part_vers: t.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' }),
             etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé'
               : t.getTime() < Date.now() ? 'fenêtre passée'
               : 'à venir',
@@ -165,9 +165,20 @@ async function handler(req: NextRequest) {
 
       // On reste sur la boîte du fil : le prospect connaît cette adresse, c'est celle du rendez-vous.
       const box = boxes.find(b => b.email.toLowerCase() === (r.boite_du_fil ?? '').toLowerCase()) ?? boxes[0]
+      /**
+       * ⚠️ L'HEURE EST STOCKÉE EN LOCAL NAÏF — LA CONVERTIR LA DÉCALE DE DEUX HEURES.
+       *
+       * Repéré grâce à l'aperçu, deux minutes avant le premier envoi réel : le RDV de TCT avait été
+       * annoncé au prospect « jeudi 20 août à 10:00 », et mon rappel allait lui écrire « 12:00 ».
+       * Un rappel qui donne la mauvaise heure est pire que pas de rappel du tout : il fait rater le
+       * rendez-vous qu'il était censé sauver.
+       *
+       * Tout le projet formate ces dates avec timeZone 'UTC' (cf. conversation-followups) : la
+       * valeur en base est déjà l'heure de Paris, on l'affiche telle quelle.
+       */
       const quand = new Date(r.scheduled_at).toLocaleString('fr-FR', {
         weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
-        timeZone: 'Europe/Paris',
+        timeZone: 'UTC',
       })
 
       const res = await sendFromBox(box, {
