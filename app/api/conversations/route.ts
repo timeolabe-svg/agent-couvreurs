@@ -21,6 +21,8 @@ export async function GET() {
     const { contacts, email_queue, incoming_replies, reply_drafts, rdv } = await import('@/lib/db/schema')
     const { inArray, desc, ne, isNull, or, and, eq, sql, gte } = await import('drizzle-orm')
     const { stripQuotedReply, isEmptyEmailComplaint, isChallengeResponseSpam } = await import('@/lib/reply-agent/classifier')
+    // Même détecteur que le moteur d'envoi : une seule définition du « changement d'adresse ».
+    const { extractNewEmail } = await import('@/app/api/cron/poll-imap-replies/route')
     const { cleanIncomingBody } = await import('@/lib/decode-body')
 
     // Nettoyage HTML/CSS à l'affichage : certains mails stockés contiennent encore du
@@ -49,7 +51,12 @@ export async function GET() {
         created_at: incoming_replies.created_at,
       })
       .from(incoming_replies)
-      .where(or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')))
+      // ⚠️ `archive_le` = retrait DEMANDÉ À LA MAIN (séquelles d'anciens bugs). Le message reste en
+      // base, il ne s'affiche plus. Masquer se défait, supprimer ne se défait pas.
+      .where(and(
+        or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')),
+        isNull(incoming_replies.archive_le),
+      ))
       .orderBy(desc(incoming_replies.created_at))
       .limit(500)
 
@@ -262,9 +269,18 @@ export async function GET() {
          * lead à rappeler, pas un déchet.
          */
         if (lastReceived.classification === 'oof' && !g.absentJusquAu) return false
-        // 7) Changement d'adresse mail → pas une conversation (le prospect est recontacté sur
-        //    sa nouvelle adresse via un contact neuf ; inutile d'afficher ça comme un échange).
-        if (/changement d'?adresse|nouvelle adresse\s*(mail|e-?mail|[ée]lectronique|de messagerie)|notez\s+(notre|ma)\s+nouvelle\s+adresse/i.test(lastReceived.body)) return false
+        /**
+         * 7) CHANGEMENT D'ADRESSE → le prospect est déjà recontacté sur sa nouvelle adresse, ce fil
+         *    n'a plus rien à faire dans « En attente ».
+         *
+         * ⚠️ Cette règle avait sa PROPRE liste de formulations, plus étroite que celle du moteur
+         * d'envoi. « merci de prendre en compte la nouvelle adresse de correspondance » (Nelson
+         * Désiré, 16/08) n'y figurait pas : le moteur avait bien créé le contact sur la nouvelle
+         * adresse et relancé la séquence dessus, mais l'ancien fil restait affiché comme un lead à
+         * traiter. Deux détections du même événement, c'est une qui finit par se tromper — on
+         * utilise désormais celle du moteur, la seule.
+         */
+        if (extractNewEmail(lastReceived.body, g.email)) return false
         // 8) Conversation clairement en ANGLAIS = mail de warmup (cible = artisans FR) → masquée.
         {
           const b = (lastReceived.body || '').toLowerCase()

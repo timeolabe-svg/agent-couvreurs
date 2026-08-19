@@ -1081,7 +1081,7 @@ function extractOriginalRecipient(body: string): string | null {
 }
 
 // ─── Capture d'un changement d'adresse dans la réponse ───
-function extractNewEmail(text: string, currentEmail: string): string | null {
+export function extractNewEmail(text: string, currentEmail: string): string | null {
   const changeIntent = /(chang\w*\s+d['’]?adresse|nouvelle\s+adresse|nouveau\s+(mail|email)|nouvel\s+(email|e-mail)|contactez[-\s]?(moi|nous)\s+(à|au|sur)|écrivez[-\s]?(moi|nous)|mon\s+(nouveau\s+|nouvel\s+)?(mail|email|adresse)|à\s+cette\s+adresse|utilisez\s+plut[oô]t|désormais\s+à|dorénavant)/i.test(text)
   if (!changeIntent) return null
   const emails = text.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi) ?? []
