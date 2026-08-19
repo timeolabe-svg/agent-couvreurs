@@ -79,8 +79,9 @@ export async function GET() {
      */
     const absents = new Map<string, string>()
     for (const c of contactRows) {
-      const d = (c as unknown as { absent_jusqu_au?: string | Date | null }).absent_jusqu_au
-      if (d) absents.set(c.id, typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10))
+      const d = c.absent_jusqu_au
+      // drizzle renvoie une chaîne pour un type DATE (pas un objet Date).
+      if (d) absents.set(c.id, String(d).slice(0, 10))
     }
 
     // 3. Emails envoyés pour ces contacts

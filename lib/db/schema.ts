@@ -44,6 +44,17 @@ export const contacts = pgTable('contacts', {
   // d'échouer passe en fin de file plutôt que d'être retenté immédiatement.
   mv_last_attempt_at: timestamp('mv_last_attempt_at'),
   mv_attempts: integer('mv_attempts').default(0),
+  /**
+   * ABSENCE ANNONCÉE PAR LE PROSPECT (« fermé jusqu'au 25 août »).
+   *
+   * ⚠️ Ces colonnes existaient en base (migration) mais PAS ici : `db.select().from(contacts)` ne
+   * renvoie que les colonnes déclarées dans ce schéma. L'onglet « Absents » affichait donc 0 alors
+   * que 25 fiches portaient bien une date. Une colonne ajoutée par migration doit toujours être
+   * déclarée ici aussi, sinon elle est invisible pour tout le code qui passe par Drizzle.
+   */
+  absent_jusqu_au: date('absent_jusqu_au'),
+  absence_motif: text('absence_motif'),
+  absence_vue_le: timestamp('absence_vue_le'),
   created_at: timestamp('created_at').defaultNow(),
   updated_at: timestamp('updated_at').defaultNow(),
 }, (table) => ({
