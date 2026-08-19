@@ -54,7 +54,7 @@ export async function GET() {
       // ⚠️ `archive_le` = retrait DEMANDÉ À LA MAIN (séquelles d'anciens bugs). Le message reste en
       // base, il ne s'affiche plus. Masquer se défait, supprimer ne se défait pas.
       .where(and(
-        or(isNull(incoming_replies.classification), ne(incoming_replies.classification, 'spam')),
+        or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'archive_bug'))),
         isNull(incoming_replies.archive_le),
       ))
       .orderBy(desc(incoming_replies.created_at))

@@ -541,7 +541,14 @@ async function processReply(params: {
   // Relances de séquence et de conversation : plus jamais.
   if (contact?.id && isPressionSignalee(cleanBody)) {
     await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS pression_signalee_at TIMESTAMPTZ`.catch(() => {})
-    await sql`UPDATE contacts SET pression_signalee_at = NOW() WHERE id = ${contact.id} AND pression_signalee_at IS NULL`.catch(() => {})
+    // ⚠️ PAS de catch muet ici : cette écriture est ce qui COUPE toutes les relances d'un prospect
+    // qui s'est plaint du nombre de mails. Si elle échoue en silence, il continue d'en recevoir —
+    // exactement ce qui transforme un agacé en plaignant. On trace l'échec.
+    await sql`UPDATE contacts SET pression_signalee_at = NOW() WHERE id = ${contact.id} AND pression_signalee_at IS NULL`
+      .catch(async (e: unknown) => {
+        console.error('[pression] écriture échouée', e)
+        await sql`INSERT INTO dashboard_events (type, data) VALUES ('pression_non_enregistree', ${JSON.stringify({ contactEmail: from, erreur: String(e).slice(0, 200) })}::jsonb)`.catch(() => {})
+      })
     await cancelSteps(from)
     results.push(`🤐 pression signalée par ${from} → aucune relance automatique (réponse à ce message uniquement)`)
   }
