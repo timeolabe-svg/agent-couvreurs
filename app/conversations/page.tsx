@@ -61,11 +61,10 @@ function tabOf(c: Conversation): Tab {
    * réponse est ACTIONNABLE, quoi qu'il arrive par ailleurs — rendez-vous calé compris. Sans ça,
    * un prospect qui demande à décaler son rendez-vous se range dans « Positives » et n'est jamais vu.
    */
+  // L'absence prime : il a donné une date, on le rappellera à cette date. Rien à faire aujourd'hui.
+  if (c.absentJusquAu) return 'absent'
   if (c.prospectAttend) return 'pending'
   if (c.rdvBooked) return 'positive'
-  // L'absence prime sur le reste tant que la date de retour n'est pas passée : inutile de le
-  // travailler comme un lead ordinaire, il a dit quand le rappeler.
-  if (c.absentJusquAu) return 'absent'
   if (c.classification === 'desinterest') return 'negative'
   if (c.exhausted) return 'failed'
   return 'pending' // interest sans RDV, question, objection, oof, other, non classé

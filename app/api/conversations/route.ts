@@ -368,7 +368,22 @@ export async function GET() {
          */
         {
           const idx = g.messages.map(m => m.role).lastIndexOf('received')
-          g.prospectAttend = idx >= 0 && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
+          const dernierRecu = idx >= 0 ? g.messages[idx] : null
+          /**
+           * ⚠️ UNE ABSENCE N'ATTEND PAS DE RÉPONSE.
+           *
+           * Premier jet : « personne n'a répondu à son dernier message » → 67 conversations sur 82
+           * marquées « en attente ». Absurde, et surtout ça vidait l'onglet Absents que ce même
+           * correctif venait de créer : un répondeur qui annonce des congés n'attend rien de nous,
+           * il attend la date qu'il a lui-même donnée.
+           *
+           * « En attente » doit rester la liste de ce qui demande une ACTION MAINTENANT. Si elle
+           * contient tout, elle ne sert plus à rien — c'est exactement le défaut de l'onglet
+           * « Positives » ouvert par défaut, déplacé d'un cran.
+           */
+          const estAbsence = dernierRecu?.classification === 'oof'
+          g.prospectAttend = idx >= 0 && !estAbsence
+            && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
         }
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
         return g
