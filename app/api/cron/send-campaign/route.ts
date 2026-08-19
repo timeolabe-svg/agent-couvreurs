@@ -499,6 +499,21 @@ async function runCron(req: NextRequest) {
       })
     } catch { /* les rappels réessaieront au prochain run */ }
 
+    /**
+     * REPRISE APRÈS ABSENCE — même raison, même greffe.
+     *
+     * ⚠️ Je l'avais écrit et déployé aujourd'hui SANS déclencheur : l'audit l'a trouvé absent de la
+     * table des battements, c'est-à-dire jamais exécuté une seule fois. Six prospects dont la date
+     * de retour est passée seraient restés sans reprise, exactement le défaut que ce cron devait
+     * corriger. Un filet qu'il faut penser à lancer n'est pas un filet.
+     */
+    try {
+      const base = process.env.PUBLIC_APP_URL || BASE_URL
+      await fetch(`${base}/api/cron/reprendre-apres-absence?key=${process.env.CRON_SECRET ?? ''}`, {
+        signal: AbortSignal.timeout(6000),
+      })
+    } catch { /* réessaiera au prochain run */ }
+
     return NextResponse.json({ ok: true, sent, skipped, failed, results })
   } catch (err) {
     return NextResponse.json(

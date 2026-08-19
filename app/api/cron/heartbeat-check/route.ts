@@ -32,6 +32,25 @@ const EXPECTED: Record<string, number> = {
   // Audit des sites : alimente autopilot-tick (un contact non audité n'est jamais promu).
   // S'il s'arrête, le pipeline se tarit en silence sans qu'aucun envoi n'échoue.
   "audit-sites": 30,
+  /**
+   * ⚠️ AJOUTÉS APRÈS L'AUDIT DU 19/08 — TROIS ANGLES MORTS.
+   *
+   * Ces crons tournaient (ou ne tournaient plus) sans aucun intervalle attendu : la surveillance
+   * les sautait poliment, donc leur arrêt ne déclenchait rien. Constaté ce jour-là :
+   *   - weekly-learning et self-improve : dernier passage le 09/08, DIX JOURS de silence. Les
+   *     rapports d'apprentissage ne se produisaient plus, personne ne pouvait le savoir.
+   *   - promote-leads : le maillon qui transforme un lead en contact démarchable. S'il s'arrête,
+   *     le pipeline se tarit sans qu'aucun envoi n'échoue (c'est la panne du 13/08).
+   *   - rappels-rdv et reprendre-apres-absence : greffés au moteur d'envoi. Si la greffe casse,
+   *     les rappels anti no-show et les reprises de congés s'arrêtent en silence.
+   *
+   * Un cron surveillé qui n'a pas d'intervalle attendu n'est PAS surveillé.
+   */
+  "promote-leads": 30,
+  "rappels-rdv": 60,
+  "reprendre-apres-absence": 1440,
+  "weekly-learning": 10080,
+  "self-improve": 43200,
 }
 
 interface HeartbeatRow {

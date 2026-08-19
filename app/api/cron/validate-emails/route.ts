@@ -220,17 +220,40 @@ async function runCron(req: Request) {
     const r = await db.execute(sql`
       WITH perdus AS (
         SELECT c.id FROM contacts c
+        /**
+         * ⚠️ LA CONDITION « confiance < 90 » CRÉAIT 281 CONTACTS BLOQUÉS À VIE.
+         *
+         * Elle date de l'époque où un score de confiance élevé autorisait l'envoi SANS passer par
+         * MillionVerifier. Depuis que la clé MV est posée, le moteur exige email_validated pour
+         * TOUT LE MONDE. Un contact à confiance ≥ 90 qui épuise ses tentatives était donc :
+         * plus envoyable (le gate le refuse), plus retentable (le sélecteur exige attempts < MAX),
+         * et plus fermable (cette condition l'excluait). Il restait en file indéfiniment.
+         *
+         * Mesuré le 19/08 : 281 contacts, 1 496 lignes de file mortes — et TOUS à confiance ≥ 90,
+         * c'est-à-dire les meilleures adresses du fichier (mailto cliquable sur leur propre site).
+         * Ils gonflaient aussi le compteur « en attente de vérification », donnant un stock de leads
+         * plus optimiste que la réalité.
+         *
+         * La règle de fermeture doit refléter le gate d'envoi, pas une règle abandonnée.
+         *
+         * On les marque mv_indetermine et NON injoignable : leur adresse n'est pas mauvaise, c'est
+         * MillionVerifier qui n'a pas su trancher (greylisting, serveur muet). La distinction
+         * compte pour décider quoi en faire — téléphone, nouvelle tentative plus tard — alors
+         * qu'« injoignable » les confondrait avec de vraies adresses mortes.
+         */
         WHERE c.mv_attempts >= ${MAX_MV_ATTEMPTS}
           AND c.email_validated IS NOT TRUE
-          AND COALESCE(c.email_confidence_score, 0) < 90
-          AND c.mv_status IS DISTINCT FROM 'injoignable'
+          AND c.mv_status IS NULL
         LIMIT 200
       ), fermeture AS (
         UPDATE email_queue SET status = 'cancelled'
         WHERE contact_id IN (SELECT id FROM perdus) AND status IN ('pending','queued')
         RETURNING contact_id
       )
-      UPDATE contacts SET mv_status = 'injoignable'
+      UPDATE contacts SET mv_status = CASE
+        WHEN COALESCE(email_confidence_score, 0) >= 90 THEN 'mv_indetermine'
+        ELSE 'injoignable'
+      END
       WHERE id IN (SELECT id FROM perdus)
       RETURNING id
     `)
