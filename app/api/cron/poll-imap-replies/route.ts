@@ -611,6 +611,24 @@ async function processReply(params: {
     // relancer dans le vide pendant qu'il est absent.
     if (classification.classification === 'oof' && contact?.id) {
       const ret = extractReturnDate(cleanBody, new Date())
+
+      /**
+       * ⚠️ ON ÉCRIT LA DATE DE RETOUR SUR LA FICHE.
+       *
+       * Avant, cette date servait UNE fois — à décaler les relances — puis disparaissait. Personne
+       * ne pouvait donc savoir qui était absent ni jusqu'à quand : ces prospects n'apparaissaient
+       * nulle part (l'écran masque les absences), et le seul moyen de le savoir était de relire le
+       * mail à la main. Or ce sont des leads chauds à date fixe : « rappelez-moi le 25 août » est
+       * une promesse de rendez-vous, pas un refus.
+       */
+      await sql`
+        UPDATE contacts
+        SET absent_jusqu_au = ${ret ? ret.toISOString().slice(0, 10) : null},
+            absence_motif   = ${cleanBody.slice(0, 300)},
+            absence_vue_le  = NOW()
+        WHERE id = ${contact.id}
+      `.catch(() => {})
+
       if (ret) {
         const [minRow] = (await sql`
           SELECT MIN(scheduled_at) AS m FROM email_queue
@@ -1101,7 +1119,7 @@ const MOIS_FR: Record<string, number> = { janvier: 0, 'février': 1, fevrier: 1,
  *  3. FENÊTRE DE PLAUSIBILITÉ de 120 jours. Au-delà, on renonce plutôt que de deviner. C'est ce
  *     garde-fou qui aurait évité le décalage d'un an.
  */
-function extractReturnDate(text: string, now: Date): Date | null {
+export function extractReturnDate(text: string, now: Date): Date | null {
   const t = (text || '').toLowerCase().replace(/\s+/g, ' ')
   const MOIS = '(janvier|f[ée]vrier|fevrier|mars|avril|mai|juin|juillet|ao[uû]t|aout|septembre|octobre|novembre|d[ée]cembre|decembre)'
   const candidats: Date[] = []

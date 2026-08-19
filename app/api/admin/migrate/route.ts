@@ -200,6 +200,25 @@ export async function GET(request: NextRequest) {
       `),
     },
     {
+      /**
+       * ABSENCE / FERMETURE — la date de RETOUR doit être STOCKÉE, pas seulement utilisée.
+       *
+       * Le poller savait déjà lire « nous reprenons le 25 août » et décalait les relances en
+       * conséquence. Mais la date n'était écrite nulle part : impossible de la voir, de la vérifier,
+       * de trier ces prospects, et surtout impossible de savoir QUI revient QUAND. Timéo les
+       * cherchait dans la messagerie — ils n'y étaient nulle part, l'écran masque les absences.
+       *
+       * On garde donc la date sur la fiche : elle devient un onglet, une liste, et une relance à date.
+       */
+      nom: 'contacts : absence (date de retour + motif)',
+      run: () => db.execute(sql`
+        ALTER TABLE contacts
+          ADD COLUMN IF NOT EXISTS absent_jusqu_au   DATE,
+          ADD COLUMN IF NOT EXISTS absence_motif     TEXT,
+          ADD COLUMN IF NOT EXISTS absence_vue_le    TIMESTAMPTZ
+      `),
+    },
+    {
       nom: 'outscraper_leads: category + sector',
       run: () => db.execute(sql`
         ALTER TABLE outscraper_leads

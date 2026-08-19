@@ -65,6 +65,17 @@ export async function GET() {
       : []
     const contactMap = new Map(contactRows.map(c => [c.id, c]))
 
+    /**
+     * ABSENCES : « je suis en congés jusqu'au 25 » n'est ni un oui ni un non, c'est un RENDEZ-VOUS
+     * À DATE. Ces conversations étaient purement masquées (règle 6), donc invisibles : impossible de
+     * savoir qui revient quand, et le créneau annoncé passait sans que personne ne le voie.
+     */
+    const absents = new Map<string, string>()
+    for (const c of contactRows) {
+      const d = (c as unknown as { absent_jusqu_au?: string | Date | null }).absent_jusqu_au
+      if (d) absents.set(c.id, typeof d === 'string' ? d.slice(0, 10) : d.toISOString().slice(0, 10))
+    }
+
     // 3. Emails envoyés pour ces contacts
     const sentRows = contactIds.length
       ? await db
@@ -139,6 +150,8 @@ export async function GET() {
       website: string | null
       classification: string | null
       rdvBooked: boolean
+      /** Date de retour annoncée par le prospect (absence/fermeture). */
+      absentJusquAu: string | null
       exhausted: boolean // plus aucune relance ni brouillon à venir → conversation morte
       messages: ConvMessage[]
       lastDate: string
@@ -165,6 +178,7 @@ export async function GET() {
           website: c?.website ?? null,
           classification: r.classification,
           rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
+          absentJusquAu: r.contact_id ? (absents.get(r.contact_id) ?? null) : null,
           exhausted: r.contact_id ? contactsExhausted.has(r.contact_id) : false,
           messages: [],
           lastDate: r.created_at?.toISOString() ?? '',
@@ -239,7 +253,15 @@ export async function GET() {
         // 6) Auto-réponses (accusé de réception / absence = 'oof') → masquées de la messagerie
         //    (ce sont des bots, pas une vraie conversation). MAIS le prospect reste dans la
         //    séquence : ses relances continuent / sont décalées au retour. On le recontacte.
-        if (lastReceived.classification === 'oof') return false
+        /**
+         * ⚠️ ON NE MASQUE PLUS UNE ABSENCE DONT ON CONNAÎT LA DATE DE RETOUR.
+         *
+         * La règle d'origine jetait tout 'oof' avec le motif « ce sont des bots ». C'est vrai d'un
+         * répondeur automatique anonyme ; c'est faux d'un artisan qui écrit « je ferme jusqu'au 25
+         * août ». Le second se range désormais dans l'onglet « Absents », avec sa date — c'est un
+         * lead à rappeler, pas un déchet.
+         */
+        if (lastReceived.classification === 'oof' && !g.absentJusquAu) return false
         // 7) Changement d'adresse mail → pas une conversation (le prospect est recontacté sur
         //    sa nouvelle adresse via un contact neuf ; inutile d'afficher ça comme un échange).
         if (/changement d'?adresse|nouvelle adresse\s*(mail|e-?mail|[ée]lectronique|de messagerie)|notez\s+(notre|ma)\s+nouvelle\s+adresse/i.test(lastReceived.body)) return false

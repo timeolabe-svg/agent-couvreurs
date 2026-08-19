@@ -21,6 +21,8 @@ interface Conversation {
   website: string | null
   classification: string | null
   rdvBooked?: boolean
+  /** Date de retour annoncée (fermeture, congés) — range la conversation dans « Absents ». */
+  absentJusquAu?: string | null
   exhausted?: boolean // plus aucune relance ni brouillon à venir → conversation morte
   messages: ConvMessage[]
   lastDate: string
@@ -43,7 +45,7 @@ function fmt(d: string): string {
   return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-type Tab = 'positive' | 'negative' | 'pending' | 'failed'
+type Tab = 'positive' | 'negative' | 'pending' | 'absent' | 'failed'
 
 // Range une conversation dans un des 4 onglets :
 //  - Positives   = un RDV est calé (l'objectif atteint).
@@ -53,6 +55,9 @@ type Tab = 'positive' | 'negative' | 'pending' | 'failed'
 //                  conversation est morte, elle ne doit plus polluer "En attente".
 function tabOf(c: Conversation): Tab {
   if (c.rdvBooked) return 'positive'
+  // L'absence prime sur le reste tant que la date de retour n'est pas passée : inutile de le
+  // travailler comme un lead ordinaire, il a dit quand le rappeler.
+  if (c.absentJusquAu) return 'absent'
   if (c.classification === 'desinterest') return 'negative'
   if (c.exhausted) return 'failed'
   return 'pending' // interest sans RDV, question, objection, oof, other, non classé
@@ -62,6 +67,10 @@ const TABS: { key: Tab; label: string; color: string }[] = [
   { key: 'positive', label: 'Positives', color: '#5c9b82' },
   { key: 'negative', label: 'Négatives', color: '#ef4444' },
   { key: 'pending', label: 'En attente', color: '#c19653' },
+  // ⚠️ « Absents » : les prospects qui ont annoncé une fermeture ou des congés AVEC une date de
+  // retour. Ils n'étaient nulle part — ni ici, ni dans les négatives : la messagerie les masquait
+  // comme des réponses automatiques. Or « rappelez-moi après le 25 » est un créneau donné.
+  { key: 'absent', label: 'Absents', color: '#5f83ac' },
   { key: 'failed', label: 'Échoué', color: '#6b6b80' },
 ]
 
@@ -93,7 +102,7 @@ export default function ConversationsPage() {
   }
   useEffect(() => { void load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [])
 
-  const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0, failed: 0 }
+  const counts: Record<Tab, number> = { positive: 0, negative: 0, pending: 0, absent: 0, failed: 0 }
   for (const c of convs) counts[tabOf(c)]++
 
   const filtered = convs.filter(c => tabOf(c) === tab)
@@ -171,6 +180,7 @@ export default function ConversationsPage() {
             <p className="text-[13px] p-4" style={{ color: 'var(--color-muted)' }}>
               {tab === 'positive' ? 'Aucune réponse positive pour le moment.'
                 : tab === 'negative' ? 'Aucune réponse négative.'
+                : tab === 'absent' ? "Personne n'a annoncé de fermeture ou de congés."
                 : tab === 'failed' ? 'Aucune conversation épuisée.'
                 : 'Rien en attente.'}
             </p>
@@ -197,6 +207,19 @@ export default function ConversationsPage() {
                   <span className="text-[13px] font-medium truncate">{c.company}</span>
                   <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--color-muted-2)' }}>{fmt(c.lastDate)}</span>
                 </div>
+                {/* La date de retour est LE seul renseignement utile sur un absent : sans elle,
+                    l'onglet ne dit pas quand rappeler. En rouge quand elle est déjà passée — c'est
+                    un créneau qu'on a laissé filer, pas une information neutre. */}
+                {c.absentJusquAu && (
+                  <span
+                    className="text-[10px] font-medium"
+                    style={{ color: new Date(c.absentJusquAu) < new Date() ? '#ef4444' : '#5f83ac' }}
+                  >
+                    {new Date(c.absentJusquAu) < new Date() ? '⚠ ' : ''}
+                    De retour le {new Date(c.absentJusquAu).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
+                    {new Date(c.absentJusquAu) < new Date() ? ' — à recontacter' : ''}
+                  </span>
+                )}
                 <div className="flex items-center gap-2">
                   {cls && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold flex-shrink-0" style={{ background: cls.color + '22', color: cls.color }}>
