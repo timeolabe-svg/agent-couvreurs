@@ -107,8 +107,8 @@ async function handler(req: NextRequest) {
       ORDER BY r.scheduled_at ASC LIMIT 20
     `) as Array<{ id: string; scheduled_at: string; company: string | null; email: string }>
 
-    const dejaEnvoyes = (await sql`SELECT rdv_id, echeance FROM rdv_rappels`) as Array<{ rdv_id: string; echeance: string }>
-    const envoye = new Set(dejaEnvoyes.map(x => `${x.rdv_id}|${x.echeance}`))
+    const dejaEnvoyes = (await sql`SELECT rdv_id, echeance, envoye_le FROM rdv_rappels`) as Array<{ rdv_id: string; echeance: string; envoye_le: string }>
+    const envoye = new Map(dejaEnvoyes.map(x => [`${x.rdv_id}|${x.echeance}`, x.envoye_le]))
 
     return NextResponse.json({
       maintenant: new Date().toISOString(),
@@ -120,7 +120,7 @@ async function handler(req: NextRequest) {
           return {
             echeance: e.cle,
             part_vers: t.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' }),
-            etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé'
+            etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé le ' + new Date(envoye.get(`${r.id}|${e.cle}`)!).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })
               : t.getTime() < Date.now() ? 'fenêtre passée'
               : 'à venir',
           }
