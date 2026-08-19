@@ -193,6 +193,26 @@ async function runCron(req: Request) {
           WHERE r.contact_id = ir.contact_id AND r.status = 'confirmed' AND r.scheduled_at > NOW()
         )
       )
+      /**
+       * ⚠️ UN RENDEZ-VOUS CONFIRMÉ COUPE TOUTE RELANCE AUTOMATIQUE. DÉFINITIVEMENT.
+       *
+       * Incident du 18/08, Couvreur Jimmy : RDV confirmé à 10:00, brouillon généré à 10:00:49 et
+       * ENVOYÉ à 11:07 pour reproposer un créneau. Le prospect avait dit oui, on lui a réécrit une
+       * heure après le rendez-vous comme si rien n'avait été convenu. Il n'est pas venu.
+       *
+       * La cause : le garde-fou ne regardait que les RDV FUTURS (scheduled_at superieur a NOW). Quarante-
+       * neuf secondes après l'heure du rendez-vous, celui-ci devenait « passé », donc invisible pour
+       * la requête, et l'agent concluait qu'aucun rendez-vous n'existait.
+       *
+       * Consigne de Timéo, mot pour mot : « une fois qu'il a dit oui tu dois arrêter de lui envoyer
+       * des messages ». On ne borne donc plus dans le temps : la seule existence d'un RDV confirmé
+       * suffit à couper. Un no-show se rattrape à la main ou par les rappels (cron rappels-rdv), pas
+       * par un mail automatique une heure trop tard.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM rdv r
+        WHERE r.contact_id = ir.contact_id AND r.status IN ('confirmed', 'signed')
+      )
       AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email))
       /**
        * ⚠️ GARDE-FOU PAR LE CONTACT, ET PAS SEULEMENT PAR LE LIEN. Constaté dans la foulée du
