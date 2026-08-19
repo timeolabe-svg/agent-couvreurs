@@ -575,6 +575,9 @@ async function processReply(params: {
             FROM email_queue WHERE contact_id = ${contact.id} ORDER BY created_at ASC LIMIT 1
           `
         }
+        // Trace le renvoi SUR LA FICHE : c'est ce que lira l'affichage, plutôt que de re-chercher
+        // l'intention dans le texte avec une seconde expression qui finit toujours par diverger.
+        await sql`UPDATE contacts SET redirige_vers = ${newEmail} WHERE id = ${contact.id}`.catch(() => {})
         await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, newEmail, company: contact.company, action: 'email_updated' })}::jsonb)`
         results.push(`✉ changement d'adresse : ${contact.email} -> ${newEmail} (contact neuf, file propre)`)
         return { processed: true, classification: classification.classification }

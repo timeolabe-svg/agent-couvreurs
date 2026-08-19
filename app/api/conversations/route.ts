@@ -77,6 +77,13 @@ export async function GET() {
      * À DATE. Ces conversations étaient purement masquées (règle 6), donc invisibles : impossible de
      * savoir qui revient quand, et le créneau annoncé passait sans que personne ne le voie.
      */
+    // Contacts renvoyés vers une autre adresse : la conversation est reprise ailleurs.
+    const redirections = new Map<string, string>()
+    for (const c of contactRows) {
+      const r = (c as unknown as { redirige_vers?: string | null }).redirige_vers
+      if (r) redirections.set(c.id, r)
+    }
+
     const absents = new Map<string, string>()
     for (const c of contactRows) {
       const d = c.absent_jusqu_au
@@ -162,6 +169,8 @@ export async function GET() {
       prospectAttend: boolean
       /** Date de retour annoncée par le prospect (absence/fermeture). */
       absentJusquAu: string | null
+      /** Adresse vers laquelle le prospect a demandé qu'on lui écrive désormais. */
+      redirigeVers: string | null
       exhausted: boolean // plus aucune relance ni brouillon à venir → conversation morte
       messages: ConvMessage[]
       lastDate: string
@@ -190,6 +199,7 @@ export async function GET() {
           rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
           prospectAttend: false, // calculé plus bas, une fois tous les messages rassemblés
           absentJusquAu: r.contact_id ? (absents.get(r.contact_id) ?? null) : null,
+          redirigeVers: r.contact_id ? (redirections.get(r.contact_id) ?? null) : null,
           exhausted: r.contact_id ? contactsExhausted.has(r.contact_id) : false,
           messages: [],
           lastDate: r.created_at?.toISOString() ?? '',
@@ -382,7 +392,8 @@ export async function GET() {
            * « Positives » ouvert par défaut, déplacé d'un cran.
            */
           const estAbsence = dernierRecu?.classification === 'oof'
-          g.prospectAttend = idx >= 0 && !estAbsence
+          // Une conversation renvoyée vers une autre adresse n'attend rien : elle continue ailleurs.
+          g.prospectAttend = idx >= 0 && !estAbsence && !g.redirigeVers
             && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
         }
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate

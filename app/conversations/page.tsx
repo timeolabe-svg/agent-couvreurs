@@ -25,6 +25,8 @@ interface Conversation {
   prospectAttend?: boolean
   /** Date de retour annoncée (fermeture, congés) — range la conversation dans « Absents ». */
   absentJusquAu?: string | null
+  /** Le prospect a donné une autre adresse : la conversation se poursuit là-bas. */
+  redirigeVers?: string | null
   exhausted?: boolean // plus aucune relance ni brouillon à venir → conversation morte
   messages: ConvMessage[]
   lastDate: string
@@ -62,6 +64,8 @@ function tabOf(c: Conversation): Tab {
    * un prospect qui demande à décaler son rendez-vous se range dans « Positives » et n'est jamais vu.
    */
   // L'absence prime : il a donné une date, on le rappellera à cette date. Rien à faire aujourd'hui.
+  // Renvoyé vers une autre adresse : rien à faire ici, tout se passe sur la nouvelle fiche.
+  if (c.redirigeVers) return 'failed'
   if (c.absentJusquAu) return 'absent'
   if (c.prospectAttend) return 'pending'
   if (c.rdvBooked) return 'positive'
@@ -217,6 +221,11 @@ export default function ConversationsPage() {
                 {/* La date de retour est LE seul renseignement utile sur un absent : sans elle,
                     l'onglet ne dit pas quand rappeler. En rouge quand elle est déjà passée — c'est
                     un créneau qu'on a laissé filer, pas une information neutre. */}
+                {c.redirigeVers && (
+                  <span className="text-[10px]" style={{ color: '#7d6fb0' }}>
+                    Écrire désormais à {c.redirigeVers}
+                  </span>
+                )}
                 {c.absentJusquAu && (
                   <span
                     className="text-[10px] font-medium"

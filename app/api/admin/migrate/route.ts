@@ -219,6 +219,23 @@ export async function GET(request: NextRequest) {
       `),
     },
     {
+      /**
+       * ⚠️ LE RENVOI VERS UNE NOUVELLE ADRESSE DOIT ÊTRE UNE DONNÉE, PAS UN TEXTE À RE-DEVINER.
+       *
+       * Le prospect écrit « merci de prendre en compte la nouvelle adresse de correspondance ». Le
+       * traitement a parfaitement fonctionné : contact créé sur la nouvelle adresse, ancienne file
+       * annulée. Mais l'AFFICHAGE re-cherchait l'intention dans le texte avec sa propre expression,
+       * qui exigeait « nouvelle adresse MAIL » — « de correspondance » n'y figurait pas. L'ancienne
+       * conversation restait donc dans « En attente », comme un lead à traiter alors qu'il était
+       * déjà repris ailleurs.
+       *
+       * Deux règles de détection pour un même fait finissent toujours par diverger. On écrit le
+       * fait une fois, au moment où il se produit.
+       */
+      nom: 'contacts : adresse de renvoi (changement d adresse)',
+      run: () => db.execute(sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS redirige_vers TEXT`),
+    },
+    {
       nom: 'outscraper_leads: category + sector',
       run: () => db.execute(sql`
         ALTER TABLE outscraper_leads
