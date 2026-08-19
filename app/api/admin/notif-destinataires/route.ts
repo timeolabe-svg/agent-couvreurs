@@ -39,7 +39,30 @@ export async function GET(req: NextRequest) {
     ORDER BY created_at DESC LIMIT 15
   `) as Array<{ type: string; data: Record<string, unknown>; created_at: string }>
 
+  /**
+   * ⚠️ TESTER LE VRAI CHEMIN, PAS UN AUTRE. Le cron test-notify passe par Resend, alors que les
+   * notifications de rendez-vous partent par les BOÎTES GMAIL. Tester le mauvais canal donne une
+   * réponse fausse dans les deux sens : « ça marche » alors que non, ou l'inverse.
+   */
+  let testGmail: Array<{ to: string; ok: boolean; erreur?: string }> | null = null
+  if (req.nextUrl.searchParams.get('test') === '1') {
+    const { getGmailBoxes, sendFromBox } = await import('@/lib/gmail-sender')
+    const boxes = getGmailBoxes()
+    testGmail = []
+    for (const to of effectifs) {
+      const r = await sendFromBox(boxes[0], {
+        to,
+        subject: 'Test notification agent Hdigiweb',
+        text: "Ceci est un test du canal de notification des rendez-vous.
+Si vous recevez ce message, les alertes de nouveau rendez-vous fonctionnent.",
+        senderName: 'Agent Hdigiweb',
+      }).catch((e: unknown) => ({ ok: false, error: String(e).slice(0, 150) }))
+      testGmail.push({ to, ok: Boolean((r as { ok?: boolean }).ok), erreur: (r as { error?: string }).error })
+    }
+  }
+
   return NextResponse.json({
+    test_canal_gmail: testGmail,
     destinataires_effectifs: effectifs,
     source: depuisUi.length > 0 ? 'écran Agent (agent_config.client_notif_email)' : 'variable CLIENT_NOTIFY_EMAIL',
     depuis_ecran_agent: depuisUi,

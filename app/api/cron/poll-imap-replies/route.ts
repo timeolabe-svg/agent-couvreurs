@@ -792,6 +792,15 @@ async function processReply(params: {
       // Le prospect donne une AUTRE date précise → accord sur cette date → on cale.
       await sql`UPDATE rdv SET scheduled_at = ${candidateSlot.toISOString()}, status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
       confirmSlotStr = candidateSlotStr; confirmedAt = candidateSlot; bookedNow = true
+      /**
+       * ⚠️ AUCUN ÉVÉNEMENT N'ÉTAIT ÉMIS À LA CRÉATION D'UN RENDEZ-VOUS.
+       * Le RDV existait en base et dans l'agenda, mais n'apparaissait dans AUCUN fil d'activité —
+       * d'où l'impression, justifiée, qu'il « n'est nulle part ». Un fait aussi important que la
+       * prise d'un rendez-vous doit laisser une trace lisible.
+       */
+      await sql`INSERT INTO dashboard_events (type, data) VALUES ('rdv_created', ${JSON.stringify({
+        contactEmail: contact.email, company: contact.company ?? from, scheduledAt: candidateSlot.toISOString(),
+      })}::jsonb)`.catch(() => {})
     } else if (isAffirmativeConfirmation(analysisText) || (isOpenCallRequest(analysisText) && !openCallConflitUrgence(proposedExisting))) {
       // "oui / ok / parfait", OU carte blanche SANS urgence incompatible ("appelez-moi quand vous
       // voulez") → on cale AU créneau proposé.
@@ -1371,13 +1380,32 @@ async function getNotifyRecipients(): Promise<string[]> {
 // Envoie une notif interne SOBRE (texte, zéro émoji) via le moteur Gmail SMTP —
 // pas de limite "mode test" comme Resend, donc TOUS les destinataires reçoivent.
 // Repli sur Resend (par destinataire) si aucune boîte Gmail configurée.
+/**
+ * ⚠️ UNE NOTIFICATION QUI ÉCHOUE DOIT SE VOIR.
+ *
+ * Le `.catch(() => {})` d'origine avalait tout : si le mail au client partait en erreur, la
+ * fonction rendait la main comme si de rien n'était. C'est exactement la question de Timéo le
+ * 19/08 — « le RDV n'est pas en notification à Haris » — à laquelle personne ne pouvait répondre,
+ * ni par un log, ni par un compteur, ni par une trace en base.
+ *
+ * On trace donc chaque échec dans dashboard_events. Une notification client ratée, c'est un
+ * rendez-vous que le client ne prépare pas, donc un no-show probable et une facture en moins.
+ */
 async function notifyTeam(subject: string, text: string): Promise<void> {
   const recipients = await getNotifyRecipients()
-  if (recipients.length === 0) return
+  if (recipients.length === 0) {
+    await sql`INSERT INTO dashboard_events (type, data) VALUES ('notif_echec', ${JSON.stringify({ raison: 'aucun destinataire configuré', subject })}::jsonb)`.catch(() => {})
+    return
+  }
   const boxes = getGmailBoxes()
   if (boxes.length > 0) {
     for (const to of recipients) {
-      await sendFromBox(boxes[0], { to, subject, text, senderName: 'Agent Hdigiweb' }).catch(() => {})
+      const r = await sendFromBox(boxes[0], { to, subject, text, senderName: 'Agent Hdigiweb' })
+        .catch((e: unknown) => ({ ok: false, error: String(e).slice(0, 200) }))
+      if (!(r as { ok?: boolean }).ok) {
+        console.error('[notifyTeam] échec vers', to, (r as { error?: string }).error)
+        await sql`INSERT INTO dashboard_events (type, data) VALUES ('notif_echec', ${JSON.stringify({ to, subject, erreur: (r as { error?: string }).error ?? 'inconnue' })}::jsonb)`.catch(() => {})
+      }
     }
     return
   }
