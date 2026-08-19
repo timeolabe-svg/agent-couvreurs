@@ -31,6 +31,23 @@ export const maxDuration = 60
 
 const GLOBAL_DEADLINE_MS = 2_000  // une seule boite par passage : on ne doit jamais en DEMARRER une seconde. 2 + 22 = 24s, sous la coupe de 30s.
 const PER_BOX_TIMEOUT_MS = 22_000 // laisse finir UN traitement complet (IMAP 1,2s + IA ~10s + marge). Mesure du 17/08.
+/**
+ * ⚠️ BUDGET DE LA BOUCLE DE MESSAGES — À NE JAMAIS CONFONDRE AVEC GLOBAL_DEADLINE_MS.
+ *
+ * Bug trouvé le 19/08, et il expliquait « l'agent ne capte plus les leads ». La boucle qui traite
+ * les messages d'une boîte s'arrêtait sur GLOBAL_DEADLINE_MS, c'est-à-dire 2 SECONDES — un seuil
+ * dont le seul rôle est de décider si on a le temps de DÉMARRER une seconde boîte.
+ *
+ * Or ouvrir la connexion IMAP, chercher et lire les enveloppes prend déjà ~900 ms, et la requête
+ * des contacts connus le reste : au moment d'entrer dans la boucle, les 2 secondes étaient déjà
+ * écoulées. Le poller lisait donc 84 messages, puis s'arrêtait AVANT d'en traiter UN SEUL, à chaque
+ * passage. Aucune erreur, aucun compteur en baisse, un run « ok » toutes les 10 minutes — et zéro
+ * réponse de prospect ingérée.
+ *
+ * Deux budgets qui ne parlent pas de la même chose ne bornent rien. Celui-ci borne le TRAVAIL, et
+ * il reste sous le PER_BOX_TIMEOUT_MS (22 s) qui, lui, borne la boîte entière.
+ */
+const BOUCLE_MESSAGES_DEADLINE_MS = 18_000
 const MAX_MSGS_PER_BOX = 180  // le warmup remplit vite la boîte : à 70, une vraie réponse un peu ancienne (ex. répondue tôt puis noyée sous le warmup) sortait de la fenêtre et n'était jamais lue. On élargit.
 const LOOKBACK_HOURS = 72     // marge de sécurité : si le cron saute une nuit/journée, on ne rate pas la réponse (dédup Message-ID = pas de retraitement)
 
@@ -293,7 +310,7 @@ async function processBox(box: { email: string; password: string }, started: num
       )
 
       for (const uid of uids) {
-        if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push(`⏱ budget atteint pendant ${box.email}`); break }
+        if (Date.now() - started > BOUCLE_MESSAGES_DEADLINE_MS) { results.push(`⏱ budget de traitement atteint pendant ${box.email} — suite au prochain run`); break }
         const env = envs.get(uid)
         if (!env) continue
         const { from, subject, messageId } = env
