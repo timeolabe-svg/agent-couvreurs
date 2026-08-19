@@ -53,8 +53,10 @@ export async function GET(req: NextRequest) {
       const r = await sendFromBox(boxes[0], {
         to,
         subject: 'Test notification agent Hdigiweb',
-        text: "Ceci est un test du canal de notification des rendez-vous.
-Si vous recevez ce message, les alertes de nouveau rendez-vous fonctionnent.",
+        text: [
+          'Ceci est un test du canal de notification des rendez-vous.',
+          'Si vous recevez ce message, les alertes de nouveau rendez-vous fonctionnent.',
+        ].join('\n'),
         senderName: 'Agent Hdigiweb',
       }).catch((e: unknown) => ({ ok: false, error: String(e).slice(0, 150) }))
       testGmail.push({ to, ok: Boolean((r as { ok?: boolean }).ok), erreur: (r as { error?: string }).error })
