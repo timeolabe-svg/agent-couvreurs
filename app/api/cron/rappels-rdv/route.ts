@@ -91,6 +91,44 @@ async function handler(req: NextRequest) {
   const boxes = getGmailBoxes()
   if (boxes.length === 0) return NextResponse.json({ error: 'aucune boîte configurée' }, { status: 500 })
 
+  /**
+   * APERÇU — « est-ce que les rappels vont vraiment partir ? »
+   *
+   * Un cron qui répond « 0 envoyé » ne prouve rien : ça peut vouloir dire « rien à faire » comme
+   * « je ne vois pas les rendez-vous ». On expose donc, pour chaque RDV à venir, l'heure exacte à
+   * laquelle chaque rappel partira et ceux qui sont déjà partis. Vérifiable sans envoyer un mail
+   * de test à un vrai prospect.
+   */
+  if (req.nextUrl.searchParams.get('apercu') === '1') {
+    const rdvs = (await sql`
+      SELECT r.id, r.scheduled_at, c.company, c.email
+      FROM rdv r JOIN contacts c ON c.id = r.contact_id
+      WHERE r.status = 'confirmed' AND r.scheduled_at > NOW()
+      ORDER BY r.scheduled_at ASC LIMIT 20
+    `) as Array<{ id: string; scheduled_at: string; company: string | null; email: string }>
+
+    const dejaEnvoyes = (await sql`SELECT rdv_id, echeance FROM rdv_rappels`) as Array<{ rdv_id: string; echeance: string }>
+    const envoye = new Set(dejaEnvoyes.map(x => `${x.rdv_id}|${x.echeance}`))
+
+    return NextResponse.json({
+      maintenant: new Date().toISOString(),
+      rendez_vous_a_venir: rdvs.map(r => ({
+        entreprise: r.company ?? r.email,
+        rdv_le: new Date(r.scheduled_at).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/Paris' }),
+        rappels: ECHEANCES.map(e => {
+          const t = new Date(new Date(r.scheduled_at).getTime() - e.minutesAvant * 60000)
+          return {
+            echeance: e.cle,
+            part_vers: t.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Paris' }),
+            etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé'
+              : t.getTime() < Date.now() ? 'fenêtre passée'
+              : 'à venir',
+          }
+        }),
+      })),
+    })
+  }
+
   const envoyes: string[] = []
   const ignores: string[] = []
 
