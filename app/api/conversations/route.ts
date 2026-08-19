@@ -279,7 +279,20 @@ export async function GET() {
            * Sinon, quelqu'un attend — et on n'archive jamais quelqu'un qui attend.
            */
           const idxDernierRecu = parDate.map(m => m.role).lastIndexOf('received')
-          const repondu = idxDernierRecu >= 0 && parDate.slice(idxDernierRecu + 1).some(m => m.role === 'agent')
+
+          /**
+           * ⚠️ UN BROUILLON N'EST PAS UNE RÉPONSE — il faut qu'il soit PARTI.
+           *
+           * Mon premier correctif comptait tout message d'agent comme une réponse. Or les brouillons
+           * rejetés ou annulés sont affichés eux aussi (c'est voulu, il faut les voir). Résultat :
+           * eseveranpeinture avait UN brouillon « cancelled », jamais envoyé — la conversation
+           * passait pour traitée et restait archivée. Le prospect n'a rien reçu.
+           *
+           * C'est la même confusion que « brouillon dessiné comme envoyé » : seul `status = 'sent'`
+           * prouve qu'un message est arrivé chez quelqu'un.
+           */
+          const repondu = idxDernierRecu >= 0 && parDate.slice(idxDernierRecu + 1)
+            .some(m => m.role === 'agent' && m.status === 'sent')
           const prospectAttend = idxDernierRecu >= 0 && !repondu
 
           if (!g.rdvBooked && !prospectAttend && lastTs > 0 && Date.now() - lastTs > 14 * 86400000) return false
