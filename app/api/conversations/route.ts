@@ -158,6 +158,8 @@ export async function GET() {
       website: string | null
       classification: string | null
       rdvBooked: boolean
+      /** Le dernier message reçu n'a jamais reçu de réponse ENVOYÉE de l'agent. */
+      prospectAttend: boolean
       /** Date de retour annoncée par le prospect (absence/fermeture). */
       absentJusquAu: string | null
       exhausted: boolean // plus aucune relance ni brouillon à venir → conversation morte
@@ -186,6 +188,7 @@ export async function GET() {
           website: c?.website ?? null,
           classification: r.classification,
           rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
+          prospectAttend: false, // calculé plus bas, une fois tous les messages rassemblés
           absentJusquAu: r.contact_id ? (absents.get(r.contact_id) ?? null) : null,
           exhausted: r.contact_id ? contactsExhausted.has(r.contact_id) : false,
           messages: [],
@@ -353,6 +356,20 @@ export async function GET() {
           seen.add(norm)
           return true
         })
+        /**
+         * ⚠️ « QUELQU'UN ATTEND UNE RÉPONSE » EST L'INFORMATION LA PLUS IMPORTANTE DE CET ÉCRAN.
+         *
+         * TCT Couverture avait un rendez-vous calé, donc sa conversation était rangée dans
+         * « Positives ». Il a ensuite écrit « Plutôt vers 11h » — sans réponse. Pour Timéo, qui
+         * ouvre la messagerie sur « En attente », le prospect avait purement disparu.
+         *
+         * Un rendez-vous calé ne veut pas dire « plus rien à faire » : c'est justement là que le
+         * moindre message doit remonter, parce qu'il déplace ou annule le rendez-vous.
+         */
+        {
+          const idx = g.messages.map(m => m.role).lastIndexOf('received')
+          g.prospectAttend = idx >= 0 && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
+        }
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
         return g
       })

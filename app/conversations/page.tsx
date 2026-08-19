@@ -21,6 +21,8 @@ interface Conversation {
   website: string | null
   classification: string | null
   rdvBooked?: boolean
+  /** Le prospect a écrit et n'a pas eu de réponse : la conversation demande une action. */
+  prospectAttend?: boolean
   /** Date de retour annoncée (fermeture, congés) — range la conversation dans « Absents ». */
   absentJusquAu?: string | null
   exhausted?: boolean // plus aucune relance ni brouillon à venir → conversation morte
@@ -54,6 +56,12 @@ type Tab = 'positive' | 'negative' | 'pending' | 'absent' | 'failed'
 //  - Échoué      = plus AUCUNE relance ni réponse à venir et toujours pas de RDV : la
 //                  conversation est morte, elle ne doit plus polluer "En attente".
 function tabOf(c: Conversation): Tab {
+  /**
+   * ⚠️ CE TEST PASSE AVANT TOUS LES AUTRES. Une conversation où le prospect a écrit sans obtenir de
+   * réponse est ACTIONNABLE, quoi qu'il arrive par ailleurs — rendez-vous calé compris. Sans ça,
+   * un prospect qui demande à décaler son rendez-vous se range dans « Positives » et n'est jamais vu.
+   */
+  if (c.prospectAttend) return 'pending'
   if (c.rdvBooked) return 'positive'
   // L'absence prime sur le reste tant que la date de retour n'est pas passée : inutile de le
   // travailler comme un lead ordinaire, il a dit quand le rappeler.
