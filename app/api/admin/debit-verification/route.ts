@@ -102,12 +102,19 @@ export async function GET(req: NextRequest) {
           AND q.contact_id IN (
             SELECT id FROM contacts
             WHERE mv_attempts >= 5 AND email_validated IS NOT TRUE
-              AND mv_status IS DISTINCT FROM 'injoignable'
+              AND mv_status IS NULL
           )) AS lignes_de_file_mortes
     FROM contacts
     WHERE mv_attempts >= 5 AND email_validated IS NOT TRUE
-      AND mv_status IS DISTINCT FROM 'injoignable'
+      AND mv_status IS NULL
   `) as Array<Record<string, number>>
+
+  // Où en est CHAQUE contact, tous temps confondus — la seule vue qui dit ce qui reste exploitable.
+  const etatsGlobaux = (await sql`
+    SELECT COALESCE(mv_status, CASE WHEN email_validated IS TRUE THEN 'valide' ELSE 'en_attente' END) AS etat,
+           COUNT(*)::int AS n
+    FROM contacts GROUP BY 1 ORDER BY 2 DESC
+  `) as Array<{ etat: string; n: number }>
 
   // Rythme d'envoi réel : personnes démarchées par jour sur 7 jours.
   const [rythme] = (await sql`
@@ -131,6 +138,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     contacts_dans_les_limbes: limbes[0],
+    etats_des_contacts: etatsGlobaux,
     adresses_en_double: { groupes: doublons.length, detail: doublons },
     debit_par_jour: parJour,
     verdicts_7_jours: verdicts,
