@@ -82,6 +82,33 @@ export async function GET(req: NextRequest) {
     ORDER BY 2 DESC LIMIT 20
   `) as Array<{ email: string; fiches: number }>
 
+  /**
+   * ⚠️ LES CONTACTS COINCÉS DANS LES LIMBES — ni envoyés, ni retentés, ni fermés.
+   *
+   * La fermeture des files zombies exige `email_confidence_score < 90`. Cette condition date de
+   * l'époque où un score élevé autorisait l'envoi SANS MillionVerifier. Depuis que la clé MV est
+   * posée, le moteur exige `email_validated IS TRUE` pour tout le monde : un contact à confiance
+   * ≥ 90 qui épuise ses tentatives MV n'est donc plus envoyable, plus retentable (le sélecteur
+   * exige `mv_attempts < MAX`), et plus fermable. Il reste en file À VIE.
+   *
+   * Ce sont les MEILLEURES adresses du fichier (score ≥ 90 = mailto cliquable sur leur propre site).
+   */
+  const limbes = (await sql`
+    SELECT
+      COUNT(*)::int AS contacts_bloques,
+      COUNT(*) FILTER (WHERE COALESCE(email_confidence_score, 0) >= 90)::int AS dont_confiance_haute,
+      (SELECT COUNT(*)::int FROM email_queue q
+        WHERE q.status IN ('queued','pending')
+          AND q.contact_id IN (
+            SELECT id FROM contacts
+            WHERE mv_attempts >= 5 AND email_validated IS NOT TRUE
+              AND mv_status IS DISTINCT FROM 'injoignable'
+          )) AS lignes_de_file_mortes
+    FROM contacts
+    WHERE mv_attempts >= 5 AND email_validated IS NOT TRUE
+      AND mv_status IS DISTINCT FROM 'injoignable'
+  `) as Array<Record<string, number>>
+
   // Rythme d'envoi réel : personnes démarchées par jour sur 7 jours.
   const [rythme] = (await sql`
     SELECT COALESCE(ROUND(COUNT(DISTINCT contact_id)::numeric / 7), 0)::int AS par_jour
@@ -103,6 +130,7 @@ export async function GET(req: NextRequest) {
   const tientLeRythme = validesParJour >= envoiParJour
 
   return NextResponse.json({
+    contacts_dans_les_limbes: limbes[0],
     adresses_en_double: { groupes: doublons.length, detail: doublons },
     debit_par_jour: parJour,
     verdicts_7_jours: verdicts,
