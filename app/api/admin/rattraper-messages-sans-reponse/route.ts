@@ -26,6 +26,14 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
   const apply = req.nextUrl.searchParams.get('apply') === '1'
+  /**
+   * ⚠️ CIBLAGE OBLIGATOIRE POUR ÉCRIRE. Le rattrapage remonte tout le monde, y compris des cas qui
+   * ne doivent PAS recevoir de brouillon : les vieux « mail vide » que Timéo veut supprimer, et les
+   * changements d'adresse où il faut écrire à la NOUVELLE adresse. Déverser sept brouillons d'un
+   * coup lui donnerait un écran « À valider » plein de choses à jeter — l'inverse du service rendu.
+   * On liste tout en aperçu, on n'écrit que sur une adresse nommée.
+   */
+  const cible = (req.nextUrl.searchParams.get('email') ?? '').toLowerCase().trim()
   const { sql } = await import('@/lib/db')
 
   /**
@@ -71,24 +79,25 @@ export async function GET(req: NextRequest) {
     const corps = [
       'Bonjour,',
       '',
-      'Merci pour votre message, et désolé pour le délai de réponse.',
+      'Merci pour votre message.',
       '',
-      'Je reste à votre disposition, dites-moi ce qui vous arrange.',
+      'Dites-moi ce qui vous arrange, je m adapte.',
       '',
       'Bien à vous,',
     ].join('\n')
 
-    if (apply) {
+    if (apply && cible && m.email.toLowerCase() === cible) {
       await sql`
         INSERT INTO reply_drafts (incoming_reply_id, body, status, created_at)
         VALUES (${m.id}::uuid, ${corps}, 'pending', NOW())
       `
     }
     crees.push({ entreprise: m.company, email: m.email, recu_le: m.created_at, message: texte.slice(0, 120) })
+    void corps
   }
 
   return NextResponse.json({
-    mode: apply ? 'APPLIQUÉ' : 'APERÇU (rien écrit) — relancer avec &apply=1',
+    mode: apply && cible ? `APPLIQUÉ sur ${cible}` : 'APERÇU (rien écrit) — relancer avec &apply=1&email=<adresse>',
     personnes_sans_reponse: crees.length,
     detail: crees,
     lecture: 'Ces brouillons attendent dans « À valider ». Rien n\'est envoyé automatiquement, et les textes sont neutres : à toi de les réécrire.',
