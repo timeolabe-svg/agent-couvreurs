@@ -53,6 +53,8 @@ export const contacts = pgTable('contacts', {
    * déclarée ici aussi, sinon elle est invisible pour tout le code qui passe par Drizzle.
    */
   absent_jusqu_au: date('absent_jusqu_au'),
+  /** Adresse donnée par le prospect pour la suite des échanges (changement d'adresse). */
+  redirige_vers: text('redirige_vers'),
   absence_motif: text('absence_motif'),
   absence_vue_le: timestamp('absence_vue_le'),
   created_at: timestamp('created_at').defaultNow(),
