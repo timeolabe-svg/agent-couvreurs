@@ -28,6 +28,17 @@ export const dynamic = 'force-dynamic'
 export const ETAPES = [
   { key: 'a_venir',      label: 'À venir',      fixe: 0,  abonnement: false },
   { key: 'qualifie',     label: 'Qualifié',     fixe: 80, abonnement: false },
+  /**
+   * ⚠️ LE FIXE RESTE À 80 ICI, ET CE N'EST PAS UNE CONTRADICTION AVEC LE BADGE « +5 %/mois ».
+   *
+   * Les 80 € sont dus une seule fois par rendez-vous qualifié. Un rendez-vous signé A FORCÉMENT été
+   * qualifié — mais Haris peut le faire passer directement de « à venir » à « signé » sans cocher
+   * « qualifié » au passage. Mettre 0 ici lui ferait perdre les 80 € dans ce cas, en silence.
+   *
+   * Le montant n'est donc jamais compté deux fois : un rendez-vous porte UN seul classement à la
+   * fois. Le badge, lui, décrit ce que la signature APPORTE EN PLUS de la qualification — la
+   * commission — parce que c'est la question que se pose celui qui clique.
+   */
   { key: 'signe',        label: 'Client signé', fixe: 80, abonnement: true  },
   { key: 'perdu',        label: 'Perdu',        fixe: 80, abonnement: false },
   { key: 'non_qualifie', label: 'Non qualifié', fixe: 0,  abonnement: false },

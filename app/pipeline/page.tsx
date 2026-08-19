@@ -49,7 +49,15 @@ const estAClasser = (r: Rdv) => (r.crm_stage ?? 'a_venir') === 'a_venir' && new 
 const ETAPES: Array<{ key: EtapeKey; label: string; color: string; aide: string; badge: string | null; icon: React.ElementType }> = [
   { key: 'a_venir',      label: 'À venir',      color: '#5f83ac', badge: null,     aide: 'Calé, pas encore eu lieu — ne compte pas encore', icon: CalendarClock },
   { key: 'qualifie',     label: 'Qualifié',     color: '#c19653', badge: '+80 €',  aide: 'Honoré, décisionnaire, concerné (intéressé ou non)', icon: Target },
-  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+80 € et 5 %/mois', aide: 'Devenu client — saisis son abonnement mensuel', icon: CheckCircle2 },
+  /**
+   * ⚠️ « SIGNÉ » N'AJOUTE PAS 80 € DE PLUS.
+   *
+   * Le badge annonçait « +80 € et 5 %/mois », ce qui laissait croire qu'un client signé rapporte un
+   * second forfait. Faux : les 80 € sont dus UNE FOIS, au moment où le rendez-vous est qualifié. La
+   * signature arrive presque toujours plus tard — on ne conclut pas en un rendez-vous — et
+   * n'apporte que la commission récurrente.
+   */
+  { key: 'signe',        label: 'Client signé', color: '#5c9b82', badge: '+5 %/mois', aide: 'Devenu client — saisis son abonnement mensuel, les 80 € étaient déjà acquis à la qualification', icon: CheckCircle2 },
   { key: 'perdu',        label: 'Perdu',        color: '#7a6b6b', badge: '+80 €',  aide: 'Qualifié mais pas transformé — les 80 € restent dus', icon: CircleSlash },
   { key: 'non_qualifie', label: 'Non qualifié', color: '#9a6b6b', badge: null,     aide: 'No-show, pas décisionnaire ou hors sujet — 0 €', icon: CircleSlash },
 ]

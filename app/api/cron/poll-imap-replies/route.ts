@@ -824,7 +824,22 @@ async function processReply(params: {
     // Une carte blanche SANS urgence temporelle ("quand vous voulez", "à votre convenance") reste
     // auto-confirmée normalement : le prospect accepte alors VRAIMENT n'importe quel créneau.
     const urgenceNonHonoree = allowToday && !isSameUTCDay(candidateSlot, new Date())
-    if (parsedDate || (openCall && !urgenceNonHonoree)) {
+
+    /**
+     * ⚠️ L'AGENDA NE CONTIENT QUE DES CRÉNEAUX VALIDÉS PAR LE PROSPECT (consigne Timéo, 19/08).
+     *
+     * Une « carte blanche » (« oui vous pouvez me contacter ») dit qu'il accepte le PRINCIPE d'un
+     * appel — pas une heure précise qu'il n'a jamais vue. On la confirmait quand même, et le cas
+     * TCT montre pourquoi c'est faux : rendez-vous inscrit à 10:00, le prospect répond « plutôt
+     * vers 11h ». Un agenda rempli de créneaux que personne n'a acceptés fait préparer le client
+     * pour des appels qui n'auront pas lieu, et gonfle le compteur de rendez-vous facturés.
+     *
+     * Désormais : seule une DATE DONNÉE PAR LE PROSPECT confirme. Une carte blanche PROPOSE un
+     * créneau, l'agent le demande en oui/non, et le rendez-vous n'entre à l'agenda qu'à son accord.
+     * Le lead n'est pas perdu pour autant : conversation-followups relance les créneaux proposés
+     * restés sans réponse.
+     */
+    if (parsedDate) {
       // Soit il a donné une date précise, soit il a donné CARTE BLANCHE ("appelez-moi", "quand
       // vous voulez") ET le créneau retenu respecte bien ce qu'il a demandé. Dans les deux cas il
       // a dit oui à l'appel → on CALE au prochain créneau (pas de re-demande, sinon on perd le
