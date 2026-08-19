@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
            MAX(c.company) AS entreprise
     FROM incoming_replies ir
     LEFT JOIN contacts c ON c.id = ir.contact_id
-    WHERE (ir.classification IS NULL OR ir.classification NOT IN ('spam', 'oof', 'desinterest'))
+    WHERE (ir.classification IS NULL OR ir.classification NOT IN ('spam', 'oof', 'desinterest', 'archive_bug'))
       AND NOT EXISTS (
         SELECT 1 FROM reply_drafts rd
         WHERE rd.incoming_reply_id = ir.id AND rd.status = 'sent'

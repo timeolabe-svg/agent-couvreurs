@@ -49,7 +49,7 @@ export async function GET(req: NextRequest) {
       FROM incoming_replies ir
       JOIN contacts c ON c.id = ir.contact_id
       WHERE ir.classification IS NULL
-         OR ir.classification NOT IN ('spam', 'oof', 'desinterest')
+         OR ir.classification NOT IN ('spam', 'oof', 'desinterest', 'archive_bug')
       ORDER BY ir.contact_id, ir.created_at DESC
     )
     SELECT d.* FROM derniers d
