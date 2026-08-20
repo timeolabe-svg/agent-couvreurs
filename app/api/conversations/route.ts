@@ -392,8 +392,11 @@ export async function GET() {
            * « Positives » ouvert par défaut, déplacé d'un cran.
            */
           const estAbsence = dernierRecu?.classification === 'oof'
+          // Un refus n'attend RIEN : on n'y répond jamais (règle d'or RGPD). Le compter comme
+          // « en attente » vide l'onglet Négatives et noie ce qui demande vraiment une action.
+          const estRefus = dernierRecu?.classification === 'desinterest'
           // Une conversation renvoyée vers une autre adresse n'attend rien : elle continue ailleurs.
-          g.prospectAttend = idx >= 0 && !estAbsence && !g.redirigeVers
+          g.prospectAttend = idx >= 0 && !estAbsence && !estRefus && !g.redirigeVers
             && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
         }
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate

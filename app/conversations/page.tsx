@@ -59,19 +59,31 @@ type Tab = 'positive' | 'negative' | 'pending' | 'absent' | 'failed'
 //                  conversation est morte, elle ne doit plus polluer "En attente".
 function tabOf(c: Conversation): Tab {
   /**
-   * ⚠️ CE TEST PASSE AVANT TOUS LES AUTRES. Une conversation où le prospect a écrit sans obtenir de
-   * réponse est ACTIONNABLE, quoi qu'il arrive par ailleurs — rendez-vous calé compris. Sans ça,
-   * un prospect qui demande à décaler son rendez-vous se range dans « Positives » et n'est jamais vu.
+   * ⚠️ L'ORDRE DE CES TESTS EST LE CŒUR DE L'ÉCRAN — je l'ai eu faux le 19/08.
+   *
+   * J'avais mis « le prospect attend une réponse » en TÊTE, pour qu'une demande de décalage de
+   * rendez-vous remonte. Effet de bord immédiat, signalé par Timéo : l'onglet Négatives est tombé à
+   * ZÉRO et les refus se sont retrouvés dans « En attente ». C'est mécanique — à un refus on ne
+   * répond JAMAIS (règle d'or RGPD), donc « le dernier message vient du prospect et personne n'a
+   * répondu » est vrai pour 100 % des refus. Le signal était juste, la priorité était fausse.
+   *
+   * Règle : on classe D'ABORD par ce que la conversation EST (refus, absence, renvoi), et seulement
+   * ensuite par ce qu'elle DEMANDE. « En attente » ne doit contenir que ce qui appelle une action ;
+   * un refus n'en appelle aucune.
    */
-  // L'absence prime : il a donné une date, on le rappellera à cette date. Rien à faire aujourd'hui.
-  // Renvoyé vers une autre adresse : rien à faire ici, tout se passe sur la nouvelle fiche.
-  if (c.redirigeVers) return 'failed'
-  if (c.absentJusquAu) return 'absent'
-  if (c.prospectAttend) return 'pending'
-  if (c.rdvBooked) return 'positive'
+  // 1) Ce qui est CLOS par nature — aucune action possible, quoi qu'il arrive ensuite.
   if (c.classification === 'desinterest') return 'negative'
+  // 2) Renvoyé vers une autre adresse : tout se passe désormais sur la nouvelle fiche.
+  if (c.redirigeVers) return 'failed'
+  // 3) Absence : il a donné une date de retour, on le rappellera à cette date. Rien à faire avant.
+  if (c.absentJusquAu) return 'absent'
+  // 4) Le prospect a écrit et n'a pas eu de réponse → action requise, même si un RDV est calé
+  //    (c'est le cas « plutôt vers 11h » qui, sinon, dort dans Positives).
+  if (c.prospectAttend) return 'pending'
+  // 5) RDV calé et rien en suspens : objectif atteint.
+  if (c.rdvBooked) return 'positive'
   if (c.exhausted) return 'failed'
-  return 'pending' // interest sans RDV, question, objection, oof, other, non classé
+  return 'pending' // intérêt sans RDV, question, objection, non classé
 }
 
 const TABS: { key: Tab; label: string; color: string }[] = [
