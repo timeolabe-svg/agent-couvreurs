@@ -521,7 +521,27 @@ async function runCron(req: Request) {
       })
 
       if (!(await texteSur(body, `relance conversation ${r.email}`, r.website))) {
-        results.push(`⛔ relance bloquée (donnée inventée) → ${r.email}`)
+        /**
+         * ⚠️ BLOQUER NE SUFFIT PAS — IL FAUT QUE QUELQU'UN LE SACHE.
+         *
+         * Le garde-fou anti-invention refusait le texte, faisait `continue`, et c'était tout : la
+         * seule trace était une ligne dans la réponse du cron, que personne ne lit. Le prospect ne
+         * recevait donc plus jamais de relance, à chaque passage, sans qu'aucun écran ne le montre.
+         * Un lead perdu en silence — précisément ce que le garde-fou est censé éviter.
+         *
+         * La règle (leçon du faux numéro) est : on ne réécrit pas, on BASCULE VERS L'HUMAIN. On
+         * dépose donc une tâche urgente, dont le titre est unique par contact : l'alerte part une
+         * fois, pas à chaque run.
+         */
+        await sql`
+          INSERT INTO urgent_tasks (type, title, description, contact_id)
+          VALUES ('relance_bloquee',
+                  ${'Relance bloquée (donnée inventée) — ' + r.email},
+                  ${'La relance générée pour ' + (r.company ?? r.email) + ' contenait une donnée non vérifiable (numéro, lien ou chiffre hors liste blanche). Rien n a été envoyé. À écrire à la main, ou à corriger dans les réglages agence si une coordonnée manque.'},
+                  ${r.id})
+          ON CONFLICT (title) DO NOTHING
+        `.catch(() => {})
+        results.push(`⛔ relance bloquée (donnée inventée) → ${r.email} — tâche urgente créée`)
         continue
       }
       await sql`
