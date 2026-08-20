@@ -1348,10 +1348,18 @@ function parseExtractedDate(dateStr: string): Date | null {
   return null
 }
 
-// Formate un créneau en français lisible ("mardi 21 juillet à 12:00").
+/**
+ * Formate un créneau en français lisible ("mardi 21 juillet à 12:00").
+ *
+ * ⚠️ timeZone EXPLICITE. Sans elle, la conversion suit le fuseau du serveur : identique à l'agenda
+ * aujourd'hui parce que Vercel tourne en UTC, mais par HASARD, pas par choix. Le jour où le runtime
+ * change de fuseau, le créneau proposé au prospect et l'agenda affichent deux heures différentes
+ * pour le même rendez-vous — le décalage de 2 h déjà vécu sur ce projet.
+ * La valeur en base est l'heure murale : on l'affiche telle quelle, partout.
+ */
 function fmtSlot(d: Date): string {
-  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
-    + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+    + ' à ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
 }
 
 // Même jour calendaire (UTC, cohérent avec le stockage des scheduled_at). Sert à détecter quand
@@ -1465,8 +1473,10 @@ async function sendRdvNotificationEmail(params: {
   contactName: string; contactCompany: string; scheduledAt: Date
   googleMeetLink: string | null; calendarEventUrl: string | null; exchangeSummary: string; conversationUrl?: string
 }) {
-  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  // ⚠️ Même convention que l'agenda et les rappels : timeZone explicite, jamais celui du serveur.
+  // C'est la notification que Haris reçoit ; elle doit annoncer EXACTEMENT l'heure de l'agenda.
+  const dateStr = params.scheduledAt.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+  const timeStr = params.scheduledAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
   const text = [
     `${params.contactName || params.contactCompany} (${params.contactCompany}) a demandé un rendez-vous.`,
     `Quand : ${dateStr} à ${timeStr} (30 min)`,
