@@ -514,6 +514,20 @@ async function runCron(req: NextRequest) {
       })
     } catch { /* réessaiera au prochain run */ }
 
+    /**
+     * TRAVAUX PÉRIODIQUES JAMAIS PROGRAMMÉS (watchlist, apprentissage, auto-amélioration).
+     *
+     * ⚠️ Neuf crons de ce projet n'ont qu'UN passage en base, le 09/08 à 18h41 : un lancement
+     * manuel. Ils n'existent pas chez l'ordonnanceur, donc ils ne peuvent même pas y échouer — la
+     * panne la plus discrète possible. On les déclenche ici, chacun à sa cadence.
+     */
+    try {
+      const base = process.env.PUBLIC_APP_URL || BASE_URL
+      await fetch(`${base}/api/cron/maintenance-tick?key=${process.env.CRON_SECRET ?? ''}`, {
+        signal: AbortSignal.timeout(6000),
+      })
+    } catch { /* réessaiera au prochain run */ }
+
     return NextResponse.json({ ok: true, sent, skipped, failed, results })
   } catch (err) {
     return NextResponse.json(

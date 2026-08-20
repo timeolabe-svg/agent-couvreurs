@@ -51,6 +51,8 @@ const EXPECTED: Record<string, number> = {
   "reprendre-apres-absence": 1440,
   "weekly-learning": 10080,
   "self-improve": 43200,
+  // Le déclencheur des travaux périodiques : s il se tait, watchlist/apprentissage se taisent aussi.
+  "maintenance-tick": 60,
 }
 
 interface HeartbeatRow {
