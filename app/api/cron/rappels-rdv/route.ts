@@ -99,6 +99,12 @@ async function handler(req: NextRequest) {
    * laquelle chaque rappel partira et ceux qui sont déjà partis. Vérifiable sans envoyer un mail
    * de test à un vrai prospect.
    */
+  /**
+   * ⚠️ UNE SEULE CONVENTION D HEURE DANS UN MEME ECRAN.
+   * Cet apercu affichait l heure de tir en UTC et l heure d envoi reel en heure de Paris : les deux
+   * colonnes semblaient decalees de 2 h et donnaient l impression d un rappel parti au mauvais
+   * moment, alors que tout etait juste. Comparer deux colonnes exige la meme convention.
+   */
   if (req.nextUrl.searchParams.get('apercu') === '1') {
     const rdvs = (await sql`
       SELECT r.id, r.scheduled_at, c.company, c.email
@@ -120,7 +126,7 @@ async function handler(req: NextRequest) {
           return {
             echeance: e.cle,
             part_vers: t.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'UTC' }),
-            etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé le ' + new Date(envoye.get(`${r.id}|${e.cle}`)!).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })
+            etat: envoye.has(`${r.id}|${e.cle}`) ? 'déjà envoyé le ' + new Date(envoye.get(`${r.id}|${e.cle}`)!).toLocaleString('fr-FR', { timeZone: 'UTC' })
               : t.getTime() < Date.now() ? 'fenêtre passée'
               : 'à venir',
           }
