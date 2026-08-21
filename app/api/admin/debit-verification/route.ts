@@ -116,6 +116,34 @@ export async function GET(req: NextRequest) {
     FROM contacts GROUP BY 1 ORDER BY 2 DESC
   `) as Array<{ etat: string; n: number }>
 
+  /**
+   * ⚠️ UN CONTACT SANS LIGNE DE FILE N'EST JAMAIS VALIDÉ (leçon 83).
+   * Le sélecteur de validate-emails exige une ligne 'pending'/'queued' : un contact importé sans
+   * séquence est invisible pour lui, donc jamais vérifié, donc jamais envoyé — à vie et sans erreur.
+   */
+  const [couverture] = (await sql`
+    WITH a_verifier AS (
+      SELECT c.id FROM contacts c
+      WHERE c.email_validated IS NOT TRUE
+        AND c.mv_status IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q
+          WHERE q.contact_id = c.id AND q.sequence_step = 0 AND q.status = 'sent'
+        )
+    )
+    SELECT
+      COUNT(*)::int AS a_verifier,
+      COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM email_queue q
+        WHERE q.contact_id = a_verifier.id AND q.status IN ('pending', 'queued')
+      ))::int AS atteignables_par_la_validation,
+      COUNT(*) FILTER (WHERE NOT EXISTS (
+        SELECT 1 FROM email_queue q
+        WHERE q.contact_id = a_verifier.id AND q.status IN ('pending', 'queued')
+      ))::int AS invisibles_pour_la_validation
+    FROM a_verifier
+  `) as Array<Record<string, number>>
+
   // Rythme d'envoi réel : personnes démarchées par jour sur 7 jours.
   const [rythme] = (await sql`
     SELECT COALESCE(ROUND(COUNT(DISTINCT contact_id)::numeric / 7), 0)::int AS par_jour
@@ -137,6 +165,7 @@ export async function GET(req: NextRequest) {
   const tientLeRythme = validesParJour >= envoiParJour
 
   return NextResponse.json({
+    couverture_validation: couverture,
     contacts_dans_les_limbes: limbes[0],
     etats_des_contacts: etatsGlobaux,
     adresses_en_double: { groupes: doublons.length, detail: doublons },
