@@ -31,6 +31,35 @@ export async function GET(req: NextRequest) {
 
   const effectifs = depuisUi.length > 0 ? depuisUi : depuisEnv
 
+  /**
+   * ⚠️ RÉGLER LES DESTINATAIRES ICI — parce que le champ de l'écran Agent ÉCRASE la variable d'env.
+   *
+   * Constaté le 19/08 : le champ ne contenait que l'adresse de Haris, donc Timéo — qui est payé au
+   * rendez-vous — n'était plus prévenu quand il y en avait un. C'est le piège du réglage d'interface
+   * qui pilote la vraie config sans qu'on s'en rende compte : la variable d'environnement contenait
+   * bien les deux adresses, elle n'était simplement plus lue.
+   *
+   * ?definir=a@x.fr,b@y.fr  → écrit la liste complète (remplace, ne complète pas).
+   */
+  const aDefinir = (req.nextUrl.searchParams.get('definir') ?? '').trim()
+  if (aDefinir) {
+    const liste = aDefinir.split(',').map(s => s.trim()).filter(s => s.includes('@'))
+    if (liste.length === 0) {
+      return NextResponse.json({ error: 'aucune adresse valide dans ?definir=' }, { status: 400 })
+    }
+    await sql`
+      INSERT INTO agent_config (key, value, updated_at, updated_by)
+      VALUES ('client_notif_email', ${liste.join(',')}, NOW(), 'admin')
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW(), updated_by = 'admin'
+    `
+    return NextResponse.json({
+      ok: true,
+      ancienne_liste: effectifs,
+      nouvelle_liste: liste,
+      lecture: 'Ces adresses recevront désormais TOUTES les notifications de rendez-vous.',
+    })
+  }
+
   // Les RDV récents ont-ils laissé une trace de notification ?
   const evts = (await sql`
     SELECT type, data, created_at FROM dashboard_events
