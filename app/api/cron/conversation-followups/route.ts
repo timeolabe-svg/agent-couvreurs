@@ -507,6 +507,27 @@ async function runCron(req: Request) {
       ].sort((a, b) => a.ts - b.ts)
         .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
 
+      /**
+       * ⚠️ UN CRÉNEAU DÉJÀ PROPOSÉ DOIT ÊTRE RAPPELÉ, PAS RÉINVENTÉ.
+       *
+       * Cas JM Paysagiste (21/08) : le 19 on lui propose « demain matin, 10h vous conviendrait ? »,
+       * il ne répond pas, et la relance du 21 lui écrit… « je peux vous rappeler dès demain matin,
+       * est-ce que 10h vous conviendrait ? ». Presque le même texte, un NOUVEAU créneau implicite,
+       * et une proposition (24/08 09:00) toujours en attente en base dont le modèle ignorait tout.
+       *
+       * Le générateur ne peut pas deviner ce qu'il a déjà proposé : on le lui DONNE.
+       */
+      const [creneauEnAttente] = (await sql`
+        SELECT scheduled_at FROM rdv
+        WHERE contact_id = ${r.id} AND status = 'proposed' AND scheduled_at > NOW()
+        ORDER BY scheduled_at ASC LIMIT 1
+      `) as Array<{ scheduled_at: string }>
+      const creneauStr = creneauEnAttente?.scheduled_at
+        ? new Date(creneauEnAttente.scheduled_at).toLocaleString('fr-FR', {
+            weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
+          })
+        : undefined
+
       const body = await generateReplyResponse({
         classification: (r.last_classification as 'interest' | 'question' | 'objection' | 'rdv_request') ?? 'interest',
         originalEmailBody: sent.length ? sent[sent.length - 1].body : '',
@@ -517,8 +538,40 @@ async function runCron(req: Request) {
         contactSector: r.sector ?? undefined,
         conversationHistory: history,
         isFollowUp: true,
+        proposedSlot: creneauStr,
         fromEmail: r.owner_box ?? undefined,
       })
+
+      /**
+       * ⚠️ UNE RELANCE QUI REDIT LA MÊME CHOSE N'EST PAS UNE RELANCE.
+       *
+       * La consigne « change d'angle, ne reformule pas » existait déjà dans le prompt. Elle n'a pas
+       * tenu : le message du 21/08 reprenait mot pour mot l'idée du 19/08. Un prompt n'est pas un
+       * garde-fou — on compare donc le texte produit au DERNIER message réellement envoyé, en code.
+       *
+       * Deux messages quasi identiques à deux jours d'intervalle, c'est la signature d'un robot :
+       * c'est précisément ce qui fait perdre un lead chaud et fait signaler l'expéditeur.
+       */
+      const normaliser = (t: string) => (t || '')
+        .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ').trim()
+      const motsDe = (t: string) => new Set(normaliser(t).split(' ').filter(m => m.length > 3))
+      const dernierEnvoye = sent.length ? sent[sent.length - 1].body : ''
+      const a = motsDe(dernierEnvoye), b = motsDe(body)
+      const communs = [...b].filter(m => a.has(m)).length
+      const similarite = b.size > 0 ? communs / b.size : 0
+      if (similarite > 0.7) {
+        await sql`
+          INSERT INTO urgent_tasks (type, title, description, contact_id)
+          VALUES ('relance_repetitive',
+                  ${'Relance trop proche du message precedent — ' + r.email},
+                  ${'La relance generee pour ' + (r.company ?? r.email) + ' reprenait ' + Math.round(similarite * 100) + '% des mots du dernier message envoye. Rien n a ete envoye : a ecrire a la main, ou le lead est a considerer comme froid.'},
+                  ${r.id})
+          ON CONFLICT (title) DO NOTHING
+        `.catch(() => {})
+        results.push(`⛔ relance trop repetitive (${Math.round(similarite * 100)}%) → ${r.email} — tache urgente creee`)
+        continue
+      }
 
       if (!(await texteSur(body, `relance conversation ${r.email}`, r.website))) {
         /**

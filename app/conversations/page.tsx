@@ -77,11 +77,21 @@ function tabOf(c: Conversation): Tab {
   if (c.redirigeVers) return 'failed'
   // 3) Absence : il a donné une date de retour, on le rappellera à cette date. Rien à faire avant.
   if (c.absentJusquAu) return 'absent'
-  // 4) Le prospect a écrit et n'a pas eu de réponse → action requise, même si un RDV est calé
-  //    (c'est le cas « plutôt vers 11h » qui, sinon, dort dans Positives).
-  if (c.prospectAttend) return 'pending'
-  // 5) RDV calé et rien en suspens : objectif atteint.
+  /**
+   * ⚠️ UN RENDEZ-VOUS CALÉ VA DANS « POSITIVES », POINT. Consigne de Timéo, 21/08.
+   *
+   * J'avais fait passer « le prospect attend une réponse » AVANT le rendez-vous, pour que la demande
+   * de décalage de TCT remonte. Résultat : une conversation étiquetée « RDV calé » s'affichait dans
+   * « En attente », ce qui n'a aucun sens à la lecture — l'onglet des rendez-vous doit contenir les
+   * rendez-vous.
+   *
+   * Le besoin d'origine reste valable (ne pas enterrer un message arrivé après le RDV) : il est
+   * couvert par le badge « message en attente » affiché sur la ligne, et par la tâche urgente créée
+   * côté serveur. La visibilité ne passe plus par un rangement contre-intuitif.
+   */
   if (c.rdvBooked) return 'positive'
+  // Le prospect a écrit et n'a pas eu de réponse, sans rendez-vous calé → action requise.
+  if (c.prospectAttend) return 'pending'
   if (c.exhausted) return 'failed'
   return 'pending' // intérêt sans RDV, question, objection, non classé
 }
@@ -233,6 +243,11 @@ export default function ConversationsPage() {
                 {/* La date de retour est LE seul renseignement utile sur un absent : sans elle,
                     l'onglet ne dit pas quand rappeler. En rouge quand elle est déjà passée — c'est
                     un créneau qu'on a laissé filer, pas une information neutre. */}
+                {c.rdvBooked && c.prospectAttend && (
+                  <span className="text-[10px] font-medium" style={{ color: '#c19653' }}>
+                    ⚠ message sans réponse depuis le rendez-vous
+                  </span>
+                )}
                 {c.redirigeVers && (
                   <span className="text-[10px]" style={{ color: '#7d6fb0' }}>
                     Écrire désormais à {c.redirigeVers}
