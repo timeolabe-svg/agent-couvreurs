@@ -152,6 +152,27 @@ export async function GET(req: NextRequest) {
    * récupérable sans dépenser un centime. Annoncer « il faut racheter » sans avoir fait ce partage,
    * c'est faire payer un fichier pour un problème de tuyauterie.
    */
+  /**
+   * ⚠️ LE TROU ENTRE LES DEUX RATTRAPAGES.
+   *
+   * `enqueue-orphans` ne prend que les contacts SANS AUCUNE ligne de file. `validate-emails` ne
+   * prend que ceux qui ont une ligne ACTIVE. Un contact dont toute la file a été ANNULÉE tombe
+   * entre les deux : invisible pour l'un comme pour l'autre, à vie. C'est le trou qui explique le
+   * stock figé à 14 depuis trois jours.
+   */
+  const statutsDeFile = (await sql`
+    SELECT q.status, COUNT(DISTINCT q.contact_id)::int AS contacts
+    FROM email_queue q
+    JOIN contacts c ON c.id = q.contact_id
+    WHERE c.email_validated IS NOT TRUE
+      AND c.mv_status IS NULL
+      AND COALESCE(c.google_reviews_count, 0) >= 20
+      AND c.email IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM email_queue s WHERE s.contact_id = c.id AND s.sequence_step = 0 AND s.status = 'sent')
+      AND NOT EXISTS (SELECT 1 FROM email_queue a WHERE a.contact_id = c.id AND a.status IN ('pending','queued'))
+    GROUP BY 1 ORDER BY 2 DESC
+  `) as Array<{ status: string; contacts: number }>
+
   const raisons = (await sql`
     SELECT
       COUNT(*)::int AS total,
@@ -192,6 +213,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     couverture_validation: couverture,
     pourquoi_invisibles: raisons[0],
+    statuts_de_file_des_bloques: statutsDeFile,
     contacts_dans_les_limbes: limbes[0],
     etats_des_contacts: etatsGlobaux,
     adresses_en_double: { groupes: doublons.length, detail: doublons },
