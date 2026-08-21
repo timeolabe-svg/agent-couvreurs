@@ -52,6 +52,25 @@ const TRAVAUX: Travail[] = [
   },
 ]
 
+/**
+ * ── PARTAGE HEBDOMADAIRE DU VIVIER AVEC LES AUTRES PROJETS ──────────────────────
+ *
+ * Consigne permanente de Timéo, redonnée le 21/08 : « toutes les semaines tu envoies un fichier
+ * des leads que t'as pas utilisés à tous les autres projets, qui piochent ce qui correspond à leur
+ * cible ». Les entreprises du bâtiment intéressent Hdigiweb (site internet), Revele (timelapse de
+ * chantier), Optimum Expertise et les projets à venir : une donnée publique déjà payée n'a aucune
+ * raison d'être rachetée trois fois.
+ *
+ * ⚠️ C'ÉTAIT UNE CONSIGNE SANS DÉCLENCHEUR. Les deux exports existaient en endpoint admin et
+ * n'avaient tourné qu'à la main — le 10 et le 16 août. Une consigne « toutes les semaines » qui
+ * dépend d'un clic n'est pas hebdomadaire, elle est oubliée.
+ *
+ * ⚠️ ET LA RÈGLE QUI PRIME SUR TOUT : l'opposition suit la PERSONNE, pas la campagne. Quiconque a
+ * dit stop à Hdigiweb ne doit jamais être contacté par Revele — le filtre blocklist vit dans les
+ * endpoints d'export, il ne se contourne pas ici.
+ */
+const PARTAGES_HEBDO = ['export-vers-revele', 'export-vers-labegaria']
+
 async function handler(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -67,6 +86,24 @@ async function handler(req: NextRequest) {
 
   const lances: string[] = []
   const attendus: string[] = []
+
+  // Le partage du vivier passe en premier : c'est un engagement pris envers d'autres projets.
+  for (const nom of PARTAGES_HEBDO) {
+    const d = dernier.get(nom)
+    const heures = d ? (Date.now() - new Date(d).getTime()) / 3_600_000 : Infinity
+    if (heures < 24 * 7) { attendus.push(`${nom} (dernier partage il y a ${Math.round(heures / 24)} j)`); continue }
+    try {
+      const r = await fetch(`${base}/api/admin/${nom}?key=${cle}`, { signal: AbortSignal.timeout(25_000) })
+      lances.push(`${nom} → HTTP ${r.status} (partage hebdomadaire du vivier)`)
+    } catch (e) {
+      lances.push(`${nom} → échec : ${String(e).slice(0, 80)}`)
+    }
+    break
+  }
+  if (lances.length > 0) {
+    await pingHeartbeat('maintenance-tick', true, `partage=${lances.length}`, 60)
+    return NextResponse.json({ ok: true, lances, pas_encore_dus: attendus })
+  }
 
   for (const t of TRAVAUX) {
     const d = dernier.get(t.cron)
