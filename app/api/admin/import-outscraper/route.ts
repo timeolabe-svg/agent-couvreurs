@@ -47,7 +47,19 @@ export async function POST(request: NextRequest) {
     )
   `)
 
-  const body = await request.json().catch(() => null) as { rows?: Array<{ place_id?: string; name?: string; site?: string; phone?: string; city?: string; postal_code?: string; rating?: number; reviews?: number }> } | null
+  /**
+   * `sector` / `category` : le MÉTIER de la fiche, porté depuis l'achat.
+   *
+   * ⚠️ Sans lui, le vivier est une masse indistincte d'« entreprises du bâtiment ». Or le fichier
+   * hebdomadaire part vers Revele, Labegaria et Optimum Expertise, qui n'y piochent PAS la même
+   * chose : un couvreur intéresse l'un, un pisciniste l'autre. Un vivier sans métier oblige chaque
+   * projet à redeviner ce qu'on savait déjà au moment de l'achat.
+   */
+  const body = await request.json().catch(() => null) as {
+    rows?: Array<{ place_id?: string; name?: string; site?: string; phone?: string; city?: string; postal_code?: string; rating?: number; reviews?: number; category?: string; sector?: string }>
+    sector?: string
+    category?: string
+  } | null
   if (!body?.rows?.length) return NextResponse.json({ error: 'rows manquantes' }, { status: 400 })
 
   let inserted = 0, dupStaging = 0, dejaEnBase = 0, sans20Avis = 0, sansSite = 0, promus = 0
@@ -67,11 +79,14 @@ export async function POST(request: NextRequest) {
       // On ne réécrit JAMAIS un statut terminal (importe/blockliste/deja_en_base) : ces leads ont
       // déjà suivi leur chemin, les ressusciter re-contacterait quelqu'un ou casserait un opt-out.
       const res = await db.execute(sql`
-        INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, status)
-        VALUES (${r.place_id}, ${r.name}, ${r.site ?? null}, ${r.phone ?? null}, ${r.city ?? null}, ${r.postal_code ?? null}, ${r.rating ?? null}, ${reviews}, ${status})
+        INSERT INTO outscraper_leads (place_id, name, site, phone, city, postal_code, rating, reviews, status, category, sector)
+        VALUES (${r.place_id}, ${r.name}, ${r.site ?? null}, ${r.phone ?? null}, ${r.city ?? null}, ${r.postal_code ?? null}, ${r.rating ?? null}, ${reviews}, ${status},
+                ${r.category ?? body.category ?? null}, ${r.sector ?? body.sector ?? null})
         ON CONFLICT (place_id) DO UPDATE SET
           reviews = EXCLUDED.reviews,
           rating  = EXCLUDED.rating,
+          category = COALESCE(outscraper_leads.category, EXCLUDED.category),
+          sector   = COALESCE(outscraper_leads.sector,   EXCLUDED.sector),
           site    = COALESCE(EXCLUDED.site, outscraper_leads.site),
           phone   = COALESCE(EXCLUDED.phone, outscraper_leads.phone),
           -- PROMOTION AUTOMATIQUE : en attente + franchit 20 avis + a un site → repasse en 'new'.

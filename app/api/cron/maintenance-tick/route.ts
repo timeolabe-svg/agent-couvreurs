@@ -32,9 +32,33 @@ interface Travail {
   /** Cadence voulue, en heures. */
   toutesLesHeures: number
   pourquoi: string
+  /**
+   * Paramètres supplémentaires de l'appel.
+   * ⚠️ Séparés du nom : les coller au nom casserait à la fois l'URL (deux « ? ») et la lecture du
+   * battement, qui se fait sur le nom seul — le travail se relancerait alors à CHAQUE passage.
+   */
+  params?: Record<string, string>
 }
 
 const TRAVAUX: Travail[] = [
+  {
+    /**
+     * ⚠️ CE TRAVAIL PEUT DÉPENSER DE L'ARGENT — et c'est voulu qu'il soit ici.
+     *
+     * Il est appelé avec `?reel=1`, mais `achat-leads` refuse toute commande tant que
+     * `ACHAT_LEADS_ACTIF` n'est pas à 1 : la variable d'environnement EST le feu vert de Timéo, et
+     * elle se retire en 30 secondes depuis Vercel sans redéploiement. Tant qu'elle est absente,
+     * chaque passage se contente de dire ce qu'il aurait acheté.
+     *
+     * La cadence horaire sert autant à acheter qu'à RÉCOLTER : un job lancé chez Outscraper met
+     * plusieurs minutes, et c'est le passage suivant qui vient chercher le fichier. Sans repassage
+     * régulier, on aurait payé une commande que personne ne serait allé chercher.
+     */
+    cron: 'achat-leads',
+    params: { reel: '1' },
+    toutesLesHeures: 1,
+    pourquoi: 'achète le prochain lot de villes, ou récolte le job en cours',
+  },
   {
     cron: 'watchlist-recheck',
     toutesLesHeures: 24,
@@ -118,7 +142,8 @@ async function handler(req: NextRequest) {
      * les envois. Ce qui n'est pas lancé aujourd'hui le sera au passage suivant.
      */
     try {
-      const r = await fetch(`${base}/api/cron/${t.cron}?key=${cle}`, { signal: AbortSignal.timeout(25_000) })
+      const extra = Object.entries(t.params ?? {}).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')
+      const r = await fetch(`${base}/api/cron/${t.cron}?key=${cle}${extra}`, { signal: AbortSignal.timeout(25_000) })
       lances.push(`${t.cron} → HTTP ${r.status} (${t.pourquoi})`)
     } catch (e) {
       lances.push(`${t.cron} → échec : ${String(e).slice(0, 80)}`)
