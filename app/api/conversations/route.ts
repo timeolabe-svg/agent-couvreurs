@@ -123,12 +123,28 @@ export async function GET() {
       .from(reply_drafts)
       .where(inArray(reply_drafts.incoming_reply_id, replyIds))
 
-    // 4bis. RDV confirmés → la conversation bascule en onglet "En attente" (le RDV est
-    //        calé, on attend qu'il ait lieu — plus rien à traiter). "Positives" reste
-    //        réservé aux intéressés SANS RDV encore pris (leads à travailler).
+    /**
+     * 4bis. UN RENDEZ-VOUS PROPOSÉ COMPTE AUTANT QU'UN RENDEZ-VOUS CONFIRMÉ — pour L'ONGLET.
+     *
+     * ⚠️ Ne pas confondre deux questions différentes, c'est ce qui a produit le bug.
+     *   - « Faut-il l'écrire dans l'agenda de Haris ? » → seulement si le prospect a validé.
+     *     Cette règle-là ne bouge pas : un créneau proposé n'est pas un rendez-vous.
+     *   - « Dans quel onglet ranger la conversation ? » → dès qu'il est question d'un rendez-vous.
+     *
+     * En ne comptant que les `confirmed`, l'onglet répondait à la PREMIÈRE question alors que
+     * l'écran pose la SECONDE. Résultat, des conversations affichant la pastille « RDV » restaient
+     * rangées dans « En attente » — Timéo l'a signalé deux fois. La pastille et l'onglet doivent
+     * dire la même chose, sinon l'écran se contredit lui-même.
+     *
+     * On exclut les annulés : une conversation dont le rendez-vous est tombé redevient un lead
+     * à traiter, elle n'a rien à faire dans l'onglet des rendez-vous.
+     */
     const rdvRows = contactIds.length
       ? await db.select({ contact_id: rdv.contact_id }).from(rdv)
-          .where(and(inArray(rdv.contact_id, contactIds), eq(rdv.status, 'confirmed')))
+          .where(and(
+            inArray(rdv.contact_id, contactIds),
+            inArray(rdv.status, ['confirmed', 'proposed', 'rescheduled', 'signed']),
+          ))
       : []
     const contactsWithRdv = new Set(rdvRows.map(r => r.contact_id).filter(Boolean))
 
@@ -196,7 +212,14 @@ export async function GET() {
           phone: c?.phone ?? null,
           website: c?.website ?? null,
           classification: r.classification,
-          rdvBooked: r.contact_id ? contactsWithRdv.has(r.contact_id) : false,
+          /**
+           * ⚠️ LA PASTILLE ET L'ONGLET SONT LA MÊME INFORMATION, ILS DOIVENT DONC AVOIR LA MÊME
+           * SOURCE. La pastille affichée dans la liste vient de `classification` ; si l'onglet, lui,
+           * ne regardait que la table des rendez-vous, l'écran finissait par afficher « RDV » sur une
+           * ligne rangée dans « En attente ». C'est exactement ce que Timéo a vu, deux fois.
+           */
+          rdvBooked: (r.contact_id ? contactsWithRdv.has(r.contact_id) : false)
+            || r.classification === 'rdv_request',
           prospectAttend: false, // calculé plus bas, une fois tous les messages rassemblés
           absentJusquAu: r.contact_id ? (absents.get(r.contact_id) ?? null) : null,
           redirigeVers: r.contact_id ? (redirections.get(r.contact_id) ?? null) : null,

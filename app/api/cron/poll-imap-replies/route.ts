@@ -29,7 +29,25 @@ let sql!: NeonQueryFunction<false, false>
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const GLOBAL_DEADLINE_MS = 2_000  // une seule boite par passage : on ne doit jamais en DEMARRER une seconde. 2 + 22 = 24s, sous la coupe de 30s.
+/**
+ * ⚠️ SEUIL D'OUVERTURE D'UNE BOÎTE SUPPLÉMENTAIRE — corrigé le 21/08.
+ *
+ * Il valait 2 000 ms, avec ce raisonnement : « on ne doit jamais démarrer une seconde boîte, car un
+ * traitement complet prend 22 s et 2 + 22 = 24 s, sous la coupe de 30 s ». Le calcul est juste, mais
+ * il suppose qu'il y a TOUJOURS un message à traiter. Or la plupart des passages ne trouvent rien :
+ * ouvrir une boîte vide coûte environ 1,5 s. On rendait donc la main au bout de 3 secondes en
+ * laissant trois boîtes fermées, et on recommençait dix minutes plus tard.
+ *
+ * Conséquence mesurée : chaque boîte n'était relevée qu'un passage sur quatre, soit une réponse vue
+ * jusqu'à 40 minutes après son arrivée. Timéo l'a dit autrement : « j'ai accès qu'à une boîte mail
+ * sur mon tel donc 3 autres je vois pas, tu dois en oublier plein ». Un prospect qui écrit
+ * « Appelle-moi » attendait jusqu'à 40 minutes avant que l'agent le sache.
+ *
+ * Le seuil autorise maintenant à ouvrir une boîte de plus tant qu'il reste de quoi finir un
+ * traitement complet. Quand il n'y a rien à faire — le cas courant — les quatre boîtes sont relevées
+ * en 6 secondes. Quand il y a du travail, le budget coupe exactement comme avant.
+ */
+const GLOBAL_DEADLINE_MS = 6_000
 const PER_BOX_TIMEOUT_MS = 22_000 // laisse finir UN traitement complet (IMAP 1,2s + IA ~10s + marge). Mesure du 17/08.
 /**
  * ⚠️ BUDGET DE LA BOUCLE DE MESSAGES — À NE JAMAIS CONFONDRE AVEC GLOBAL_DEADLINE_MS.
@@ -205,11 +223,19 @@ export async function POST(req: NextRequest) {
    * ⚠️ Pour réduire la latence, c'est la CADENCE du cron qu'il faut augmenter (5 min → chaque
    * boîte toutes les 20 min), pas le nombre de boîtes par passage.
    */
-  const BOITES_PAR_PASSAGE = 1
-  const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot)).slice(0, BOITES_PAR_PASSAGE)
+  /**
+   * ⚠️ PLUS DE PLAFOND SUR LE NOMBRE DE BOÎTES : c'est le TEMPS qui décide, pas un compteur.
+   *
+   * Un plafond fixe traite le cas « une boîte pleine » et le cas « quatre boîtes vides » de la même
+   * façon, alors qu'ils ne coûtent pas du tout la même chose. La rotation reste indispensable : elle
+   * garantit que si le budget coupe, ce n'est jamais deux fois la même boîte qui est sacrifiée.
+   */
+  const orderedBoxes = boxes.slice(rot).concat(boxes.slice(0, rot))
   const loop = (async () => {
     for (const box of orderedBoxes) {
-      if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push('⏱ budget global atteint'); break }
+      // Le budget se juge AVANT d'ouvrir : mieux vaut laisser une boîte pour le passage suivant
+      // que de l'ouvrir sans avoir le temps de traiter ce qu'on y trouve.
+      if (Date.now() - started > GLOBAL_DEADLINE_MS) { results.push(`⏱ budget atteint, boîtes restantes au prochain passage`); break }
       try {
         await withTimeout(processBox(box, started, results, stats), PER_BOX_TIMEOUT_MS, `box ${box.email}`)
       } catch (e) {
@@ -263,7 +289,26 @@ async function processBox(box: { email: string; password: string }, started: num
   try {
     const lock = await client.getMailboxLock('INBOX')
     try {
-      const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000)
+      /**
+       * ⚠️ ON REMONTE JUSQU'AU DERNIER RELEVÉ DE CETTE BOÎTE, PAS SYSTÉMATIQUEMENT 72 HEURES.
+       *
+       * Les 72 heures sont un filet : si le cron saute une nuit, aucune réponse ne doit passer à
+       * travers. Mais les appliquer à CHAQUE passage revient à réexaminer une centaine de messages
+       * toutes les dix minutes — presque tous du warmup, tous déjà vus. C'est ce balayage inutile qui
+       * consommait le budget et laissait les autres boîtes fermées.
+       *
+       * On borne donc la fenêtre au temps réellement écoulé depuis le dernier relevé RÉUSSI de cette
+       * boîte, avec deux marges : au moins 6 heures (une réponse peut arriver horodatée un peu en
+       * arrière), au plus les 72 heures d'origine. Le filet reste entier — une panne de trois jours
+       * rouvre bien la fenêtre complète — mais le cas courant coûte dix fois moins cher.
+       */
+      const dernierRow = (await sql`
+        SELECT value FROM agent_config WHERE key = ${'imap_last_read:' + box.email}
+      `.catch(() => [])) as Array<{ value: string }>
+      const dernierMs = dernierRow[0]?.value ? Number(dernierRow[0].value) : 0
+      const ecouleH = dernierMs > 0 ? (Date.now() - dernierMs) / 3_600_000 : LOOKBACK_HOURS
+      const fenetreH = Math.min(LOOKBACK_HOURS, Math.max(6, ecouleH + 1))
+      const since = new Date(Date.now() - fenetreH * 3600 * 1000)
       const tSearch0 = Date.now()
       // TOUS les messages récents (plus seulement les non-lus) : une réponse OUVERTE dans Gmail
       // (marquée "lue") était ratée par seen:false. Dédup par Message-ID + filtre "vrai contact"
@@ -298,8 +343,59 @@ async function processBox(box: { email: string; password: string }, started: num
       } catch { /* repli : on continuera avec ce qui a été chargé */ }
       results.push(`[${box.email}] ${uids.length} msg · connexion ${tConnect}ms · recherche ${tSearch}ms · enveloppes ${Date.now() - tEnv0}ms`)
 
+      /**
+       * Le relevé est noté MAINTENANT, avant le traitement : ce qui compte est « jusqu'où ai-je
+       * regardé », pas « ai-je fini de répondre ». Un message vu mais non encore traité reste
+       * rattrapé par la dédup Message-ID et par la marge de six heures.
+       */
+      await sql`
+        INSERT INTO agent_config (key, value, updated_at) VALUES (${'imap_last_read:' + box.email}, ${String(Date.now())}, now())
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+      `.catch(() => {})
+
       const tousMessageIds = [...envs.values()].map(v => 'imap:' + v.messageId)
       const tousFroms = [...new Set([...envs.values()].map(v => v.from).filter(Boolean))]
+      /**
+       * Messages déjà EXAMINÉS et écartés définitivement (doublon de contenu, warmup anglais).
+       * Ils ne sont pas des réponses, ils n'ont donc rien à faire dans incoming_replies — mais sans
+       * trace, on les rouvrait indéfiniment.
+       */
+      await sql`
+        CREATE TABLE IF NOT EXISTS imap_messages_ecartes (
+          message_id TEXT PRIMARY KEY,
+          motif      TEXT NOT NULL,
+          boite      TEXT,
+          vu_le      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `.catch(() => {})
+      const dejaEcartes = new Set(
+        ((await sql`SELECT message_id AS id FROM imap_messages_ecartes WHERE message_id = ANY(${tousMessageIds})`.catch(() => [])) as Array<{ id: string }>)
+          .map(r => r.id)
+      )
+      /**
+       * ⚠️ UNE REQUÊTE POUR TOUS LES SUJETS, PAS UNE PAR MESSAGE.
+       *
+       * Quand l'expéditeur est inconnu, on cherche si le SUJET correspond à un mail qu'on a
+       * réellement envoyé — c'est ce qui rattrape un prospect qui répond depuis une autre adresse.
+       * Cette recherche se faisait message par message, à l'intérieur de la boucle : une centaine
+       * d'expéditeurs inconnus (le warmup en produit beaucoup) valaient une centaine d'aller-retours
+       * en base, soit plusieurs secondes. C'est ce qui épuisait le budget du relevé et laissait trois
+       * boîtes fermées, alors que les autres vérifications étaient déjà, elles, préchargées en bloc.
+       */
+      const sujetsBase = [...new Set([...envs.values()]
+        .map(v => v.subject.replace(/^s*(re|ré|fwd|fw|tr|rép)s*:s*/gi, '').replace(/^s*(re|ré|fwd|fw|tr|rép)s*:s*/gi, '').trim().toLowerCase())
+        .filter(t => t.length > 8))]
+      const contactParSujet = new Map<string, string>()
+      if (sujetsBase.length > 0) {
+        const lignes = (await sql`
+          SELECT DISTINCT ON (LOWER(subject)) LOWER(subject) AS sujet, contact_id
+          FROM email_queue
+          WHERE LOWER(subject) = ANY(${sujetsBase}) AND status = 'sent' AND contact_id IS NOT NULL
+          ORDER BY LOWER(subject), sent_at DESC
+        `.catch(() => [])) as Array<{ sujet: string; contact_id: string }>
+        for (const l of lignes) contactParSujet.set(l.sujet, l.contact_id)
+      }
+
       const dejaTraites = new Set(
         ((await sql`SELECT instantly_reply_id AS id FROM incoming_replies WHERE instantly_reply_id = ANY(${tousMessageIds})`) as Array<{ id: string }>)
           .map(r => r.id)
@@ -351,10 +447,7 @@ async function processBox(box: { email: string; password: string }, started: num
         let contactHint: string | undefined
         if (!known) {
           const baseSubject = subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim()
-          if (baseSubject.length > 8) {
-            const m = (await sql`SELECT contact_id FROM email_queue WHERE LOWER(subject) = LOWER(${baseSubject}) AND status = 'sent' AND contact_id IS NOT NULL ORDER BY sent_at DESC LIMIT 1`) as Array<{ contact_id: string }>
-            if (m[0]?.contact_id) contactHint = m[0].contact_id
-          }
+          if (baseSubject.length > 8) contactHint = contactParSujet.get(baseSubject.toLowerCase())
           if (!contactHint) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
         }
 
@@ -364,6 +457,13 @@ async function processBox(box: { email: string; password: string }, started: num
 
         try {
           const outcome = await processReply({ from, subject, body, messageId, boxEmail: box.email, results, contactHint })
+          if (outcome?.ecarte) {
+            await sql`
+              INSERT INTO imap_messages_ecartes (message_id, motif, boite)
+              VALUES (${'imap:' + messageId}, ${outcome.ecarte}, ${box.email})
+              ON CONFLICT (message_id) DO NOTHING
+            `.catch(() => {})
+          }
           if (outcome?.processed) {
             stats.replies++
             if (outcome.classification && outcome.classification !== 'oof') {
@@ -390,7 +490,7 @@ async function processBox(box: { email: string; password: string }, started: num
 // ── Pipeline de traitement d'une nouvelle réponse (classification → action) ──
 async function processReply(params: {
   from: string; subject: string; body: string; messageId: string; boxEmail: string; results: string[]; contactHint?: string
-}): Promise<{ processed: boolean; classification?: string } | null> {
+}): Promise<{ processed: boolean; classification?: string; ecarte?: string } | null> {
   const { from, subject, body, messageId, results, contactHint } = params
   const { classifyReply, stripQuotedReply } = await import('@/lib/reply-agent/classifier')
   const { generateReplyResponse } = await import('@/lib/reply-agent/generator')
@@ -435,14 +535,23 @@ async function processReply(params: {
       return normalizeBody(stripQuotedReply(dec) || dec) === norm
     })) {
       results.push(`doublon contenu ignoré : ${from}`)
-      return null
+      /**
+       * ⚠️ ON MÉMORISE L'ÉCART, sinon on le repaie à chaque passage.
+       *
+       * Ce message n'était noté nulle part : ni traité, ni écarté. Résultat, le passage suivant
+       * re-téléchargeait son corps pour reprendre exactement la même décision — environ 1,5 s
+       * gaspillée par message, à chaque passage, pour toujours. Sur quatre messages, c'est le
+       * budget entier du relevé qui partait là-dedans, et les trois autres boîtes restaient fermées.
+       */
+      return { processed: false, ecarte: 'doublon_contenu' }
     }
   }
 
   // Filtre warmup anglais (ne jamais jeter un vrai prospect FR).
   if (!isLikelyFrench(cleanBody)) {
     results.push(`warmup ignoré (anglais) : ${from}`)
-    return null
+    // Même raison que ci-dessus : la décision est définitive, elle ne doit être prise qu'une fois.
+    return { processed: false, ecarte: 'warmup_anglais' }
   }
 
   // Dernier email envoyé (contexte pour la classification).
