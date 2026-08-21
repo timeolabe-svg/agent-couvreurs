@@ -144,6 +144,31 @@ export async function GET(req: NextRequest) {
     FROM a_verifier
   `) as Array<Record<string, number>>
 
+  /**
+   * ⚠️ POURQUOI SONT-ILS INVISIBLES ? La réponse décide de tout.
+   *
+   * S'ils sont sous le seuil client (< 20 avis), le stock est réellement à sec et il faut racheter
+   * des leads. S'ils sont bloqués par autre chose — pas d'email, secteur en pause, blocklist — c'est
+   * récupérable sans dépenser un centime. Annoncer « il faut racheter » sans avoir fait ce partage,
+   * c'est faire payer un fichier pour un problème de tuyauterie.
+   */
+  const raisons = (await sql`
+    SELECT
+      COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE email IS NULL OR email = '')::int                     AS sans_email,
+      COUNT(*) FILTER (WHERE COALESCE(google_reviews_count, 0) < 20)::int          AS sous_le_seuil_20_avis,
+      COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(contacts.email)))::int AS blocklistes,
+      COUNT(*) FILTER (WHERE audit_done IS NOT TRUE)::int                          AS site_jamais_audite,
+      COUNT(*) FILTER (WHERE email IS NOT NULL AND email <> ''
+                         AND COALESCE(google_reviews_count, 0) >= 20
+                         AND audit_done IS TRUE)::int                              AS RECUPERABLES
+    FROM contacts
+    WHERE email_validated IS NOT TRUE
+      AND mv_status IS NULL
+      AND NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = contacts.id AND q.sequence_step = 0 AND q.status = 'sent')
+      AND NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = contacts.id AND q.status IN ('pending','queued'))
+  `) as Array<Record<string, number>>
+
   // Rythme d'envoi réel : personnes démarchées par jour sur 7 jours.
   const [rythme] = (await sql`
     SELECT COALESCE(ROUND(COUNT(DISTINCT contact_id)::numeric / 7), 0)::int AS par_jour
@@ -166,6 +191,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     couverture_validation: couverture,
+    pourquoi_invisibles: raisons[0],
     contacts_dans_les_limbes: limbes[0],
     etats_des_contacts: etatsGlobaux,
     adresses_en_double: { groupes: doublons.length, detail: doublons },
