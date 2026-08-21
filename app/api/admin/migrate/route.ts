@@ -236,6 +236,55 @@ export async function GET(request: NextRequest) {
       run: () => db.execute(sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS redirige_vers TEXT`),
     },
     {
+      /**
+       * PLAN DE COUVERTURE NATIONALE — quelle commune reste à ratisser, pour quel métier.
+       *
+       * ⚠️ Sans mémoire écrite, un achat automatique repasse sur les mêmes villes et RE-PAIE des
+       * fiches qu'on possède déjà : l'import les jette en doublon, l'argent est parti quand même.
+       * La table dit, pour chaque couple (métier, commune), s'il est fait, ce qu'il a rapporté et
+       * ce qu'il a coûté — c'est elle qui garantit qu'on avance au lieu de tourner en rond.
+       *
+       * On stocke la population : elle sert à trier (les zones denses d'abord) et à savoir quand
+       * s'arrêter. Un village de 300 habitants est de toute façon couvert par la recherche sur la
+       * ville voisine — y aller quand même, c'est payer deux fois les mêmes entreprises.
+       */
+      nom: 'villes_scraping : plan de couverture national',
+      run: () => db.execute(sql`
+        CREATE TABLE IF NOT EXISTS villes_scraping (
+          code_insee   TEXT PRIMARY KEY,
+          nom          TEXT NOT NULL,
+          departement  TEXT,
+          population   INTEGER,
+          creee_le     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `),
+    },
+    {
+      nom: 'villes_scraping : index population',
+      run: () => db.execute(sql`CREATE INDEX IF NOT EXISTS villes_scraping_pop_idx ON villes_scraping(population DESC)`),
+    },
+    {
+      /**
+       * ⚠️ COLONNES AJOUTÉES À LA COUVERTURE EXISTANTE plutôt qu'une table neuve : 463 couples
+       * (métier, ville) y sont déjà enregistrés depuis les achats manuels. Repartir de zéro
+       * ferait racheter tout ce qui a déjà été payé.
+       *
+       * `statut` distingue « fait » (rapporté des fiches) de « epuise » (0 fiche : la ville n'a
+       * plus rien à donner pour ce métier) — un couple épuisé ne se retente pas avant longtemps.
+       * `cout_usd` permet de dire ce que l'automatisation a réellement dépensé, sans l'estimer.
+       */
+      nom: 'scrape_couverture : statut, cout et trace de la commande',
+      run: () => db.execute(sql`
+        ALTER TABLE scrape_couverture
+          ADD COLUMN IF NOT EXISTS statut        TEXT NOT NULL DEFAULT 'fait',
+          ADD COLUMN IF NOT EXISTS code_insee    TEXT,
+          ADD COLUMN IF NOT EXISTS cout_usd      NUMERIC(10,4),
+          ADD COLUMN IF NOT EXISTS commande_id   TEXT,
+          ADD COLUMN IF NOT EXISTS nouveaux      INTEGER,
+          ADD COLUMN IF NOT EXISTS doublons      INTEGER
+      `),
+    },
+    {
       nom: 'outscraper_leads: category + sector',
       run: () => db.execute(sql`
         ALTER TABLE outscraper_leads
