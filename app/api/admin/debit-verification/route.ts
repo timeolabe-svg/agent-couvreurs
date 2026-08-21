@@ -173,6 +173,17 @@ export async function GET(req: NextRequest) {
     GROUP BY 1 ORDER BY 2 DESC
   `) as Array<{ status: string; contacts: number }>
 
+  const partage = (await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE COALESCE(mv_attempts,0) = 0)::int AS jamais_verifies_donc_recuperables,
+      COUNT(*) FILTER (WHERE COALESCE(mv_attempts,0) > 0)::int AS verdict_rendu_donc_annules_a_raison
+    FROM contacts
+    WHERE email_validated IS NOT TRUE AND mv_status IS NULL
+      AND COALESCE(google_reviews_count,0) >= 20 AND email IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM email_queue s WHERE s.contact_id = contacts.id AND s.sequence_step = 0 AND s.status = 'sent')
+      AND NOT EXISTS (SELECT 1 FROM email_queue a WHERE a.contact_id = contacts.id AND a.status IN ('pending','queued'))
+  `) as Array<Record<string, number>>
+
   const raisons = (await sql`
     SELECT
       COUNT(*)::int AS total,
@@ -214,6 +225,7 @@ export async function GET(req: NextRequest) {
     couverture_validation: couverture,
     pourquoi_invisibles: raisons[0],
     statuts_de_file_des_bloques: statutsDeFile,
+    partage_recuperables: partage[0],
     contacts_dans_les_limbes: limbes[0],
     etats_des_contacts: etatsGlobaux,
     adresses_en_double: { groupes: doublons.length, detail: doublons },
