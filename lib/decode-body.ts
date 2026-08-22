@@ -76,3 +76,69 @@ export function decodeQuotedPrintable(text: string): string {
 export function cleanIncomingBody(text: string): string {
   return decodeQuotedPrintable(recoverBase64(text))
 }
+
+
+/**
+ * Extrait le texte lisible d'un message brut (MIME multipart, base64, quoted-printable, HTML).
+ *
+ * ⚠️ Vivait dans la route du relevé IMAP. Déplacé ici le 21/08 pour que le BALAYAGE DE RATTRAPAGE
+ * puisse lire les messages exactement comme le relevé les lit : deux décodages différents pour le
+ * même message, c'est la garantie que l'un des deux verra un lead là où l'autre ne verra rien.
+ */
+export function extractPlainText(raw: string): string {
+  if (!raw) return ''
+  function decodePart(content: string, encoding: string): string {
+    const enc = encoding.toLowerCase().trim()
+    if (enc === 'base64') {
+      try { return Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8') } catch { return content }
+    }
+    if (enc === 'quoted-printable') {
+      return decodeQuotedPrintable(content) // décodage correct multi-octets UTF-8
+    }
+    return content
+  }
+  function stripHtml(html: string): string {
+    return html
+      .replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
+      .replace(/\s+/g, ' ').trim()
+  }
+  const headerEnd = raw.search(/\r?\n\r?\n/)
+  const headerZone = headerEnd > 0 ? raw.slice(0, headerEnd) : raw.slice(0, 4000)
+  const isMultipart = /Content-Type:\s*multipart\//i.test(headerZone)
+  const bMatch = isMultipart ? headerZone.match(/boundary="?([^"\r\n;]+)"?/i) : null
+  if (bMatch) {
+    const boundary = bMatch[1].trim()
+    const parts = raw.split(new RegExp('--' + boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:--)?'))
+    let textPlain: string | null = null, textHtml: string | null = null
+    for (const part of parts) {
+      if (!part.trim() || part.trim() === '--') continue
+      const sepIdx = part.search(/\r?\n\r?\n/)
+      if (sepIdx === -1) continue
+      const partHeaders = part.slice(0, sepIdx)
+      const partBody = part.slice(sepIdx).replace(/^\r?\n/, '')
+      const ctMatch = partHeaders.match(/Content-Type:\s*([^\s;]+)/i)
+      const cteMatch = partHeaders.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
+      const ct = ctMatch ? ctMatch[1].toLowerCase() : ''
+      const cte = cteMatch ? cteMatch[1] : '7bit'
+      if (ct === 'text/plain' && textPlain === null) textPlain = decodePart(partBody, cte)
+      else if (ct === 'text/html' && textHtml === null) textHtml = decodePart(partBody, cte)
+    }
+    if (textPlain) return textPlain.trim()
+    if (textHtml) return stripHtml(textHtml)
+  }
+  const sepIdx = raw.search(/\r?\n\r?\n/)
+  if (sepIdx !== -1) {
+    const headers = raw.slice(0, sepIdx)
+    const bodyRaw = raw.slice(sepIdx).replace(/^\r?\n/, '')
+    const cteMatch = headers.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
+    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i)
+    const cte = cteMatch ? cteMatch[1] : '7bit'
+    const ct = ctMatch ? ctMatch[1].toLowerCase() : 'text/plain'
+    const decoded = decodePart(bodyRaw, cte)
+    if (ct === 'text/html') return stripHtml(decoded)
+    return decoded.replace(/\s+/g, ' ').trim()
+  }
+  return stripHtml(raw)
+}

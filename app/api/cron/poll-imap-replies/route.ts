@@ -15,6 +15,7 @@ import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
 import { isExplicitOptOut, isRgpdRequestOrComplaint, isPressionSignalee, isNegociationCommerciale } from '@/lib/rgpd'
 import { getGmailBoxes, sendFromBox } from '@/lib/gmail-sender'
+import { extractPlainText } from '@/lib/decode-body'
 import { sendReplyEmail } from '@/lib/reply-agent/send-reply'
 import { isFakeEmail } from '@/lib/fake-email'
 import { toParisWallClock } from '@/lib/availability'
@@ -107,6 +108,30 @@ export async function POST(req: NextRequest) {
 
   const boxes = getGmailBoxes()
   if (boxes.length === 0) return NextResponse.json({ ok: false, results: ['aucune boîte Gmail (IMAP_ACCOUNTS)'] })
+
+  /**
+   * ⚠️ UN SEUL RELEVÉ À LA FOIS — indispensable avant d'accélérer la cadence.
+   *
+   * La dédup par Message-ID est PRÉCHARGÉE avant la boucle : deux passages simultanés lisent donc
+   * la même liste de « déjà traités » et peuvent tous les deux conclure qu'un message est neuf. Le
+   * prospect recevrait deux réponses identiques. C'est précisément l'accident que Timéo a déjà payé
+   * (« t'as spam avec le même message ») et il coûte un rendez-vous.
+   *
+   * Le verrou est atomique : la mise à jour ne réussit que si le verrou précédent est expiré, et
+   * c'est la base qui tranche, pas le code. TTL de 45 s — au-delà, un passage mort ne bloque pas
+   * éternellement les suivants.
+   */
+  const { sql: sqlLock } = await import('@/lib/db')
+  const VERROU_TTL_MS = 45_000
+  const verrou = (await sqlLock`
+    INSERT INTO agent_config (key, value, updated_at) VALUES ('imap_verrou', ${String(Date.now())}, now())
+    ON CONFLICT (key) DO UPDATE SET value = ${String(Date.now())}, updated_at = now()
+    WHERE COALESCE(NULLIF(agent_config.value, ''), '0')::bigint < ${Date.now() - VERROU_TTL_MS}
+    RETURNING value
+  `.catch(() => [] as unknown[])) as unknown[]
+  if (verrou.length === 0) {
+    return NextResponse.json({ ok: true, ignore: 'un relevé est déjà en cours (verrou)', results: [] })
+  }
 
   const mode = new URL(req.url).searchParams.get('mode')
   if (mode === 'ping') return NextResponse.json({ ok: true, ping: true, boxes: boxes.map(b => b.email) })
@@ -1230,63 +1255,7 @@ function isBounceMessage(from: string, subject: string): boolean {
 }
 
 // ─── Extraction texte lisible d'un message RFC 2822 (ReDoS-safe) ───
-function extractPlainText(raw: string): string {
-  if (!raw) return ''
-  function decodePart(content: string, encoding: string): string {
-    const enc = encoding.toLowerCase().trim()
-    if (enc === 'base64') {
-      try { return Buffer.from(content.replace(/\s+/g, ''), 'base64').toString('utf-8') } catch { return content }
-    }
-    if (enc === 'quoted-printable') {
-      return decodeQuotedPrintable(content) // décodage correct multi-octets UTF-8
-    }
-    return content
-  }
-  function stripHtml(html: string): string {
-    return html
-      .replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&')
-      .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"')
-      .replace(/\s+/g, ' ').trim()
-  }
-  const headerEnd = raw.search(/\r?\n\r?\n/)
-  const headerZone = headerEnd > 0 ? raw.slice(0, headerEnd) : raw.slice(0, 4000)
-  const isMultipart = /Content-Type:\s*multipart\//i.test(headerZone)
-  const bMatch = isMultipart ? headerZone.match(/boundary="?([^"\r\n;]+)"?/i) : null
-  if (bMatch) {
-    const boundary = bMatch[1].trim()
-    const parts = raw.split(new RegExp('--' + boundary.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:--)?'))
-    let textPlain: string | null = null, textHtml: string | null = null
-    for (const part of parts) {
-      if (!part.trim() || part.trim() === '--') continue
-      const sepIdx = part.search(/\r?\n\r?\n/)
-      if (sepIdx === -1) continue
-      const partHeaders = part.slice(0, sepIdx)
-      const partBody = part.slice(sepIdx).replace(/^\r?\n/, '')
-      const ctMatch = partHeaders.match(/Content-Type:\s*([^\s;]+)/i)
-      const cteMatch = partHeaders.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
-      const ct = ctMatch ? ctMatch[1].toLowerCase() : ''
-      const cte = cteMatch ? cteMatch[1] : '7bit'
-      if (ct === 'text/plain' && textPlain === null) textPlain = decodePart(partBody, cte)
-      else if (ct === 'text/html' && textHtml === null) textHtml = decodePart(partBody, cte)
-    }
-    if (textPlain) return textPlain.trim()
-    if (textHtml) return stripHtml(textHtml)
-  }
-  const sepIdx = raw.search(/\r?\n\r?\n/)
-  if (sepIdx !== -1) {
-    const headers = raw.slice(0, sepIdx)
-    const bodyRaw = raw.slice(sepIdx).replace(/^\r?\n/, '')
-    const cteMatch = headers.match(/Content-Transfer-Encoding:\s*([^\s\r\n]+)/i)
-    const ctMatch = headers.match(/Content-Type:\s*([^\s;]+)/i)
-    const cte = cteMatch ? cteMatch[1] : '7bit'
-    const ct = ctMatch ? ctMatch[1].toLowerCase() : 'text/plain'
-    const decoded = decodePart(bodyRaw, cte)
-    if (ct === 'text/html') return stripHtml(decoded)
-    return decoded.replace(/\s+/g, ' ').trim()
-  }
-  return stripHtml(raw)
-}
+
 
 function extractOriginalRecipient(body: string): string | null {
   const match = body.match(/Final-Recipient:\s*rfc822;\s*([^\s\r\n]+)/i)

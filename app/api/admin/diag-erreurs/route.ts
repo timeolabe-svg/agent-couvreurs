@@ -148,5 +148,32 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 8. Une opposition jamais ingeree a-t-elle ete respectee ? ──
+  if (seul === '8') {
+    const mail = req.nextUrl.searchParams.get('email') ?? ''
+    out.contact = await sql`SELECT id, company, email, google_reviews_count FROM contacts WHERE LOWER(email) = LOWER(${mail})`
+    out.blocklist = await sql`SELECT email, domain, reason, created_at FROM blocklist WHERE LOWER(email) = LOWER(${mail})`
+    out.envois = await sql`
+      SELECT q.status, q.sequence_step, q.sent_at, q.scheduled_at
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE LOWER(c.email) = LOWER(${mail}) ORDER BY COALESCE(q.sent_at, q.scheduled_at) DESC LIMIT 12
+    `
+  }
+
+  // ── 9. Nettoyage des lignes versees a tort par le balayage ──
+  if (seul === '9') {
+    out.avant = await sql`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE action_taken = 'balayage_rattrapage'`
+    if (req.nextUrl.searchParams.get('supprimer') === '1') {
+      /**
+       * ⚠️ On ne supprime QUE ce que le balayage a inseré lui-même (action_taken), jamais une
+       * réponse arrivée par le relevé normal. La colonne sert de laisse : sans elle on ne saurait
+       * pas distinguer ce qu'on a versé par erreur de ce que le prospect a vraiment envoyé.
+       */
+      out.supprimees = await sql`
+        DELETE FROM incoming_replies WHERE action_taken = 'balayage_rattrapage' RETURNING from_email
+      `
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
