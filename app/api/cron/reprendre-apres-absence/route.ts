@@ -17,9 +17,24 @@ export const maxDuration = 60
  * à rien et personne ne revenait vers lui. Six personnes étaient dans ce cas au 19/08, dont deux
  * depuis juillet.
  *
- * ⚠️ ET SURTOUT : ON NE RELANCE PAS TOUT SEUL ICI. On prépare un brouillon dans « À valider ».
- * La règle de Timéo est constante — ce qui part chez un prospect qui a déjà répondu passe par lui.
- * Le cron garantit qu'on n'oublie personne ; l'humain garde la main sur ce qui est écrit.
+ * ⚠️ CE MESSAGE-LÀ PART TOUT SEUL — décision de Timéo le 22/08 : « pour ce type de message t'as
+ * pas besoin de ma validation ».
+ *
+ * La règle générale reste entière : ce qui part chez un prospect qui a déjà répondu passe par
+ * l'humain. Mais elle existe pour une raison précise — empêcher qu'une phrase INVENTÉE par l'IA
+ * arrive chez un prospect. Ici il n'y a rien d'inventé : le corps est figé mot pour mot dans ce
+ * fichier, il ne dépend ni du message reçu ni d'un modèle. Faire valider un texte que personne ne
+ * peut changer, c'est de la friction sans contrepartie, et pendant ce temps le prospect attend.
+ *
+ * ⚠️ CE QUI DÉLIMITE L'EXCEPTION, et qu'il ne faut pas élargir sans y penser :
+ *   - le texte est CONSTANT (aucune génération, aucune interpolation du message reçu) ;
+ *   - le destinataire a lui-même annoncé sa date de retour, donc il attend d'être recontacté ;
+ *   - les garde-fous en amont restent tous actifs : blocklist, rendez-vous déjà pris, un seul
+ *     brouillon par absence.
+ * Dès qu'un de ces trois points tombe, on revient au brouillon à valider.
+ *
+ * ⚠️ ET SI L'ENVOI ÉCHOUE, le brouillon RESTE en « À valider » plutôt que d'être perdu : un message
+ * qu'on croit parti et qui n'est jamais arrivé est pire qu'un message en attente.
  */
 async function handler(req: NextRequest) {
   const auth = checkCronAuth(req)
@@ -52,8 +67,40 @@ async function handler(req: NextRequest) {
     LIMIT 20
   `) as Array<{ id: string; email: string; company: string | null; absent_jusqu_au: string; derniere_reponse_id: string | null }>
 
-  const prepares: string[] = []
+  const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
+
+  const envoyes: string[] = []
+  const enAttente: string[] = []
   const sansAncrage: string[] = []
+
+  /**
+   * D'abord, les reprises DÉJÀ préparées qui dorment dans « À valider ». Elles ont été créées quand
+   * ce cron demandait encore une validation ; les laisser là serait faire attendre des prospects
+   * pour une règle qui n'existe plus.
+   */
+  const enSouffrance = (await sql`
+    SELECT rd.id, rd.body, rd.incoming_reply_id, c.email, c.company
+    FROM reply_drafts rd
+    JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+    JOIN contacts c ON c.id = ir.contact_id
+    WHERE rd.status = 'pending'
+      AND rd.body LIKE '%Vous m''aviez indiqué être fermé%'
+      AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+    LIMIT 10
+  `) as Array<{ id: string; body: string; incoming_reply_id: string; email: string; company: string | null }>
+
+  for (const d of enSouffrance) {
+    const r = await sendReplyEmail(d.incoming_reply_id, d.body).catch(e => ({ ok: false, error: String(e) }))
+    if (r.ok) {
+      await sql`UPDATE reply_drafts SET status = 'sent', sent_at = NOW() WHERE id = ${d.id}::uuid`
+      await sql`UPDATE incoming_replies SET action_taken = 'replied' WHERE id = ${d.incoming_reply_id}::uuid`
+      envoyes.push(`${d.company ?? d.email} (reprise en attente depuis un ancien passage)`)
+    } else {
+      enAttente.push(`${d.company ?? d.email} : envoi refusé, reste à valider`)
+    }
+  }
+
+  const prepares: string[] = []
 
   for (const c of dus) {
     // Un brouillon doit se rattacher à une réponse reçue : c'est ce lien qui le fait apparaître
@@ -70,21 +117,37 @@ async function handler(req: NextRequest) {
       'Auriez-vous quelques minutes cette semaine ?',
     ].join('\n')
 
-    await sql`
+    /**
+     * On crée quand même la ligne de brouillon : c'est elle qui trace le message dans le fil de la
+     * conversation ET qui empêche le passage suivant d'en empiler un second. Elle naît « pending »
+     * puis passe à « sent » — jamais l'inverse, pour qu'un échec laisse une trace visible.
+     */
+    const [brouillon] = (await sql`
       INSERT INTO reply_drafts (incoming_reply_id, body, status, created_at)
       VALUES (${c.derniere_reponse_id}::uuid, ${corps}, 'pending', NOW())
-    `
-    prepares.push(`${c.company ?? c.email} (retour annoncé le ${String(c.absent_jusqu_au).slice(0, 10)})`)
+      RETURNING id
+    `) as Array<{ id: string }>
+
+    const r = await sendReplyEmail(c.derniere_reponse_id, corps).catch(e => ({ ok: false, error: String(e) }))
+    if (r.ok) {
+      await sql`UPDATE reply_drafts SET status = 'sent', sent_at = NOW() WHERE id = ${brouillon.id}::uuid`
+      await sql`UPDATE incoming_replies SET action_taken = 'replied' WHERE id = ${c.derniere_reponse_id}::uuid`
+      envoyes.push(`${c.company ?? c.email} (retour annoncé le ${String(c.absent_jusqu_au).slice(0, 10)})`)
+    } else {
+      enAttente.push(`${c.company ?? c.email} : envoi refusé, reste à valider`)
+    }
+    prepares.push(c.email)
   }
 
-  await pingHeartbeat('reprendre-apres-absence', true, `prepares=${prepares.length}`, 1440)
+  await pingHeartbeat('reprendre-apres-absence', true, `envoyes=${envoyes.length} en_attente=${enAttente.length}`, 1440)
 
   return NextResponse.json({
     ok: true,
-    brouillons_prepares: prepares.length,
-    detail: prepares,
+    envoyes_automatiquement: envoyes.length,
+    detail: envoyes,
+    restes_a_valider: enAttente,
     sans_reponse_a_rattacher: sansAncrage,
-    lecture: 'Ces brouillons attendent une validation dans « À valider ». Rien n\'est envoyé automatiquement.',
+    lecture: 'Le texte de reprise est figé dans le code, il ne peut rien contenir d\'inventé : il part donc sans validation. Un envoi refusé laisse le brouillon dans « À valider » plutôt que de le perdre.',
   })
 }
 

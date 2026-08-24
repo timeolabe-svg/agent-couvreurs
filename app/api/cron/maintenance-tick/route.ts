@@ -60,6 +60,17 @@ const TRAVAUX: Travail[] = [
     pourquoi: 'achète le prochain lot de villes, ou récolte le job en cours',
   },
   {
+    /**
+     * ⚠️ N'ÉTAIT DÉCLENCHÉ PAR RIEN (constaté le 22/08 en lisant la liste réelle de l'ordonnanceur).
+     * Le cron existait, il fonctionnait, et aucune tâche ne l'appelait — donc les prospects qui
+     * avaient eux-mêmes donné leur date de retour n'étaient jamais recontactés. C'est le lead le
+     * plus facile du fichier, et c'était celui qu'on laissait tomber.
+     */
+    cron: 'reprendre-apres-absence',
+    toutesLesHeures: 24,
+    pourquoi: 'recontacte les prospects à la date de retour qu\'ils ont annoncée',
+  },
+  {
     cron: 'watchlist-recheck',
     toutesLesHeures: 24,
     pourquoi: 'repêche les prospects qui viennent de franchir les 20 avis Google',

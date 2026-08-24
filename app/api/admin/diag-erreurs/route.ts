@@ -175,5 +175,34 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── 10. Que contiennent vraiment les brouillons en attente ? ──
+  if (seul === '10') {
+    out.brouillons_pending = await sql`
+      SELECT rd.id, rd.status, rd.created_at, c.company, c.email,
+             LEFT(rd.body, 90) AS debut,
+             (rd.body LIKE '%aviez indiqué être fermé%') AS matche_reprise,
+             EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email)) AS blockliste
+      FROM reply_drafts rd
+      LEFT JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      LEFT JOIN contacts c ON c.id = ir.contact_id
+      WHERE rd.status = 'pending'
+      ORDER BY rd.created_at DESC LIMIT 10
+    `
+  }
+
+  // ── 11. Les absences enregistrees et leur date de retour ──
+  if (seul === '11') {
+    out.absences = await sql`
+      SELECT c.company, c.email, c.absent_jusqu_au, c.absence_vue_le,
+             (c.absent_jusqu_au <= CURRENT_DATE) AS retour_passe,
+             EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status IN ('confirmed','signed')) AS a_rdv,
+             EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email)) AS blockliste,
+             EXISTS (SELECT 1 FROM reply_drafts rd JOIN incoming_replies ir2 ON ir2.id = rd.incoming_reply_id
+                     WHERE ir2.contact_id = c.id AND rd.created_at > c.absence_vue_le) AS deja_relance
+      FROM contacts c WHERE c.absent_jusqu_au IS NOT NULL
+      ORDER BY c.absent_jusqu_au ASC LIMIT 30
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
