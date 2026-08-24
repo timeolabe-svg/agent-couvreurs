@@ -51,6 +51,33 @@ export async function GET(req: NextRequest) {
 
   const { sql } = await import('@/lib/db')
 
+  /**
+   * ⚠️ LA MÊME VILLE ENREGISTRÉE SOUS DEUX NOMS DE MÉTIER — défaut trouvé le 24/08.
+   *
+   * La couverture est écrite à partir de la colonne « query » du fichier Outscraper, donc dans la
+   * langue de ce qui a été tapé. Les vrais achats de Timéo sont enregistrés en FRANÇAIS
+   * (« terrassier, Paris »), alors que le planificateur compare au libellé GOOGLE
+   * (« Excavating contractor »). Résultat : dix villes réellement payées — Paris, Lyon, Toulouse,
+   * Marseille, Bordeaux… — étaient invisibles, et le plan les proposait de nouveau à l'achat.
+   *
+   * C'est la panne la plus chère possible pour une mémoire anti-rachat : elle ne dit pas « je ne
+   * sais pas », elle dit « jamais fait » avec assurance.
+   *
+   * On compare donc sur les DEUX libellés. Ce n'est pas cosmétique : sans ça, chaque lot repayait
+   * les plus grosses villes du pays.
+   */
+  const ALIAS_METIER: Record<string, string[]> = {
+    'Roofing contractor': ['roofing contractor', 'couvreur'],
+    'Excavating contractor': ['excavating contractor', 'terrassier'],
+    'Swimming pool contractor': ['swimming pool contractor', 'pisciniste'],
+    'Masonry contractor': ['masonry contractor', 'maçon', 'macon'],
+    'Carpenter': ['carpenter', 'menuisier'],
+    'Plumber': ['plumber', 'plombier'],
+    'Electrician': ['electrician', 'électricien', 'electricien'],
+    'Painter': ['painter', 'peintre'],
+  }
+  const aliasDe = (categorieGoogle: string) => ALIAS_METIER[categorieGoogle] ?? [categorieGoogle.toLowerCase()]
+
   // ── Chargement initial des communes (gratuit, source officielle) ─────────────
   if (req.nextUrl.searchParams.get('charger') === '1') {
     const res = await fetch(
@@ -124,7 +151,7 @@ export async function GET(req: NextRequest) {
       WHERE v.departement IS NOT NULL AND v.departement < '96'
         AND NOT EXISTS (
           SELECT 1 FROM scrape_couverture sc
-          WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = LOWER(${cible.categorie_google})
+          WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(cible.categorie_google)})
         )
       ORDER BY LOWER(v.nom), v.population DESC NULLS LAST
     `) as Array<{ code_insee: string; nom: string; departement: string; population: number }>
@@ -133,9 +160,9 @@ export async function GET(req: NextRequest) {
 
     // Ce qui a DÉJÀ été acheté pour ce métier, du plus récent au plus ancien.
     const dejaFaites = (await sql`
-      SELECT ville, fiches, importe_le FROM scrape_couverture
-      WHERE LOWER(categorie) = LOWER(${cible.categorie_google})
-      ORDER BY importe_le DESC LIMIT 15
+      SELECT ville, fiches, categorie, importe_le FROM scrape_couverture
+      WHERE LOWER(categorie) = ANY(${aliasDe(cible.categorie_google)})
+      ORDER BY fiches DESC LIMIT 15
     `) as Array<{ ville: string; fiches: number; importe_le: string }>
 
     return NextResponse.json({
@@ -162,7 +189,7 @@ export async function GET(req: NextRequest) {
         COALESCE(SUM(fiches), 0)::int AS fiches_obtenues,
         COALESCE(SUM(cout_usd), 0)::numeric AS cout_total
       FROM scrape_couverture
-      WHERE LOWER(categorie) = LOWER(${m.categorie_google})
+      WHERE LOWER(categorie) = ANY(${aliasDe(m.categorie_google)})
     `) as Array<Record<string, number>>
     const faites = Number(r?.villes_faites ?? 0)
     return {

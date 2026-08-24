@@ -346,5 +346,37 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 18. La couverture enregistree correspond-elle a des villes VRAIMENT cherchees ? ──
+  if (seul === '18') {
+    out.distribution = await sql`
+      SELECT categorie,
+             COUNT(*)::int AS villes,
+             COUNT(*) FILTER (WHERE fiches = 1)::int AS avec_1_fiche,
+             COUNT(*) FILTER (WHERE fiches BETWEEN 2 AND 5)::int AS avec_2_a_5,
+             COUNT(*) FILTER (WHERE fiches BETWEEN 6 AND 20)::int AS avec_6_a_20,
+             COUNT(*) FILTER (WHERE fiches > 20)::int AS avec_plus_de_20,
+             SUM(fiches)::int AS fiches_total
+      FROM scrape_couverture GROUP BY categorie ORDER BY villes DESC
+    `
+    out.les_plus_fournies = await sql`
+      SELECT categorie, ville, fiches, importe_le FROM scrape_couverture
+      ORDER BY fiches DESC LIMIT 20
+    `
+    out.les_plus_maigres = await sql`
+      SELECT categorie, ville, fiches FROM scrape_couverture
+      WHERE fiches <= 2 ORDER BY categorie, ville LIMIT 25
+    `
+  }
+
+  // ── 19. Les vraies villes cherchees sont-elles vues par le planificateur ? ──
+  if (seul === '19') {
+    out.villes_reelles_terrassier = await sql`
+      SELECT ville, fiches FROM scrape_couverture WHERE categorie = 'terrassier' ORDER BY fiches DESC
+    `
+    out.villes_reelles_pisciniste = await sql`
+      SELECT ville, fiches FROM scrape_couverture WHERE categorie = 'pisciniste' ORDER BY fiches DESC
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
