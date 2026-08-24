@@ -124,9 +124,24 @@ export function stripQuotedReply(raw: string): string {
   return text.replace(/\n{3,}/g, '\n\n').trim()
 }
 
+/**
+ * Détecte un message de CHANGEMENT D'ADRESSE (« merci de prendre en compte notre nouvelle
+ * adresse »). Ce n'est pas un lead : il faut repointer le contact et archiver en silence.
+ *
+ * ⚠️ POURQUOI CETTE FONCTION EST ICI ET PAS RECOPIÉE. La règle existait, écrite en regex à
+ * l'intérieur d'un seul endpoint. Les autres chemins l'ignoraient : le balayage « zéro lead perdu »
+ * a donc signalé deux changements d'adresse comme « prospects sans réponse depuis 8 jours », et je
+ * les ai rapportés comme tels à Timéo. Une règle recopiée dans un fichier n'est pas une règle du
+ * système, c'est une règle de ce fichier.
+ */
+export function estChangementAdresse(body: string, subject = ''): boolean {
+  const texte = `${subject} ${body}`.toLowerCase()
+  return /(chang\w*\s+d['’]?\s*adresse|nouvelle\s+adresse|nouveau\s+(mail|e-?mail)|veuillez noter (notre|mon) (changement|nouvelle))/i.test(texte)
+}
+
 // Détecte les réponses AUTOMATIQUES (accusés de réception, absences, bots).
 // Ce ne sont PAS de vraies réponses humaines → on les ignore (no_action).
-function isAutoResponder(body: string, subject: string, fromEmail: string): boolean {
+export function isAutoResponder(body: string, subject: string, fromEmail: string): boolean {
   const text = (subject + ' ' + body).toLowerCase()
   const from = fromEmail.toLowerCase()
 
@@ -157,6 +172,25 @@ function isAutoResponder(body: string, subject: string, fromEmail: string): bool
     /de retour le \d/,
     /en (cong[ée]s?|vacances) jusqu/,
     /ne pas r[ée]pondre [àa] (cet|ce) (e-?mail|message)/,
+    /**
+     * ⚠️ AJOUTS DU 24/08 — une fermeture estivale passait à travers.
+     *
+     * Le message de Nelson DESIRE disait « Absence – Fermeture estivale de nos bureaux » en objet et
+     * « nos bureaux seront exceptionnellement fermés du 1er août au 31 août » dans le corps. Aucun
+     * motif ne le prenait : « en congés » n'était reconnu que suivi de « jusqu' », et « absent »
+     * qu'au singulier à la première personne. J'ai donc écrit à un répondeur automatique une excuse
+     * pour ne pas lui avoir répondu.
+     *
+     * Les motifs ci-dessous visent la FERMETURE D'ENTREPRISE, qui est toujours automatique — une
+     * personne qui écrit vraiment ne présente pas sa société à la troisième personne.
+     */
+    /^s*absence/,
+    /fermeture (estivale|annuelle|exceptionnelle|de nos bureaux|des bureaux)/,
+    /(bureaux|magasin|soci[ée]t[ée]|entreprise|agence|secr[ée]tariat)[^.]{0,60}ferm[ée]/,
+    /ferm[ée]e?s? (exceptionnellement )?(pour cong[ée]s|du d)/,
+    /[ée]quipe administrative est en cong[ée]s/,
+    /r[ée]ouverture (du|de|le)/,
+    /nos [ée]quipes (de terrain |de travaux )?(restent|seront)/,
   ]
   return autoPatterns.some(p => p.test(text))
 }

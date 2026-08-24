@@ -35,6 +35,8 @@ export async function GET(req: NextRequest) {
    */
   const cible = (req.nextUrl.searchParams.get('email') ?? '').toLowerCase().trim()
   const { sql } = await import('@/lib/db')
+  const { isAutoResponder, estChangementAdresse } = await import('@/lib/reply-agent/classifier')
+  const ignores: string[] = []
 
   /**
    * Sont concernés : le DERNIER message reçu d'un contact, s'il n'a reçu aucune réponse ENVOYÉE
@@ -76,6 +78,32 @@ export async function GET(req: NextRequest) {
      * réponse qui ferait comme si de rien n'était serait pire que le silence. Timéo réécrit ce
      * qu'il veut, l'important est que la personne redevienne visible et traitable.
      */
+    /**
+     * ⚠️ LE FILTRE SUR LA CLASSIFICATION NE SUFFIT PAS ICI.
+     *
+     * La requête écarte bien 'oof', mais elle accepte volontairement les messages SANS
+     * classification — c'est tout l'intérêt d'un balayage de rattrapage. Or un répondeur automatique
+     * non classé entre alors dans la liste, et on lui prépare une réponse.
+     *
+     * C'est arrivé le 24/08 sur une fermeture estivale. Le détecteur déterministe existait, aucun
+     * des chemins d'écriture de brouillon ne l'appelait. On le rappelle donc à chaque endroit qui
+     * écrit, plutôt que de faire confiance à une étiquette qui peut être absente ou fausse.
+     */
+    if (isAutoResponder(m.body ?? '', '', m.email)) {
+      ignores.push(`${m.company ?? m.email} (réponse automatique)`)
+      continue
+    }
+    /**
+     * ⚠️ UN CHANGEMENT D'ADRESSE N'EST PAS UN LEAD QUI ATTEND.
+     * « Merci de prendre en compte notre nouvelle adresse » n'appelle aucune réponse : on repointe
+     * le contact et on archive. Signalé comme « sans réponse depuis 8 jours », il fait croire à un
+     * prospect abandonné et pousse à lui écrire pour rien.
+     */
+    if (estChangementAdresse(m.body ?? '')) {
+      ignores.push(`${m.company ?? m.email} (changement d'adresse, à repointer et non à relancer)`)
+      continue
+    }
+
     const corps = [
       'Bonjour,',
       '',
@@ -100,6 +128,8 @@ export async function GET(req: NextRequest) {
     mode: apply && cible ? `APPLIQUÉ sur ${cible}` : 'APERÇU (rien écrit) — relancer avec &apply=1&email=<adresse>',
     personnes_sans_reponse: crees.length,
     detail: crees,
+    // Ce qui a été écarté, et pourquoi. Un balayage qui filtre en silence redevient un écran qui ment.
+    ecartes_car_pas_des_leads: ignores,
     lecture: 'Ces brouillons attendent dans « À valider ». Rien n\'est envoyé automatiquement, et les textes sont neutres : à toi de les réécrire.',
   })
 }
