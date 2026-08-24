@@ -204,5 +204,101 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 12. Pourquoi le stock de nouveaux contacts ne part pas ──
+  if (seul === '12') {
+    out.impasse = await sql`
+      SELECT
+        COUNT(*)::int AS jamais_demarches,
+        COUNT(*) FILTER (WHERE c.email_validated IS TRUE)::int AS valides,
+        COUNT(*) FILTER (WHERE COALESCE(c.email_validated, FALSE) = FALSE)::int AS non_valides,
+        COUNT(*) FILTER (WHERE COALESCE(c.email_validated, FALSE) = FALSE
+                           AND EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status IN ('pending','queued')))::int AS non_valides_AVEC_file,
+        COUNT(*) FILTER (WHERE COALESCE(c.email_validated, FALSE) = FALSE
+                           AND NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status IN ('pending','queued')))::int AS non_valides_SANS_file,
+        COUNT(*) FILTER (WHERE COALESCE(c.email_validated, FALSE) = FALSE
+                           AND COALESCE(c.mv_attempts, 0) >= 2)::int AS essais_epuises,
+        COUNT(*) FILTER (WHERE COALESCE(c.google_reviews_count, 0) < 20)::int AS sous_20_avis
+      FROM contacts c
+      WHERE NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent')
+        AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+    `
+    out.sans_file_detail = await sql`
+      SELECT c.sector, COUNT(*)::int AS n,
+             COUNT(*) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles
+      FROM contacts c
+      WHERE NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id)
+        AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+      GROUP BY c.sector ORDER BY n DESC LIMIT 12
+    `
+  }
+
+  // ── 13. Dans quel etat sont les lignes de file des contacts jamais demarches ──
+  if (seul === '13') {
+    out.etat_file = await sql`
+      SELECT COALESCE(q.status, 'AUCUNE LIGNE') AS statut,
+             COUNT(DISTINCT c.id)::int AS contacts,
+             COUNT(DISTINCT c.id) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles_20avis,
+             COUNT(DISTINCT c.id) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20 AND COALESCE(c.mv_attempts,0) < 2)::int AS cibles_encore_retentables
+      FROM contacts c
+      LEFT JOIN email_queue q ON q.contact_id = c.id
+      WHERE NOT EXISTS (SELECT 1 FROM email_queue s2 WHERE s2.contact_id = c.id AND s2.status = 'sent')
+        AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+        AND COALESCE(c.email_validated, FALSE) = FALSE
+      GROUP BY q.status ORDER BY contacts DESC
+    `
+  }
+
+  // ── 14. Les 500 annulations sont-elles volontaires ou accidentelles ? ──
+  if (seul === '14') {
+    /**
+     * mv_attempts n'est incremente QUE sur un verdict rendu par MillionVerifier (le code ne compte
+     * ni les pannes HTTP ni les erreurs de credits). Un contact annule AVEC des essais a donc ete
+     * ecarte volontairement pour eviter un bounce ; un contact annule SANS essai a ete ecarte pour
+     * une autre raison, et c est celui-la qui peut etre recuperable.
+     */
+    out.annulations = await sql`
+      SELECT COALESCE(c.mv_attempts, 0) AS essais_mv,
+             COUNT(DISTINCT c.id)::int AS contacts,
+             COUNT(DISTINCT c.id) FILTER (WHERE COALESCE(c.google_reviews_count,0) >= 20)::int AS cibles_20avis
+      FROM contacts c
+      WHERE COALESCE(c.email_validated, FALSE) = FALSE
+        AND NOT EXISTS (SELECT 1 FROM email_queue s2 WHERE s2.contact_id = c.id AND s2.status = 'sent')
+        AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+        AND EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'cancelled')
+      GROUP BY COALESCE(c.mv_attempts, 0) ORDER BY essais_mv
+    `
+  }
+
+  // ── 15. Un prospect attend-il une reponse qu on ne lui enverra jamais ? ──
+  if (seul === '15') {
+    out.rdv_tct = await sql`
+      SELECT r.scheduled_at, r.status, r.crm_stage, r.created_at, LEFT(COALESCE(r.notes,''), 200) AS notes, c.company
+      FROM rdv r JOIN contacts c ON c.id = r.contact_id
+      WHERE c.company ILIKE '%TCT%' ORDER BY r.created_at DESC
+    `
+    out.brouillons_tct = await sql`
+      SELECT rd.status, rd.created_at, rd.sent_at, LEFT(rd.body, 120) AS debut
+      FROM reply_drafts rd JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      JOIN contacts c ON c.id = ir.contact_id
+      WHERE c.company ILIKE '%TCT%' ORDER BY rd.created_at DESC LIMIT 6
+    `
+    /**
+     * Le cas general : une reponse de prospect qui n a JAMAIS ete suivie d un message de l agent.
+     * C est l invariant  zero lead perdu  applique a la lettre.
+     */
+    out.reponses_sans_suite = await sql`
+      SELECT c.company, ir.classification, ir.created_at,
+             EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status IN ('confirmed','signed')) AS a_rdv,
+             (SELECT rd.status FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id ORDER BY rd.created_at DESC LIMIT 1) AS dernier_brouillon
+      FROM incoming_replies ir JOIN contacts c ON c.id = ir.contact_id
+      WHERE ir.created_at > NOW() - INTERVAL '30 days'
+        AND ir.classification NOT IN ('oof','spam','desinterest')
+        AND NOT EXISTS (
+          SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent' AND q.sent_at > ir.created_at
+        )
+      ORDER BY ir.created_at ASC
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
