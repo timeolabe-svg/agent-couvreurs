@@ -93,7 +93,9 @@ export async function GET(req: NextRequest) {
     const cible = METIERS_CIBLES.find(m => m.sector === metier)
     if (!cible) return NextResponse.json({ error: `métier inconnu : ${metier}` }, { status: 400 })
 
-    const taille = Math.min(5, Math.max(1, parseInt(req.nextUrl.searchParams.get('taille') || '4', 10)))
+    // On peut demander PLUSIEURS lots d'un coup : Timéo achète à la main sur Outscraper et veut la
+    // liste des prochains lots devant lui, pas un lot à la fois.
+    const taille = Math.min(60, Math.max(1, parseInt(req.nextUrl.searchParams.get('taille') || '4', 10)))
 
     /**
      * ⚠️ LES PLUS PEUPLÉES D'ABORD, ET JAMAIS DEUX FOIS.
@@ -102,21 +104,45 @@ export async function GET(req: NextRequest) {
      * Le NOT EXISTS sur la couverture est ce qui garantit qu'une ville déjà achetée pour ce métier
      * ne repasse jamais — c'est la protection la plus importante de tout ce mécanisme.
      */
+    /**
+     * ⚠️ DEUX PIÈGES CORRIGÉS LE 24/08, tous deux visibles dans la première liste produite.
+     *
+     * 1. L'OUTRE-MER REMONTAIT. Nouméa et Saint-Denis de La Réunion sortaient dans les lots. Le
+     *    client vend des sites internet à des artisans de métropole ; payer des fiches à 18 000 km
+     *    est de l'argent jeté. On coupe aux départements métropolitains (codes < 96).
+     *
+     * 2. DEUX COMMUNES PORTENT LE MÊME NOM. « Saint-Denis » apparaissait deux fois — le 93 et le
+     *    974. C'est plus qu'un doublon d'affichage : la couverture est enregistrée sur le NOM de la
+     *    ville, donc acheter l'une marque l'autre comme faite, et la seconde ne serait jamais
+     *    achetée sans que rien ne le signale. Tant que la table historique n'a pas de code INSEE
+     *    partout, on ne propose qu'une commune par nom (la plus peuplée) et on affiche le
+     *    département, pour que la saisie chez Outscraper soit sans ambiguïté.
+     */
     const lot = (await sql`
-      SELECT v.code_insee, v.nom, v.departement, v.population
+      SELECT DISTINCT ON (LOWER(v.nom)) v.code_insee, v.nom, v.departement, v.population
       FROM villes_scraping v
-      WHERE NOT EXISTS (
-        SELECT 1 FROM scrape_couverture sc
-        WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = LOWER(${cible.categorie_google})
-      )
-      ORDER BY v.population DESC NULLS LAST, v.code_insee ASC
-      LIMIT ${taille}
+      WHERE v.departement IS NOT NULL AND v.departement < '96'
+        AND NOT EXISTS (
+          SELECT 1 FROM scrape_couverture sc
+          WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = LOWER(${cible.categorie_google})
+        )
+      ORDER BY LOWER(v.nom), v.population DESC NULLS LAST
     `) as Array<{ code_insee: string; nom: string; departement: string; population: number }>
+    lot.sort((a, b) => (b.population ?? 0) - (a.population ?? 0))
+    lot.length = Math.min(lot.length, taille)
+
+    // Ce qui a DÉJÀ été acheté pour ce métier, du plus récent au plus ancien.
+    const dejaFaites = (await sql`
+      SELECT ville, fiches, importe_le FROM scrape_couverture
+      WHERE LOWER(categorie) = LOWER(${cible.categorie_google})
+      ORDER BY importe_le DESC LIMIT 15
+    `) as Array<{ ville: string; fiches: number; importe_le: string }>
 
     return NextResponse.json({
       metier: cible.sector,
       categorie_google_a_cocher: cible.categorie_google,
       correspondance_exacte: true,
+      deja_achetees_recentes: dejaFaites,
       prochain_lot: lot,
       lecture: 'Aucun achat n\'a été déclenché. Ce lot est ce que l\'automatisation commanderait au prochain passage.',
     })
