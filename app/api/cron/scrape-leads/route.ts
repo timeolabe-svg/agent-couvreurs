@@ -154,7 +154,32 @@ async function runCron(req: Request) {
   const rrows = (Array.isArray(reserveRes) ? reserveRes : (reserveRes as unknown as { rows?: Array<{ count?: number }> }).rows) ?? []
   const placesToday = Number(rrows[0]?.count ?? 999)
   if (placesToday > DAILY_PLACES_REQ_CAP) {
-    return NextResponse.json({ ok: true, skipped: true, reason: `plafond requêtes Places atteint (${placesToday}/${DAILY_PLACES_REQ_CAP})` })
+    /**
+     * ⚠️ UN PASSAGE REFUSÉ REND SA RÉSERVATION.
+     *
+     * La réservation est prise AVANT le contrôle — c'est ce qui la rend atomique et empêche deux
+     * passages concurrents de dépasser le plafond. Mais elle n'était jamais rendue quand le passage
+     * était refusé : chaque appel bloqué ajoutait quand même 14 au compteur. À raison d'un passage
+     * toutes les 30 minutes, le compteur affichait 323 pour un plafond de 120 alors qu'aucune de ces
+     * requêtes n'avait été payée.
+     *
+     * Le coût, lui, était bien plafonné — le premier refus arrive quand le vrai budget est atteint.
+     * Mais le compteur devenait un chiffre faux, et il est PARTAGÉ avec watchlist-recheck, à qui il
+     * mangeait son budget. Un compteur qu'on lit pour décider doit dire ce qui a réellement été
+     * consommé, sinon il fait prendre de mauvaises décisions — j'ai failli annoncer un dépassement
+     * de dépense qui n'existait pas.
+     */
+    await db.execute(sql`
+      UPDATE agent_config SET value = jsonb_build_object(
+        'date', ${todayKey}::text,
+        'count', GREATEST(0, (value::jsonb->>'count')::int - ${PLACES_REQ_PER_RUN})
+      )::text
+      WHERE key = 'places_calls_today' AND (value::jsonb->>'date') = ${todayKey}
+    `).catch(() => {})
+    return NextResponse.json({
+      ok: true, skipped: true,
+      reason: `plafond requêtes Places atteint (${placesToday - PLACES_REQ_PER_RUN}/${DAILY_PLACES_REQ_CAP}) — réservation rendue`,
+    })
   }
 
   const results: string[] = []

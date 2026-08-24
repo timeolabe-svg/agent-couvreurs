@@ -78,20 +78,26 @@ function tabOf(c: Conversation): Tab {
   // 3) Absence : il a donné une date de retour, on le rappellera à cette date. Rien à faire avant.
   if (c.absentJusquAu) return 'absent'
   /**
-   * ⚠️ UN RENDEZ-VOUS CALÉ VA DANS « POSITIVES », POINT. Consigne de Timéo, 21/08.
+   * ⚠️ UN PROSPECT QUI ATTEND UNE RÉPONSE PASSE AVANT TOUT LE RESTE — y compris un rendez-vous calé.
+   * Consigne de Timéo, 24/08 : « montre-moi la conversation dans en attente ».
    *
-   * J'avais fait passer « le prospect attend une réponse » AVANT le rendez-vous, pour que la demande
-   * de décalage de TCT remonte. Résultat : une conversation étiquetée « RDV calé » s'affichait dans
-   * « En attente », ce qui n'a aucun sens à la lecture — l'onglet des rendez-vous doit contenir les
-   * rendez-vous.
+   * J'ai fait l'aller-retour sur ce point, il faut donc écrire ce qui les concilie. Les deux
+   * consignes disent la même chose vue de deux côtés :
+   *   - le 21/08 : une conversation étiquetée « RDV calé » où PLUS RIEN n'est à faire n'a rien à
+   *     faire dans « En attente » — elle va dans l'onglet des rendez-vous ;
+   *   - le 24/08 : une conversation où le prospect a écrit et n'a JAMAIS eu de réponse est une
+   *     action à mener, même si un rendez-vous existe déjà. C'est le cas de TCT Couverture, qui
+   *     demandait un décalage à 11h et attend depuis cinq jours.
    *
-   * Le besoin d'origine reste valable (ne pas enterrer un message arrivé après le RDV) : il est
-   * couvert par le badge « message en attente » affiché sur la ligne, et par la tâche urgente créée
-   * côté serveur. La visibilité ne passe plus par un rangement contre-intuitif.
+   * La règle qui satisfait les deux : « en attente » se décide sur ce qui RESTE À FAIRE, pas sur la
+   * présence d'un rendez-vous. Un onglet sert à savoir où agir ; il doit donc trier par ce qui
+   * demande une action, jamais par une étiquette.
+   *
+   * ⚠️ Ce test doit rester APRÈS `desinterest` : on ne répond jamais à un refus, donc un refus
+   * n'attend rien. L'avoir mis en tête avait vidé l'onglet « Négatives » de ses 39 refus.
    */
-  if (c.rdvBooked) return 'positive'
-  // Le prospect a écrit et n'a pas eu de réponse, sans rendez-vous calé → action requise.
   if (c.prospectAttend) return 'pending'
+  if (c.rdvBooked) return 'positive'
   if (c.exhausted) return 'failed'
   return 'pending' // intérêt sans RDV, question, objection, non classé
 }

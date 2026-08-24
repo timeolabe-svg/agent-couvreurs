@@ -300,5 +300,51 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 16. OU PART LE STOCK : envoye, ou detruit par la validation ? ──
+  if (seul === '16') {
+    out.sorties_par_jour = await sql`
+      SELECT jour, SUM(envoyes)::int AS envoyes, SUM(rejetes)::int AS detruits_par_validation
+      FROM (
+        SELECT DATE(q.sent_at) AS jour, COUNT(DISTINCT q.contact_id) AS envoyes, 0 AS rejetes
+        FROM email_queue q WHERE q.status='sent' AND q.sequence_step=0 AND q.sent_at > NOW() - INTERVAL '10 days'
+        GROUP BY DATE(q.sent_at)
+        UNION ALL
+        SELECT DATE(c.mv_last_attempt_at) AS jour, 0, COUNT(*)
+        FROM contacts c
+        WHERE c.mv_last_attempt_at > NOW() - INTERVAL '10 days'
+          AND COALESCE(c.email_validated, FALSE) = FALSE
+          AND NOT EXISTS (SELECT 1 FROM email_queue q2 WHERE q2.contact_id=c.id AND q2.status='sent')
+        GROUP BY DATE(c.mv_last_attempt_at)
+      ) x GROUP BY jour ORDER BY jour DESC
+    `
+    out.verdicts_mv = await sql`
+      SELECT COUNT(*)::int AS testes_10j,
+             COUNT(*) FILTER (WHERE c.email_validated IS TRUE)::int AS acceptes,
+             COUNT(*) FILTER (WHERE COALESCE(c.email_validated,FALSE) = FALSE)::int AS refuses
+      FROM contacts c WHERE c.mv_last_attempt_at > NOW() - INTERVAL '10 days'
+    `
+    out.envois_par_boite_par_jour = await sql`
+      SELECT DATE(q.sent_at) AS jour, q.sent_via AS boite, COUNT(*)::int AS mails
+      FROM email_queue q
+      WHERE q.status='sent' AND q.sent_at > NOW() - INTERVAL '5 days'
+      GROUP BY DATE(q.sent_at), q.sent_via ORDER BY jour DESC, mails DESC
+    `
+  }
+
+  // ── 17. D ou viennent les contacts, et quand ont-ils ete crees ? ──
+  if (seul === '17') {
+    out.creations_par_jour = await sql`
+      SELECT DATE(created_at) AS jour, source, COUNT(*)::int AS n
+      FROM contacts WHERE created_at > NOW() - INTERVAL '20 days'
+      GROUP BY DATE(created_at), source ORDER BY jour DESC, n DESC
+    `
+    out.total_par_source = await sql`
+      SELECT COALESCE(source,'(nul)') AS source, COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE email_validated IS TRUE)::int AS valides,
+             MIN(created_at) AS premier, MAX(created_at) AS dernier
+      FROM contacts GROUP BY source ORDER BY total DESC
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
