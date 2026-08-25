@@ -62,6 +62,27 @@ const NEW_CAP_PER_BOX = 40 // × 4 boîtes = 160/jour
  */
 const TOTAL_CAP_PER_BOX = Number(process.env.TOTAL_CAP_PER_BOX ?? 35)
 
+/**
+ * ⚠️ COMBIEN DE NOUVEAUX CONTACTS PAR JOUR — décision de Timéo, 25/08, à partir de ce calcul.
+ *
+ * Un contact ne coûte pas UN mail, il en coûte SIX : la séquence fait 6 étapes (J+0/2/5/8/12/16),
+ * donc chaque personne démarchée aujourd'hui déclenche cinq relances sur seize jours. Les relances
+ * partent des mêmes boîtes et comptent dans le même plafond — pour Gmail, un mail est un mail.
+ *
+ *   35 mails × 4 boîtes            = 140 mails par jour
+ *   140 ÷ 6 mails par contact      = 23 nouveaux contacts par jour
+ *
+ * Ce n'est pas de la prudence : avec ONZE nouveaux par jour la semaine du 19/08, les boîtes
+ * tournaient déjà à 240 mails quotidiens, uniquement à cause des relances des fichiers précédents.
+ *
+ * ⚠️ ET ON NE SACRIFIE PAS LES RELANCES POUR EN DÉMARCHER PLUS. Mesuré sur toute la base : 16 des
+ * 27 leads chauds (59 %) viennent des étapes 1 à 5, et l'étape 4 rend autant que l'étape 1. Couper
+ * la queue de séquence ferait démarcher plus de monde pour obtenir MOINS de rendez-vous.
+ *
+ * À relever quand des boîtes s'ajoutent : 6 boîtes = 210/jour = 35 nouveaux/jour.
+ */
+const NOUVEAUX_PAR_JOUR = Number(process.env.NOUVEAUX_PAR_JOUR ?? 23)
+
 const RELANCE_CAP_PER_BOX = 150 // × 4 boîtes = 600/jour de marge — largement au-dessus du besoin réel
 // 3) RELANCES DE CONVERSATION (step >= 20) : gens qui ont RÉPONDU, risque quasi nul, plafond
 // global séparé (pas per-boîte, peu de volume en pratique).
@@ -161,11 +182,23 @@ async function runCron(req: NextRequest) {
     // Chaque enveloppe est bornée par CE QUI RESTE sur la boîte : la somme ne peut plus dépasser.
     const capNew = new Map(boxes.map(b => [b.email, Math.min(NEW_CAP_PER_BOX - (newSentByBox.get(b.email) ?? 0), capTotal.get(b.email) ?? 0)]))
     const capRelance = new Map(boxes.map(b => [b.email, Math.min(RELANCE_CAP_PER_BOX - (relanceSentByBox.get(b.email) ?? 0), capTotal.get(b.email) ?? 0)]))
-    const totalNewCap = [...capNew.values()].reduce((s, c) => s + Math.max(0, c), 0)
+    /**
+     * Le plafond des nouveaux est GLOBAL et non par boîte : c'est un rythme de prospection, pas une
+     * limite de réputation. Les deux se cumulent — on retient le plus contraignant.
+     */
+    const [{ newSentTotal }] = (await sql`
+      SELECT COUNT(*)::int AS "newSentTotal" FROM email_queue
+      WHERE status = 'sent' AND sent_at::date = CURRENT_DATE AND sequence_step = 0
+    `) as Array<{ newSentTotal: number }>
+    const resteNouveaux = Math.max(0, NOUVEAUX_PAR_JOUR - (newSentTotal ?? 0))
+    const totalNewCap = Math.min(
+      [...capNew.values()].reduce((s, c) => s + Math.max(0, c), 0),
+      resteNouveaux,
+    )
     const totalRelanceCap = [...capRelance.values()].reduce((s, c) => s + Math.max(0, c), 0)
 
     const results: string[] = []
-    results.push(`Boîtes: ${boxes.length} | nouveaux dispo aujourd'hui: ${totalNewCap} | relances dispo: ${totalRelanceCap}`)
+    results.push(`Boîtes: ${boxes.length} | nouveaux dispo aujourd'hui: ${totalNewCap} (rythme ${NOUVEAUX_PAR_JOUR}/j, déjà partis ${newSentTotal ?? 0}) | relances dispo: ${totalRelanceCap}`)
 
     // Plafond SÉPARÉ pour les relances de conversation (step >= 20) : elles passent même si les
     // deux autres enveloppes sont saturées (destinataire = a répondu, faible risque).
