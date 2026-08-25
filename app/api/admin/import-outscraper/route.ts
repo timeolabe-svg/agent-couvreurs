@@ -221,10 +221,25 @@ export async function GET(request: NextRequest) {
       // recevait un texte de terrassier, signé du nom du client.
       // Le repli est générique et surtout PAS 'terrassier' — un métier faux est pire qu'un métier
       // vague, parce qu'il produit un message confiant et hors sujet.
+      /**
+       * ⚠️ « ON CONFLICT (email) » NE COUVRAIT QU'UNE SEULE CONTRAINTE.
+       *
+       * La table porte aussi un index unique sur google_place_id. Un établissement déjà connu qui
+       * revient dans un nouveau fichier avec une AUTRE adresse e-mail ne déclenche donc pas le
+       * conflit sur l'email : il viole l'unicité du place_id et l'insertion lève une erreur. Le
+       * lead est alors perdu sans jamais changer de statut, et la promotion se bloque dessus à
+       * chaque passage. Mesuré le 25/08 : 8 leads sur 12 en échec, promotion figée à 862 restants.
+       *
+       * Sans cible, le DO NOTHING couvre TOUTES les contraintes uniques, et le code traite déjà
+       * correctement le cas « rien inséré » en marquant le lead comme déjà en base.
+       *
+       * ⚠️ Ce commentaire est en dehors du gabarit SQL : un accent grave à l'intérieur d'un
+       * template literal le referme et casse la compilation.
+       */
       const ins = g(await db.execute(sql`
         INSERT INTO contacts (email, company, website, phone, sector, city, postal_code, google_place_id, google_rating, google_reviews_count, email_confidence_score, source, audit_done)
         VALUES (${email}, ${stripEmojis(l.name)}, ${l.site}, ${l.phone}, ${l.sector || 'artisan du bâtiment'}, ${l.city}, ${l.postal_code}, ${l.place_id}, ${l.rating}, ${l.reviews}, ${em.confidence}, 'outscraper', false)
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING id
       `)) as Array<{ id: string }>
       if (ins.length === 0) {
@@ -241,7 +256,15 @@ export async function GET(request: NextRequest) {
       importes++
       results.push(`✓ ${l.name} → ${email} (conf ${em.confidence}, ${l.reviews} avis)`)
     } catch (e) {
-      results.push(`✗ ${l.name}: ${String(e).slice(0, 60)}`)
+      /**
+       * ⚠️ TRONQUER UNE ERREUR PAR LE DÉBUT, C'EST JETER LA CAUSE.
+       * Les 60 premiers caractères d'une erreur Postgres ne contiennent que « Failed query: INSERT
+       * INTO contacts (email, c… » — c'est-à-dire la question, jamais la réponse. Le nom de la
+       * contrainte violée est à la fin. Huit leads sur douze échouaient sans qu'on puisse dire
+       * pourquoi.
+       */
+      const msg = String((e as Error)?.message ?? e)
+      results.push(`✗ ${l.name}: ${msg.length > 160 ? '…' + msg.slice(-160) : msg}`)
     }
   }
 

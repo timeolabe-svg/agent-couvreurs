@@ -378,5 +378,47 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 20. Deux messages quasi identiques envoyes a la suite au meme contact ──
+  if (seul === '20') {
+    out.envois = await sql`
+      SELECT c.company, c.email, q.sequence_step, q.sent_at, q.subject,
+             LEFT(REGEXP_REPLACE(q.body, '\s+', ' ', 'g'), 400) AS corps
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status = 'sent' AND q.sent_at > NOW() - INTERVAL '25 days'
+      ORDER BY c.id, q.sent_at ASC
+    `
+  }
+
+  // ── 21. Le corps BRUT, sans aucune transformation SQL ──
+  if (seul === '21') {
+    out.brut = await sql`
+      SELECT q.sequence_step, q.sent_at, q.sent_via, LEFT(q.body, 300) AS corps_brut, LENGTH(q.body) AS taille
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE c.email = 'plomberiemultiservices@gmail.com' OR c.company ILIKE '%Plomberie Multi Services%'
+      ORDER BY q.sent_at DESC LIMIT 6
+    `
+  }
+
+  // ── 22. Pourquoi le moteur ne reclame rien alors que des mails sont prets ──
+  if (seul === '22') {
+    out.file_step0 = await sql`
+      SELECT q.status,
+             COUNT(*)::int AS n,
+             COUNT(*) FILTER (WHERE q.scheduled_at <= NOW())::int AS echus,
+             MIN(q.scheduled_at) AS plus_tot, MAX(q.scheduled_at) AS plus_tard
+      FROM email_queue q WHERE q.sequence_step = 0 GROUP BY q.status ORDER BY n DESC
+    `
+    out.par_boite_aujourdhui = await sql`
+      SELECT sent_via AS boite, COUNT(*)::int AS envoyes_aujourdhui
+      FROM email_queue WHERE status='sent' AND sent_at::date = CURRENT_DATE
+      GROUP BY sent_via ORDER BY envoyes_aujourdhui DESC
+    `
+    out.prochains_creneaux = await sql`
+      SELECT DATE(scheduled_at) AS jour, COUNT(*)::int AS n
+      FROM email_queue WHERE status='queued' AND sequence_step = 0
+      GROUP BY DATE(scheduled_at) ORDER BY jour LIMIT 8
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }

@@ -48,6 +48,20 @@ const NEW_CAP_PER_BOX = 40 // × 4 boîtes = 160/jour
 // large. Boîtes = Google Workspace (domaines custom hdigiweb-*.com, pas du Gmail grand public),
 // limite réelle Google très supérieure à ce plafond. Sert seulement à éviter un bug qui enverrait
 // un volume infini en boucle.
+/**
+ * ⚠️ PLAFOND TOTAL PAR BOÎTE — la règle de Timéo : « on envoie max 35 mails par boîte par jour ».
+ *
+ * Les deux plafonds ci-dessus sont des enveloppes SÉPARÉES (nouveaux d'un côté, relances de
+ * l'autre). Séparées, elles autorisent 40 + 150 = 190 mails sur une même boîte en une journée, et
+ * rien ne borne la somme. Mesuré le 25/08 en poussant le pipeline à la main : 50, 46, 45 et 38
+ * mails partis d'une même boîte dans la journée. Deux plafonds qui ne s'additionnent pas ne
+ * plafonnent rien — même famille d'erreur que les deux budgets du relevé IMAP.
+ *
+ * ⚠️ CONSÉQUENCE ARITHMÉTIQUE À CONNAÎTRE : 35 × 4 boîtes = 140 mails par jour, relances comprises.
+ * Viser 100 NOUVEAUX contacts par jour demande donc environ 6 boîtes, pas 4.
+ */
+const TOTAL_CAP_PER_BOX = Number(process.env.TOTAL_CAP_PER_BOX ?? 35)
+
 const RELANCE_CAP_PER_BOX = 150 // × 4 boîtes = 600/jour de marge — largement au-dessus du besoin réel
 // 3) RELANCES DE CONVERSATION (step >= 20) : gens qui ont RÉPONDU, risque quasi nul, plafond
 // global séparé (pas per-boîte, peu de volume en pratique).
@@ -141,8 +155,12 @@ async function runCron(req: NextRequest) {
     `) as Array<{ sent_via: string; new_sent: number; relance_sent: number }>
     const newSentByBox = new Map(sentToday.map(r => [r.sent_via, r.new_sent]))
     const relanceSentByBox = new Map(sentToday.map(r => [r.sent_via, r.relance_sent]))
-    const capNew = new Map(boxes.map(b => [b.email, NEW_CAP_PER_BOX - (newSentByBox.get(b.email) ?? 0)]))
-    const capRelance = new Map(boxes.map(b => [b.email, RELANCE_CAP_PER_BOX - (relanceSentByBox.get(b.email) ?? 0)]))
+    // Le total réellement parti aujourd'hui depuis chaque boîte, toutes étapes confondues.
+    const totalSentByBox = new Map(sentToday.map(r => [r.sent_via, (r.new_sent ?? 0) + (r.relance_sent ?? 0)]))
+    const capTotal = new Map(boxes.map(b => [b.email, TOTAL_CAP_PER_BOX - (totalSentByBox.get(b.email) ?? 0)]))
+    // Chaque enveloppe est bornée par CE QUI RESTE sur la boîte : la somme ne peut plus dépasser.
+    const capNew = new Map(boxes.map(b => [b.email, Math.min(NEW_CAP_PER_BOX - (newSentByBox.get(b.email) ?? 0), capTotal.get(b.email) ?? 0)]))
+    const capRelance = new Map(boxes.map(b => [b.email, Math.min(RELANCE_CAP_PER_BOX - (relanceSentByBox.get(b.email) ?? 0), capTotal.get(b.email) ?? 0)]))
     const totalNewCap = [...capNew.values()].reduce((s, c) => s + Math.max(0, c), 0)
     const totalRelanceCap = [...capRelance.values()].reduce((s, c) => s + Math.max(0, c), 0)
 
