@@ -493,5 +493,30 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 27. Purge des communes marquees couvertes a tort (apercu puis application) ──
+  if (seul === '27') {
+    /**
+     * ⚠️ ON SUPPRIME PLUTOT QUE DE GARDER UN DOUTE. Re-scraper une commune coute quelques
+     * centimes ; ne jamais la scraper coute TOUS ses leads, definitivement et sans que rien ne le
+     * signale. Face a une incertitude, on penche du cote reversible.
+     */
+    const seuil = parseInt(req.nextUrl.searchParams.get('seuil') ?? '5', 10)
+    out.a_supprimer = await sql`
+      SELECT categorie, COUNT(*)::int AS villes, COALESCE(SUM(fiches), 0)::int AS fiches
+      FROM scrape_couverture WHERE fiches <= ${seuil}
+      GROUP BY categorie ORDER BY villes DESC
+    `
+    out.exemples = await sql`
+      SELECT categorie, ville, fiches FROM scrape_couverture
+      WHERE fiches <= ${seuil} ORDER BY fiches DESC LIMIT 10
+    `
+    if (req.nextUrl.searchParams.get('supprimer') === '1') {
+      const del = (await sql`
+        DELETE FROM scrape_couverture WHERE fiches <= ${seuil} RETURNING ville
+      `) as unknown[]
+      out.supprimees = del.length
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
