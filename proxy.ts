@@ -74,6 +74,20 @@ export const config = {
      * - /_next/* (fichiers statiques)
      * - /favicon.ico
      */
-    '/((?!login$|login/|api/auth/|api/cron/|_next/|favicon\\.ico$).*)',
+    /*
+     * ⚠️ `/u/*` — LE LIEN DE DÉSABONNEMENT DOIT RESTER PUBLIC, C'EST UNE OBLIGATION LÉGALE.
+     *
+     * Régression introduite le 25/08 en retirant `AUTH_DISABLED` : tant que tout était ouvert, le
+     * lien de désinscription présent dans CHAQUE mail fonctionnait par accident. En rétablissant le
+     * mot de passe, `/u/<jeton>` s'est mis à renvoyer vers la page de connexion — c'est-à-dire qu'on
+     * demandait à un prospect de se connecter à notre outil pour exercer son droit d'opposition.
+     *
+     * Sur un projet qui a déjà une plainte CNIL ouverte, c'est le pire endroit possible pour une
+     * régression. Et elle dégrade aussi la délivrabilité : Gmail et Outlook envoient un POST
+     * automatique sur ce lien (List-Unsubscribe-Post) ; une redirection est comptée comme un échec.
+     *
+     * Le jeton EST l'authentification de cette route : il est signé et propre au destinataire.
+     */
+    '/((?!login$|login/|api/auth/|api/cron/|u/|_next/|favicon\\.ico$).*)',
   ],
 }

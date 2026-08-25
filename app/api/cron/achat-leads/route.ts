@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
 import { alertIndependent } from '@/lib/alert'
-import { METIERS_CIBLES } from '@/app/api/admin/plan-couverture/route'
+import { METIERS_CIBLES, aliasDe } from '@/app/api/admin/plan-couverture/route'
 import {
   assurerTablesAchat, feuVert, lancerJob, recolterJob, estDuMetier, detecterAnomalies,
   poserArret, lireArret, depenses, FicheOutscraper, Sql,
@@ -68,7 +68,7 @@ async function handler(req: NextRequest) {
     FROM villes_scraping v
     WHERE NOT EXISTS (
       SELECT 1 FROM scrape_couverture sc
-      WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = LOWER(${metier.categorie_google})
+      WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
     )
     ORDER BY v.population DESC NULLS LAST, v.code_insee ASC
     LIMIT ${TAILLE_LOT}

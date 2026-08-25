@@ -228,13 +228,27 @@ async function handler(req: NextRequest) {
       GROUP BY c.email, q.sent_at::date HAVING COUNT(*) > 1
       ORDER BY 2 DESC LIMIT 500`)
 
+  /**
+   * ⚠️ CET INVARIANT ET LE MOTEUR SE CONTREDISAIENT D'UNE UNITÉ (signalé par la session LabegarIA,
+   * 26/08). Le moteur autorise 8 mails à vie — 6 étapes de séquence plus au maximum 2 relances de
+   * conversation — et cette justification est écrite dans `send-campaign`. L'invariant, lui, criait
+   * dès 8. Un contact qui touchait exactement la limite prévue faisait donc échouer l'audit sans
+   * qu'aucun garde-fou n'ait cédé.
+   *
+   * Une alerte qui se déclenche sur le comportement NORMAL est pire qu'une absence d'alerte : elle
+   * apprend à ignorer le tableau. On aligne donc sur le chiffre documenté, plutôt que d'inventer un
+   * seuil sans justification.
+   *
+   * ⚠️ Si Timéo veut réduire la pression à 7, c'est le MOTEUR qu'il faut serrer, et cet invariant
+   * suivra. Ne jamais faire l'inverse : un audit plus permissif que la machine ne surveille rien.
+   */
   await verifier('C2', 'coherence',
-    'Aucun contact n\'a reçu plus de 7 mails à vie',
+    'Aucun contact n\'a reçu plus de 8 mails à vie (6 de séquence + 2 de conversation)',
     async () => await sql`
       SELECT c.email, COUNT(*)::int AS mails
       FROM email_queue q JOIN contacts c ON c.id = q.contact_id
       WHERE q.status = 'sent'
-      GROUP BY c.email HAVING COUNT(*) > 7 ORDER BY 2 DESC LIMIT 500`)
+      GROUP BY c.email HAVING COUNT(*) > 8 ORDER BY 2 DESC LIMIT 500`)
 
   await verifier('C3', 'coherence',
     'Aucune relance de séquence n\'est partie après une réponse du prospect',

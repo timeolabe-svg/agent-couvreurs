@@ -408,7 +408,17 @@ async function processBox(box: { email: string; password: string }, started: num
        * boîtes fermées, alors que les autres vérifications étaient déjà, elles, préchargées en bloc.
        */
       const sujetsBase = [...new Set([...envs.values()]
-        .map(v => v.subject.replace(/^s*(re|ré|fwd|fw|tr|rép)s*:s*/gi, '').replace(/^s*(re|ré|fwd|fw|tr|rép)s*:s*/gi, '').trim().toLowerCase())
+        /**
+         * ⚠️ REGEX MUTILÉE, RÉPARÉE LE 26/08. Elle s'écrivait `^s*(re|ré|…)s*:s*` : les antislashes
+         * de `\s` avaient été mangés en passant par un heredoc shell. Le motif restait du JavaScript
+         * VALIDE — il cherchait simplement la lettre « s » — donc ni TypeScript ni le build ne
+         * pouvaient s'en apercevoir. Résultat : le sujet n'était jamais normalisé ici alors qu'il
+         * l'était à la comparaison plus bas, et le rattrapage « réponse depuis une autre adresse »
+         * ne trouvait plus rien.
+         *
+         * ⚠️ NE JAMAIS ÉCRIRE UNE REGEX VIA UN HEREDOC. Passer par l'éditeur, et la tester.
+         */
+        .map(v => v.subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim().toLowerCase())
         .filter(t => t.length > 8))]
       const contactParSujet = new Map<string, string>()
       if (sujetsBase.length > 0) {
@@ -865,7 +875,7 @@ async function processReply(params: {
     })
 
     // Le prospect propose-t-il une AUTRE heure ? On le signale, sans trancher à sa place.
-    const nouvelleHeure = analysisText.match(/(?:plut[oô]t|plutot|vers|à|a)s*(d{1,2})s*(?:h|:)s*(d{2})?/i)
+    const nouvelleHeure = analysisText.match(/(?:plut[oô]t|plutot|vers|à|a)\s*(\d{1,2})\s*(?:h|:)\s*(\d{2})?/i)
     const indice = nouvelleHeure ? `Le prospect semble proposer ${nouvelleHeure[1]}h${nouvelleHeure[2] ?? ''} à la place.` : ''
 
     const corps = [

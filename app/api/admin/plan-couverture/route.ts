@@ -45,6 +45,36 @@ export const METIERS_CIBLES: { sector: string; categorie_google: string }[] = [
   { sector: 'peintre',      categorie_google: 'Painter' },
 ]
 
+/**
+ * ⚠️ LES DEUX ORTHOGRAPHES D'UN MÊME MÉTIER — table d'alias PARTAGÉE.
+ *
+ * La couverture est écrite depuis la colonne « query » du fichier fournisseur, donc dans la langue
+ * de ce qui a été tapé : les achats réels de Timéo sont en français (« terrassier, Paris ») alors
+ * que le planificateur compare au libellé Google (« Excavating contractor »). Dix villes réellement
+ * payées — Paris 448 fiches, Lyon 416, Toulouse 332 — étaient invisibles, et le plan les reproposait
+ * à l'achat.
+ *
+ * ⚠️ CETTE TABLE EST EXPORTÉE POUR UNE RAISON. Le 24/08 je n'avais corrigé QUE ce fichier ; le cron
+ * `achat-leads`, lui, comparait toujours au seul libellé Google et aurait racheté Paris, Lyon et
+ * Toulouse dès le premier achat automatique. Signalé par la session Revele le 26/08. Une règle
+ * recopiée dans un fichier n'est pas une règle du système.
+ */
+export const ALIAS_METIER: Record<string, string[]> = {
+  'Roofing contractor': ['roofing contractor', 'couvreur'],
+  'Excavating contractor': ['excavating contractor', 'terrassier'],
+  'Swimming pool contractor': ['swimming pool contractor', 'pisciniste'],
+  'Masonry contractor': ['masonry contractor', 'maçon', 'macon'],
+  'Carpenter': ['carpenter', 'menuisier'],
+  'Plumber': ['plumber', 'plombier'],
+  'Electrician': ['electrician', 'électricien', 'electricien'],
+  'Painter': ['painter', 'peintre'],
+}
+
+/** Toutes les orthographes sous lesquelles un métier a pu être enregistré. */
+export function aliasDe(categorieGoogle: string): string[] {
+  return ALIAS_METIER[categorieGoogle] ?? [categorieGoogle.toLowerCase()]
+}
+
 export async function GET(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
@@ -66,17 +96,6 @@ export async function GET(req: NextRequest) {
    * On compare donc sur les DEUX libellés. Ce n'est pas cosmétique : sans ça, chaque lot repayait
    * les plus grosses villes du pays.
    */
-  const ALIAS_METIER: Record<string, string[]> = {
-    'Roofing contractor': ['roofing contractor', 'couvreur'],
-    'Excavating contractor': ['excavating contractor', 'terrassier'],
-    'Swimming pool contractor': ['swimming pool contractor', 'pisciniste'],
-    'Masonry contractor': ['masonry contractor', 'maçon', 'macon'],
-    'Carpenter': ['carpenter', 'menuisier'],
-    'Plumber': ['plumber', 'plombier'],
-    'Electrician': ['electrician', 'électricien', 'electricien'],
-    'Painter': ['painter', 'peintre'],
-  }
-  const aliasDe = (categorieGoogle: string) => ALIAS_METIER[categorieGoogle] ?? [categorieGoogle.toLowerCase()]
 
   // ── Chargement initial des communes (gratuit, source officielle) ─────────────
   if (req.nextUrl.searchParams.get('charger') === '1') {

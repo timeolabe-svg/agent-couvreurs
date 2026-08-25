@@ -81,6 +81,17 @@ const TRAVAUX: Travail[] = [
     pourquoi: 'sait quand un humain a répondu depuis la boîte',
   },
   {
+    /**
+     * ⚠️ LE CHIEN DE GARDE ETAIT LUI-MEME MUET. Signale par la session LabegarIA le 26/08 :
+     * heartbeat-check n est appele par PERSONNE -- ni vercel.json, ni un cron, ni une ligne de code.
+     * C est lui qui detecte un cron qui a cesse de tourner ; sans declencheur, il ne detectait rien,
+     * et c est exactement le scenario que decrit la docstring de ce fichier.
+     */
+    cron: 'heartbeat-check',
+    toutesLesHeures: 1,
+    pourquoi: 'detecte les crons devenus muets',
+  },
+  {
     cron: 'watchlist-recheck',
     toutesLesHeures: 24,
     pourquoi: 'repêche les prospects qui viennent de franchir les 20 avis Google',

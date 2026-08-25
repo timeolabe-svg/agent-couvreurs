@@ -311,7 +311,10 @@ async function runCron(req: NextRequest) {
             WHERE s3.contact_id = eq.contact_id AND s3.sequence_step = eq.sequence_step
               AND s3.status = 'queued' AND s3.id < eq.id
           )
-          -- PLAFOND À VIE : jamais plus de 4 mails envoyés à un même contact.
+          -- PLAFOND À VIE : voir LIFETIME_CAP_PER_CONTACT (8 = 6 de séquence + 2 de conversation).
+          -- ⚠️ Ce commentaire annonçait « jamais plus de 4 mails » alors que la constante vaut 8
+          -- depuis longtemps. Un commentaire faux est pire qu'aucun commentaire : trois lectures du
+          -- même fichier donnaient trois chiffres (4 ici, 8 dans la constante, 7 dans l'invariant).
           AND (
             SELECT COUNT(*) FROM email_queue s2
             WHERE s2.contact_id = eq.contact_id AND s2.status = 'sent'
