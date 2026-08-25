@@ -420,5 +420,35 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 23. Quelle ETAPE de la sequence rapporte les reponses ? ──
+  if (seul === '23') {
+    /**
+     * Pour chaque reponse de prospect, on regarde le DERNIER mail envoye avant elle et son etape.
+     * C est la seule facon de dire si les relances tardives servent a quelque chose ou si elles ne
+     * font que consommer la capacite des boites.
+     */
+    out.reponses_par_etape = await sql`
+      SELECT etape,
+             COUNT(*)::int AS reponses,
+             COUNT(*) FILTER (WHERE classification IN ('rdv_request','interest'))::int AS chaudes,
+             COUNT(*) FILTER (WHERE classification = 'desinterest')::int AS refus
+      FROM (
+        SELECT ir.classification,
+               (SELECT q.sequence_step FROM email_queue q
+                 WHERE q.contact_id = ir.contact_id AND q.status='sent' AND q.sent_at < ir.created_at
+                 ORDER BY q.sent_at DESC LIMIT 1) AS etape
+        FROM incoming_replies ir
+        WHERE ir.contact_id IS NOT NULL
+          AND ir.classification NOT IN ('oof','spam')
+      ) x WHERE etape IS NOT NULL
+      GROUP BY etape ORDER BY etape
+    `
+    out.envois_par_etape = await sql`
+      SELECT sequence_step AS etape, COUNT(*)::int AS envoyes
+      FROM email_queue WHERE status='sent' AND sequence_step < 20
+      GROUP BY sequence_step ORDER BY sequence_step
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
