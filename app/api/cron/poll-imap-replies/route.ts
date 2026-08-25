@@ -916,8 +916,28 @@ async function processReply(params: {
       // Créneaux déjà occupés par un RDV confirmé → on ne double-book pas (sinon deux prospects
       // sur le même horaire, impossible à honorer pour le client).
       const busy = (await sql`SELECT scheduled_at FROM rdv WHERE status = 'confirmed' AND scheduled_at > NOW() - INTERVAL '1 day'`) as Array<{ scheduled_at: string }>
+      /**
+       * ⚠️ L'URGENCE SE LIT SUR LA CONVERSATION, PAS SUR LE DERNIER MESSAGE SEUL.
+       *
+       * Le 25/08, Jaky Lesage écrit « je suis disponible MAINTENANT si vous voulez », puis répond
+       * « Oui » à la question suivante. Ce « Oui » ne contient aucun mot d'urgence : mesurée sur le
+       * seul message courant, l'urgence disparaissait, et le « Oui » a servi à confirmer le créneau
+       * du LENDEMAIN. Six minutes plus tard le rappel automatique partait, et le prospect répondait
+       * « non demain je suis pas dispo, j'étais dispo maintenant ».
+       *
+       * Un « oui » ne se comprend jamais tout seul : il porte le sens de ce qui précède. On lit donc
+       * les messages du prospect des dernières 24 heures.
+       */
+      const recents = contact?.id
+        ? (await sql`
+            SELECT body FROM incoming_replies
+            WHERE contact_id = ${contact.id} AND created_at > NOW() - INTERVAL '24 hours'
+            ORDER BY created_at DESC LIMIT 5
+          `.catch(() => [])) as Array<{ body: string }>
+        : []
+      const texteConversation = [analysisText, ...recents.map(r => r.body ?? '')].join(' \n ')
       // Le jour même n'est autorisé QUE si le prospect le demande explicitement.
-      allowToday = /aujourd'?hui|ce soir|dans la journ[ée]e|maintenant|tout de suite|d[èe]s que possible/i.test(analysisText.replace(/[’‘`´]/g, "'"))
+      allowToday = /aujourd'?hui|ce soir|dans la journ[ée]e|maintenant|tout de suite|d[èe]s que possible/i.test(texteConversation.replace(/[’‘`´]/g, "'"))
       candidateSlot = findNextAvailableSlot(parsedDate, availabilityCfg, busy.map(b => b.scheduled_at), allowToday)
       candidateSlotStr = fmtSlot(candidateSlot)
     } catch (e) {
@@ -959,7 +979,19 @@ async function processReply(params: {
       await sql`INSERT INTO dashboard_events (type, data) VALUES ('rdv_created', ${JSON.stringify({
         contactEmail: contact.email, company: contact.company ?? from, scheduledAt: candidateSlot.toISOString(),
       })}::jsonb)`.catch(() => {})
-    } else if (isAffirmativeConfirmation(analysisText) || (isOpenCallRequest(analysisText) && !openCallConflitUrgence(proposedExisting))) {
+    } else if (
+      /**
+       * ⚠️ UN « OUI » NE CONFIRME PAS UN CRÉNEAU QUE LE PROSPECT VIENT D'ÉCARTER.
+       *
+       * Le contrôle d'urgence ne s'appliquait qu'à la « carte blanche ». Un « oui » nu passait donc
+       * devant, et calait le créneau proposé même quand le prospect venait de dire qu'il était
+       * disponible MAINTENANT — cas Jaky Lesage, 25/08. Un « oui » répond à la dernière question
+       * posée, pas forcément à la proposition de créneau ; quand les deux se contredisent, on ne
+       * tranche pas tout seul, on re-propose.
+       */
+      (isAffirmativeConfirmation(analysisText) || isOpenCallRequest(analysisText))
+      && !openCallConflitUrgence(proposedExisting)
+    ) {
       // "oui / ok / parfait", OU carte blanche SANS urgence incompatible ("appelez-moi quand vous
       // voulez") → on cale AU créneau proposé.
       await sql`UPDATE rdv SET status = 'confirmed', incoming_reply_id = ${incomingReplyId} WHERE id = ${proposedExisting.id}`
