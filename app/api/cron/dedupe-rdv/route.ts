@@ -18,9 +18,22 @@ async function handler(req: NextRequest) {
 
   const { sql } = await import('@/lib/db')
 
-  // Garde 1 RDV confirmé par contact (le plus ancien), supprime les doublons.
-  const deleted = (await sql`
-    DELETE FROM rdv
+  /**
+   * Garde le rendez-vous confirmé le plus ancien par contact, et ANNULE les doublons.
+   *
+   * ⚠️ ON N'EFFACE PLUS (audit croisé du 26/08, session Optimum). Ce cron faisait un `DELETE`.
+   * Un rendez-vous porte de l'argent : c'est la ligne sur laquelle le client est facturé, et sur
+   * laquelle se calcule la commission mensuelle des clients signés. La règle posée pour les clients
+   * perdus vaut ici aussi — « un client perdu se DATE, ne se supprime jamais, sinon les factures
+   * passées changent ».
+   *
+   * Et un doublon supprimé ne laisse aucune trace : impossible de savoir, après coup, si le
+   * dédoublonnage a bien visé les bonnes lignes. En passant en `cancelled`, la ligne reste lisible,
+   * elle sort des compteurs (qui excluent désormais les annulés) et la décision est réversible.
+   */
+  const annules = (await sql`
+    UPDATE rdv SET status = 'cancelled',
+      notes = COALESCE(notes, '') || ' [doublon annulé automatiquement le ' || to_char(NOW(), 'DD/MM/YYYY') || ']'
     WHERE id IN (
       SELECT id FROM (
         SELECT id, ROW_NUMBER() OVER (PARTITION BY contact_id ORDER BY created_at ASC) AS rn
@@ -31,7 +44,12 @@ async function handler(req: NextRequest) {
     RETURNING id, contact_id
   `) as Array<{ id: string; contact_id: string }>
 
-  return NextResponse.json({ ok: true, supprimes: deleted.length, ids: deleted.map(d => d.id) })
+  return NextResponse.json({
+    ok: true,
+    annules: annules.length,
+    ids: annules.map(d => d.id),
+    lecture: 'Les doublons sont ANNULÉS, jamais supprimés : un rendez-vous porte de la facturation, et une suppression ne laisse aucune trace vérifiable.',
+  })
 }
 
 /** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
