@@ -31,6 +31,13 @@ export async function GET(req: NextRequest) {
   const etape = req.nextUrl.searchParams.get('etape') ?? 'non_qualifie'
   const motif = req.nextUrl.searchParams.get('motif') ?? ''
   const apply = req.nextUrl.searchParams.get('apply') === '1'
+  /**
+   * ⚠️ Le STATUT technique (propose / confirme / annule) est distinct de l etape commerciale.
+   * Un creneau que le prospect vient de refuser doit repasser en annule, sinon le cron de rappel
+   * relance dessus le lendemain -- c est exactement ce qui a produit  rappel de notre echange prevu
+   * demain  chez Jaky Lesage, six minutes apres qu il ait dit non.
+   */
+  const statut = req.nextUrl.searchParams.get('statut')
   if (!ETAPES_VALIDES.includes(etape)) {
     return NextResponse.json({ error: `étape inconnue : ${etape}`, valides: ETAPES_VALIDES }, { status: 400 })
   }
@@ -78,7 +85,8 @@ export async function GET(req: NextRequest) {
 
   await sql`
     UPDATE rdv
-    SET crm_stage = ${etape},
+    SET status = COALESCE(${statut}, status),
+        crm_stage = ${etape},
         unqualified_reason = CASE WHEN ${etape} = 'non_qualifie' THEN ${motif || null} ELSE NULL END,
         signed_at = CASE WHEN ${etape} = 'signe' THEN COALESCE(signed_at, NOW()) ELSE NULL END
     WHERE id = ANY(${ids})

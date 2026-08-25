@@ -1123,10 +1123,53 @@ async function buildHistory(contactId: string): Promise<Array<{ role: 'sent' | '
       const ts = a.sent_at ? new Date(a.sent_at).getTime() : (a.created_at ? new Date(a.created_at).getTime() : 0)
       if (a.body) items.push({ role: 'sent', body: a.body, ts })
     }
+
+    /**
+     * ⚠️ CE QUE TIMÉO A ÉCRIT À LA MAIN DEPUIS GMAIL — sans ça, l'agent écrit par-dessus un humain.
+     *
+     * Consigne du 25/08 : « dès qu'il interagit avec une personne il doit à chaque fois lire TOUTE
+     * la conversation, des fois j'ai déjà répondu manuellement ». Ces messages n'existent ni dans la
+     * file d'envoi ni dans les brouillons : ils ne sont visibles que par le relevé du dossier des
+     * envoyés.
+     *
+     * On n'a que l'enveloppe, pas le corps — c'est suffisant et c'est l'essentiel : le modèle doit
+     * SAVOIR qu'une réponse est déjà partie, même s'il n'en connaît pas le texte. Ignorer ce qu'on
+     * ne peut pas lire revient à croire que ça n'existe pas.
+     */
+    const contactEmails = (await sql`SELECT LOWER(email) AS email FROM contacts WHERE id = ${contactId}`) as Array<{ email: string }>
+    const adresse = contactEmails[0]?.email
+    if (adresse) {
+      const humains = (await sql`
+        SELECT envoye_le, sujet FROM messages_humains
+        WHERE LOWER(destinataire) = ${adresse}
+        ORDER BY envoye_le DESC LIMIT 20
+      `.catch(() => [])) as Array<{ envoye_le: string; sujet: string | null }>
+      for (const h of humains) {
+        const ts = new Date(h.envoye_le).getTime()
+        // Ne pas doubler ce qu'on connaît déjà par la file ou les brouillons (même minute).
+        if (items.some(i => i.role === 'sent' && Math.abs(i.ts - ts) < 90_000)) continue
+        items.push({
+          role: 'sent',
+          body: `(message déjà envoyé à ce prospect depuis la boîte, objet « ${h.sujet ?? ''} ». Contenu non repris ici, mais il a bien été reçu.)`,
+          ts,
+        })
+      }
+    }
   } catch { /* non bloquant */ }
   return items
     .sort((x, y) => x.ts - y.ts)
-    .map(i => ({ role: i.role, body: i.body, date: i.ts ? new Date(i.ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) : '' }))
+    /**
+     * ⚠️ L'HEURE, PAS SEULEMENT LE JOUR. Jaky Lesage a reçu six messages le même 25 août : datés
+     * « 25 août » six fois, ils se ressemblent tous et rien ne dit au modèle qu'il vient d'écrire il
+     * y a trois minutes. Une conversation se lit dans son ordre ET dans son tempo.
+     */
+    .map(i => ({
+      role: i.role,
+      body: i.body,
+      date: i.ts
+        ? new Date(i.ts).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })
+        : '',
+    }))
 }
 
 /** Annule les relances en file pour un email (statuts d'attente/envoi du moteur maison). */

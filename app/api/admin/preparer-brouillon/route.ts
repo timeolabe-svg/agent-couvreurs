@@ -76,6 +76,23 @@ export async function GET(req: NextRequest) {
   }
 
   if (apply) {
+    /**
+     * ⚠️ ENVOI DIRECT (&envoyer=1) : passe par sendReplyEmail, donc par TOUS ses garde-fous --
+     * delai minimum entre deux messages, boite du fil, detection de repondeur automatique. Un
+     * raccourci qui ecrirait le SMTP lui-meme contournerait ces regles, et c est exactement le
+     * defaut qui a fait ecrire une excuse a un robot le 24/08.
+     */
+    if (req.nextUrl.searchParams.get('envoyer') === '1') {
+      const { sendReplyEmail } = await import('@/lib/reply-agent/send-reply')
+      const r = await sendReplyEmail(derniere.id, texte)
+      if (!r.ok) return NextResponse.json({ envoi_refuse: r.error, entreprise: derniere.company }, { status: 409 })
+      await sql`
+        INSERT INTO reply_drafts (incoming_reply_id, body, status, created_at, sent_at)
+        VALUES (${derniere.id}::uuid, ${texte}, 'sent', NOW(), NOW())
+      `
+      await sql`UPDATE incoming_replies SET action_taken = 'replied' WHERE id = ${derniere.id}::uuid`
+      return NextResponse.json({ ok: true, mode: 'ENVOYÉ', entreprise: derniere.company, texte })
+    }
     await sql`
       INSERT INTO reply_drafts (incoming_reply_id, body, status, created_at)
       VALUES (${derniere.id}::uuid, ${texte}, 'pending', NOW())
