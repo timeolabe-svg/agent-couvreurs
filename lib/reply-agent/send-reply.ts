@@ -19,14 +19,14 @@ export interface SendReplyResult {
 export async function sendReplyEmail(incomingReplyId: string, body: string): Promise<SendReplyResult> {
   const { sql } = await import('@/lib/db')
   const rows = (await sql`
-    SELECT ir.from_email, ir.subject, ir.contact_id,
+    SELECT ir.from_email, ir.subject, ir.contact_id, ir.created_at,
            (SELECT eq.from_email FROM email_queue eq
               WHERE eq.contact_id = ir.contact_id AND eq.status = 'sent' AND eq.from_email IS NOT NULL
               ORDER BY eq.sent_at DESC LIMIT 1) AS owning_box
     FROM incoming_replies ir
     WHERE ir.id = ${incomingReplyId}
     LIMIT 1
-  `) as Array<{ from_email: string; subject: string | null; contact_id: string | null; owning_box: string | null }>
+  `) as Array<{ from_email: string; subject: string | null; contact_id: string | null; created_at: string | null; owning_box: string | null }>
 
   const r = rows[0]
   if (!r || !r.from_email) return { ok: false, error: 'incoming reply introuvable ou sans adresse' }
@@ -46,6 +46,20 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
    * ne protège que cet appelant.
    *
    * ⚠️ Ce délai n'est PAS un confort de style : c'est ce qui a coûté un rendez-vous.
+   */
+  /**
+   * ⚠️ LE DÉLAI NE S'APPLIQUE PAS QUAND LE PROSPECT VIENT D'ÉCRIRE.
+   *
+   * Question de Timéo : « tu n'attends pas 2 h avant de répondre au lead quand même ? » Non, et
+   * c'était pourtant le défaut de ma première version : le délai comptait depuis notre dernier
+   * message, quel qu'il soit. Un prospect qui répondait trente minutes après un mail de séquence
+   * aurait attendu quatre-vingt-dix minutes sa réponse — exactement l'inverse du but recherché.
+   *
+   * La règle juste tient en une phrase : **si le prospect a parlé depuis notre dernier message, on
+   * répond tout de suite.** Le délai ne sert qu'à empêcher un SECOND message quand personne n'a
+   * rien dit entre les deux — le cas de Jaky Lesage, six messages en vingt et une minutes.
+   *
+   * Autrement dit, on ne borne pas la vitesse de réponse, on borne le monologue.
    */
   const DELAI_MIN_ENTRE_MESSAGES_MIN = Number(process.env.DELAI_MIN_ENTRE_MESSAGES_MIN ?? 120)
   if (r.contact_id) {
@@ -70,10 +84,39 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
     `.catch(() => [{ dernier: null }])) as Array<{ dernier: string | null }>
     const dernier = recent[0]?.dernier ? new Date(recent[0].dernier).getTime() : 0
     const minutes = dernier ? (Date.now() - dernier) / 60_000 : Infinity
-    if (minutes < DELAI_MIN_ENTRE_MESSAGES_MIN) {
+
+    // Le prospect a-t-il écrit APRÈS notre dernier message ? Si oui, il attend une réponse : on la
+    // lui donne immédiatement, quel que soit le délai.
+    const apres = (await sql`
+      SELECT MAX(created_at) AS dernier_recu FROM incoming_replies WHERE contact_id = ${r.contact_id}
+    `) as Array<{ dernier_recu: string | null }>
+    const dernierRecu = apres[0]?.dernier_recu ? new Date(apres[0].dernier_recu).getTime() : 0
+    const prospectAParleDepuis = dernierRecu > dernier
+
+    /**
+     * ⚠️ LA RÈGLE PRINCIPALE : QUELQU'UN A-T-IL DÉJÀ RÉPONDU À CE MESSAGE ?
+     *
+     * Consigne de Timéo, 25/08 : « des fois j'ai déjà répondu manuellement donc il ne faut pas
+     * renvoyer de message ». Le délai seul ne l'attrape pas : chez Jaky Lesage, le prospect écrivait
+     * entre chaque message, donc « le prospect a parlé depuis » restait vrai à chaque tour pendant
+     * que trois voix se répondaient sur le même fil.
+     *
+     * La bonne question n'est pas « quand ai-je écrit pour la dernière fois » mais « ce message-ci
+     * a-t-il déjà reçu une réponse ». Si un envoi est sorti de la boîte APRÈS l'arrivée du message
+     * auquel on veut répondre, il a déjà été traité, par l'agent ou par un humain. On se tait.
+     */
+    const arrivee = r.created_at ? new Date(r.created_at).getTime() : 0
+    if (arrivee && dernier > arrivee) {
       return {
         ok: false,
-        error: `un message est déjà parti à ce prospect il y a ${Math.round(minutes)} min (délai minimum ${DELAI_MIN_ENTRE_MESSAGES_MIN} min)`,
+        error: `ce message a déjà reçu une réponse (un envoi est parti ${Math.round((dernier - arrivee) / 60_000)} min après son arrivée)`,
+      }
+    }
+
+    if (minutes < DELAI_MIN_ENTRE_MESSAGES_MIN && !prospectAParleDepuis) {
+      return {
+        ok: false,
+        error: `un message est déjà parti à ce prospect il y a ${Math.round(minutes)} min et il n'a rien écrit depuis (délai minimum ${DELAI_MIN_ENTRE_MESSAGES_MIN} min entre deux messages de notre part)`,
       }
     }
   }
