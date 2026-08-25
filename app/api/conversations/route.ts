@@ -140,13 +140,30 @@ export async function GET() {
      * à traiter, elle n'a rien à faire dans l'onglet des rendez-vous.
      */
     const rdvRows = contactIds.length
-      ? await db.select({ contact_id: rdv.contact_id }).from(rdv)
+      ? await db.select({ contact_id: rdv.contact_id, status: rdv.status }).from(rdv)
           .where(and(
             inArray(rdv.contact_id, contactIds),
             inArray(rdv.status, ['confirmed', 'proposed', 'rescheduled', 'signed']),
           ))
       : []
     const contactsWithRdv = new Set(rdvRows.map(r => r.contact_id).filter(Boolean))
+
+    /**
+     * ⚠️ « CRÉNEAU PROPOSÉ » N'EST PAS « RENDEZ-VOUS CALÉ » — et l'écran doit dire lequel des deux.
+     *
+     * J'ai regroupé les deux dans le même onglet le 24/08, ce qui est bon pour le rangement. Mais
+     * la pastille, elle, affichait « RDV calé » dans les deux cas. Timéo a lu « RDV calé » sur Jaky
+     * Lesage, est allé voir la conversation, et a constaté que le prospect n'avait jamais répondu à
+     * la proposition de créneau. La base disait pourtant la vérité : statut « proposed », avec la
+     * note « créneau proposé, en attente de confirmation du prospect ».
+     *
+     * Un écran qui affirme plus que ce que la base sait est pire qu'un écran vide, parce qu'on lui
+     * fait confiance. L'information existait, il fallait la transporter jusqu'à l'affichage.
+     */
+    const contactsRdvConfirme = new Set(
+      rdvRows.filter(r => r.status === 'confirmed' || r.status === 'signed')
+        .map(r => r.contact_id).filter(Boolean),
+    )
 
     // 4ter. ÉPUISÉ : plus rien ne partira automatiquement pour ce contact — aucun mail en file,
     // aucun brouillon en attente d'envoi, et les 2 relances de conversation ont été consommées.
@@ -181,6 +198,7 @@ export async function GET() {
       website: string | null
       classification: string | null
       rdvBooked: boolean
+      rdvConfirme: boolean
       /** Le dernier message reçu n'a jamais reçu de réponse ENVOYÉE de l'agent. */
       prospectAttend: boolean
       /** Date de retour annoncée par le prospect (absence/fermeture). */
@@ -220,6 +238,8 @@ export async function GET() {
            */
           rdvBooked: (r.contact_id ? contactsWithRdv.has(r.contact_id) : false)
             || r.classification === 'rdv_request',
+          /** Vrai seulement si le prospect a CONFIRME. Empeche d ecrire  cale  sur une simple proposition. */
+          rdvConfirme: r.contact_id ? contactsRdvConfirme.has(r.contact_id) : false,
           prospectAttend: false, // calculé plus bas, une fois tous les messages rassemblés
           absentJusquAu: r.contact_id ? (absents.get(r.contact_id) ?? null) : null,
           redirigeVers: r.contact_id ? (redirections.get(r.contact_id) ?? null) : null,

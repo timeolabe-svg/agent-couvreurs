@@ -153,6 +153,16 @@ async function handler(req: NextRequest) {
         AND c.email IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM rdv_rappels x WHERE x.rdv_id = r.id::text AND x.echeance = ${e.cle})
         AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+        -- ⚠️ ON NE RAPPELLE PAS UN RENDEZ-VOUS PENDANT QUE LA CONVERSATION EST EN TRAIN DE BOUGER.
+        -- Le 25/08, Jaky Lesage a écrit « je suis disponible MAINTENANT », a dit oui à un appel
+        -- immédiat, et a reçu six minutes plus tard « rappel de notre échange prévu demain ». Le
+        -- créneau de demain n'était plus d'actualité, le prospect venait de le dire, et le rappel
+        -- l'a contredit. Un rappel est utile quand un rendez-vous dort, jamais quand il se
+        -- renégocie sous nos yeux.
+        AND NOT EXISTS (
+          SELECT 1 FROM incoming_replies ir
+          WHERE ir.contact_id = c.id AND ir.created_at > NOW() - INTERVAL '6 hours'
+        )
     `) as Array<{ id: string; scheduled_at: string; email: string; company: string | null; phone: string | null; boite_du_fil: string | null }>
 
     for (const r of dus) {

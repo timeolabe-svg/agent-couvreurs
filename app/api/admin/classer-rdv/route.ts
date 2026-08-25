@@ -42,13 +42,26 @@ export async function GET(req: NextRequest) {
    * eu lieu, et un rendez-vous déjà classé porte une décision du client — l'écraser en lot
    * effacerait un chiffre d'affaires signé sans que personne s'en aperçoive.
    */
-  const cibles = (await sql`
+  /**
+   * ⚠️ Ciblage nominatif possible : un classement en lot se trompe forcément sur un cas ou deux,
+   * et il faut pouvoir le défaire sans toucher aux autres. PRO RÉNOV a été classé à tort le 25/08.
+   */
+  const entreprise = req.nextUrl.searchParams.get("entreprise")
+
+  const cibles = entreprise
+    ? (await sql`
+        SELECT r.id, r.scheduled_at, r.status, r.crm_stage, c.company
+        FROM rdv r JOIN contacts c ON c.id = r.contact_id
+        WHERE c.company ILIKE ${"%" + entreprise + "%"}
+        ORDER BY r.scheduled_at ASC
+      `) as Array<{ id: string; scheduled_at: string; status: string; crm_stage: string | null; company: string }>
+    : (await sql`
     SELECT r.id, r.scheduled_at, r.status, r.crm_stage, c.company
     FROM rdv r JOIN contacts c ON c.id = r.contact_id
     WHERE r.scheduled_at < NOW()
       AND (r.crm_stage IS NULL OR r.crm_stage = 'a_venir')
     ORDER BY r.scheduled_at ASC
-  `) as Array<{ id: string; scheduled_at: string; status: string; crm_stage: string | null; company: string }>
+      `) as Array<{ id: string; scheduled_at: string; status: string; crm_stage: string | null; company: string }>
 
   if (!apply) {
     return NextResponse.json({

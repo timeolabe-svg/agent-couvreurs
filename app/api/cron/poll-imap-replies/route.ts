@@ -507,6 +507,7 @@ async function processBox(box: { email: string; password: string }, started: num
     } finally {
       lock.release()
     }
+
   } finally {
     await client.logout().catch(() => { try { client.close() } catch { /* noop */ } })
   }

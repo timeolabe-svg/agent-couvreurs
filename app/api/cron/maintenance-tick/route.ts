@@ -71,6 +71,16 @@ const TRAVAUX: Travail[] = [
     pourquoi: 'recontacte les prospects à la date de retour qu\'ils ont annoncée',
   },
   {
+    /**
+     * ⚠️ CADENCE COURTE VOULUE. Ce relevé alimente le garde-fou qui empêche l agent d écrire
+     * par-dessus une réponse écrite à la main. Plus il est vieux, plus la fenêtre pendant laquelle
+     * l agent peut doubler un humain est large.
+     */
+    cron: 'relever-envoyes',
+    toutesLesHeures: 0.25,
+    pourquoi: 'sait quand un humain a répondu depuis la boîte',
+  },
+  {
     cron: 'watchlist-recheck',
     toutesLesHeures: 24,
     pourquoi: 'repêche les prospects qui viennent de franchir les 20 avis Google',

@@ -21,6 +21,7 @@ interface Conversation {
   website: string | null
   classification: string | null
   rdvBooked?: boolean
+  rdvConfirme?: boolean
   /** Le prospect a écrit et n'a pas eu de réponse : la conversation demande une action. */
   prospectAttend?: boolean
   /** Date de retour annoncée (fermeture, congés) — range la conversation dans « Absents ». */
@@ -226,7 +227,9 @@ export default function ConversationsPage() {
           )}
           {filtered.map(c => {
             const cls = c.rdvBooked
-              ? { label: 'RDV calé', color: '#5c9b82' }
+              ? (c.rdvConfirme
+                  ? { label: 'RDV calé', color: '#5c9b82' }
+                  : { label: 'Créneau proposé', color: '#c99a3f' })
               : (c.exhausted && c.classification !== 'desinterest')
               ? { label: 'Relances épuisées', color: '#6b6b80' }
               : (c.classification ? CLASS_LABEL[c.classification] : null)

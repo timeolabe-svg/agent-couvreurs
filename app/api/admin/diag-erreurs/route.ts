@@ -450,5 +450,48 @@ export async function GET(req: NextRequest) {
     `
   }
 
+  // ── 24. Qui a cree ce rendez-vous, et sur quel message ? ──
+  if (seul === '24') {
+    const nom = req.nextUrl.searchParams.get('entreprise') ?? ''
+    out.rdv = await sql`
+      SELECT r.id, r.scheduled_at, r.status, r.crm_stage, r.created_at, r.incoming_reply_id,
+             LEFT(COALESCE(r.notes,''), 300) AS notes, c.company
+      FROM rdv r JOIN contacts c ON c.id = r.contact_id
+      WHERE c.company ILIKE ${'%' + nom + '%'} ORDER BY r.created_at DESC
+    `
+    out.messages = await sql`
+      SELECT 'recu' AS sens, ir.created_at, ir.classification,
+             LEFT(REGEXP_REPLACE(ir.body, E'\s+', ' ', 'g'), 200) AS texte
+      FROM incoming_replies ir JOIN contacts c ON c.id = ir.contact_id
+      WHERE c.company ILIKE ${'%' + nom + '%'}
+      UNION ALL
+      SELECT 'envoye', q.sent_at, 'step ' || q.sequence_step,
+             LEFT(REGEXP_REPLACE(q.body, E'\s+', ' ', 'g'), 200)
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE c.company ILIKE ${'%' + nom + '%'} AND q.status = 'sent'
+      ORDER BY 2 ASC
+    `
+  }
+
+  // ── 25. Les derniers messages RECUS d un contact, non tronques ──
+  if (seul === '25') {
+    const mail = (req.nextUrl.searchParams.get('email') ?? '').toLowerCase()
+    out.recus = await sql`
+      SELECT ir.created_at, ir.classification, ir.subject, LEFT(ir.body, 500) AS corps
+      FROM incoming_replies ir
+      WHERE LOWER(ir.from_email) = ${mail}
+      ORDER BY ir.created_at DESC LIMIT 5
+    `
+  }
+
+  // ── 26. Ce qui est parti vers un prospect, toutes mains confondues ──
+  if (seul === '26') {
+    const mail = (req.nextUrl.searchParams.get('email') ?? '').toLowerCase()
+    out.sortants = await sql`
+      SELECT envoye_le, boite, LEFT(sujet, 90) AS sujet FROM messages_humains
+      WHERE LOWER(destinataire) = ${mail} ORDER BY envoye_le DESC LIMIT 12
+    `
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
