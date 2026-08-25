@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { partDeMotsRepris, SEUIL_REDITE } from '@/lib/utils'
 import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
 import type { NeonQueryFunction } from '@neondatabase/serverless'
@@ -427,6 +428,24 @@ async function runCron(req: Request) {
         isFollowUp: true,
         fromEmail: x.owner_box,
       })
+      /**
+       * ⚠️ MÊME RÈGLE QUE L'AUTRE CHEMIN, ET C'EST TOUT L'INTÉRÊT.
+       *
+       * Ce chemin-ci n'avait AUCUN contrôle de redite : Plomberie Multi Services a reçu le 3 puis le
+       * 6 août deux messages IDENTIQUES au caractère près, à 78 heures d'intervalle. Le garde-fou
+       * existait pourtant — dans l'autre fonction du même fichier.
+       *
+       * Une règle écrite dans un chemin n'est pas une règle du système. Elle vit maintenant dans
+       * `lib/utils`, et les deux chemins l'appellent.
+       */
+      const dejaEnvoye = history?.length
+        ? ([...history].reverse().find(h => h.role === 'sent')?.body ?? '')
+        : ''
+      const redite = partDeMotsRepris(body, dejaEnvoye)
+      if (redite > SEUIL_REDITE) {
+        repairs.push(`⛔ re-proposition trop répétitive (${Math.round(redite * 100)} %) → ${x.email}`)
+        continue
+      }
       if (!(await texteSur(body, `re-proposition RDV ${x.email}`, x.website))) {
         repairs.push(`⛔ re-proposition bloquée (donnée inventée) → ${x.email}`)
         continue
@@ -552,15 +571,10 @@ async function runCron(req: Request) {
        * Deux messages quasi identiques à deux jours d'intervalle, c'est la signature d'un robot :
        * c'est précisément ce qui fait perdre un lead chaud et fait signaler l'expéditeur.
        */
-      const normaliser = (t: string) => (t || '')
-        .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-        .replace(/[^a-z0-9]+/g, ' ').trim()
-      const motsDe = (t: string) => new Set(normaliser(t).split(' ').filter(m => m.length > 3))
+      // Une seule definition de la regle, partagee avec l autre chemin (lib/utils).
       const dernierEnvoye = sent.length ? sent[sent.length - 1].body : ''
-      const a = motsDe(dernierEnvoye), b = motsDe(body)
-      const communs = [...b].filter(m => a.has(m)).length
-      const similarite = b.size > 0 ? communs / b.size : 0
-      if (similarite > 0.7) {
+      const similarite = partDeMotsRepris(body, dernierEnvoye)
+      if (similarite > SEUIL_REDITE) {
         await sql`
           INSERT INTO urgent_tasks (type, title, description, contact_id)
           VALUES ('relance_repetitive',

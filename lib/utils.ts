@@ -84,3 +84,31 @@ export function stripEmojis(s: string | null | undefined): string {
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
+
+/**
+ * PART DES MOTS D'UN TEXTE QUI VIENNENT DÉJÀ D'UN AUTRE — détecteur de message répétitif.
+ *
+ * ⚠️ POURQUOI CETTE FONCTION EXISTE ICI ET PAS DANS UN SEUL CRON.
+ *
+ * La règle « ne pas renvoyer deux fois le même message » vivait écrite en dur dans UN des deux
+ * chemins qui produisent une relance de conversation. L'autre chemin n'en savait rien : Plomberie
+ * Multi Services a reçu le 3 puis le 6 août deux messages IDENTIQUES au caractère près, à 78 heures
+ * d'intervalle. Deux messages quasi identiques, c'est la signature d'un robot — exactement ce qui
+ * fait perdre un lead chaud et fait signaler l'expéditeur.
+ *
+ * Une règle écrite dans un chemin n'est pas une règle du système. Elle doit vivre à un seul endroit
+ * et être appelée par tous ceux qui écrivent.
+ */
+export function partDeMotsRepris(nouveau: string, precedent: string): number {
+  const normaliser = (t: string) => (t || '')
+    .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim()
+  const motsDe = (t: string) => new Set(normaliser(t).split(' ').filter(m => m.length > 3))
+  const a = motsDe(precedent)
+  const b = motsDe(nouveau)
+  if (b.size === 0) return 0
+  return [...b].filter(m => a.has(m)).length / b.size
+}
+
+/** Au-delà de ce taux de reprise, le message est considéré comme une redite et n'est pas envoyé. */
+export const SEUIL_REDITE = 0.7
