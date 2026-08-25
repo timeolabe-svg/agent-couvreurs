@@ -130,11 +130,36 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
   const baseSubject = (r.subject ?? '').replace(/^\s*(re\s*:\s*)+/i, '').trim()
   const subject = baseSubject ? `Re: ${baseSubject}` : 'Re: votre message'
 
+  /**
+   * ⚠️ LE PIED DE PAGE LÉGAL MANQUAIT SUR CE CHEMIN (audit croisé du 26/08, session Optimum).
+   *
+   * `send-campaign` posait bien le bloc RGPD et les en-têtes `List-Unsubscribe` sur les mails de
+   * séquence. Les RÉPONSES, elles, partaient sans rien : ni mention d'origine des coordonnées, ni
+   * lien de désinscription, ni bouton natif dans Gmail. Or une réponse à un prospect démarché reste
+   * de la prospection commerciale — la même obligation s'applique.
+   *
+   * Encore le même motif que toute la journée : la règle existait, dans UN SEUL des deux chemins par
+   * lesquels un mail sort. On la pose donc ici aussi, avec la même garde anti-empilement.
+   */
+  const { blocLegalRgpd } = await import('@/lib/rgpd')
+  const { creerJetonDesabo } = await import('@/lib/unsubscribe-token')
+  const base = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
+  const lienDesabo = `${base}/u/${creerJetonDesabo(r.from_email)}`
+
+  let corpsFinal = body
+  if (!/coordonnées professionnelles proviennent/i.test(corpsFinal)) {
+    corpsFinal = `${corpsFinal.trimEnd()}\n\n${blocLegalRgpd(lienDesabo)}`
+  }
+
   const res = await sendFromBox(box, {
     to: r.from_email,
     subject,
-    text: body,
+    text: corpsFinal,
     senderName: getInboxSenderName(box.email),
+    headers: {
+      'List-Unsubscribe': `<${lienDesabo}>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
   })
   return { ok: res.ok, via: box.email, to: r.from_email, error: res.error }
 }

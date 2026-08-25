@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
+import { PRIX_PAR_RDV } from '@/lib/facturation'
 
 // Prix facturé par RDV généré (accord Hdigiweb). À mettre à jour si le tarif change.
-const PRIX_PAR_RDV = 80
+// ⚠️ Le tarif vit dans lib/facturation.ts : une seule definition, partagee avec le prelevement
+// Stripe. Deux constantes pour le meme prix, c est la garantie qu elles divergeront -- le
+// prelevement etait a 50 pendant que ce tableau calculait sur 80.
 export const dynamic = 'force-dynamic'
 
 function getMockSummary() {
@@ -124,7 +127,7 @@ export async function GET() {
     email_queue, incoming_replies, reply_drafts, rdv, contacts,
     dashboard_events, campaigns, agent_config, learning_reports,
   } = await import('@/lib/db/schema')
-  const { count, eq, gte, and, desc, sql, lte, ne, or, isNull, inArray } = await import('drizzle-orm')
+  const { count, eq, gte, and, desc, sql, lte, ne, or, isNull, inArray, notInArray } = await import('drizzle-orm')
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -175,17 +178,17 @@ export async function GET() {
     db.select({ totalReplies: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof')))
     ),
-    db.select({ totalRdv: count() }).from(rdv).where(ne(rdv.status, 'proposed')),
+    db.select({ totalRdv: count() }).from(rdv).where(notInArray(rdv.status, ['proposed', 'cancelled'])),
     db.select({ totalSigned: count() }).from(rdv).where(eq(rdv.status, 'signed')),
     db.select({ emailsSentToday: count() }).from(email_queue).where(and(eq(email_queue.status, 'sent'), gte(email_queue.sent_at, todayStart))),
     db.select({ repliesToday: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(and(
       gte(incoming_replies.created_at, todayStart),
       or(isNull(incoming_replies.classification), and(ne(incoming_replies.classification, 'spam'), ne(incoming_replies.classification, 'oof'))),
     )),
-    db.select({ rdvToday: count() }).from(rdv).where(and(gte(rdv.scheduled_at, todayStart), sql`${rdv.scheduled_at} < ${todayEnd}`, ne(rdv.status, 'proposed'))),
+    db.select({ rdvToday: count() }).from(rdv).where(and(gte(rdv.scheduled_at, todayStart), sql`${rdv.scheduled_at} < ${todayEnd}`, notInArray(rdv.status, ['proposed', 'cancelled']))),
     db.select({ draftsAwaitingValidation: count() }).from(reply_drafts).where(eq(reply_drafts.status, 'pending')),
     db.select({ totalContacts: count() }).from(contacts),
-    db.select({ rdvThisMonth: count() }).from(rdv).where(and(gte(rdv.created_at, monthStart), ne(rdv.status, 'proposed'))),
+    db.select({ rdvThisMonth: count() }).from(rdv).where(and(gte(rdv.created_at, monthStart), notInArray(rdv.status, ['proposed', 'cancelled']))),
     // repliesReceived ce mois = PERSONNES distinctes ayant répondu (hors spam / auto-répondeurs)
     db.select({ repliesReceived: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(and(
       gte(incoming_replies.created_at, monthStart),
@@ -240,7 +243,7 @@ export async function GET() {
   const weekRdvRows = await db
     .select({ scheduled_at: rdv.scheduled_at })
     .from(rdv)
-    .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`, ne(rdv.status, 'proposed')))
+    .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`, notInArray(rdv.status, ['proposed', 'cancelled'])))
   const rdvThisWeek = weekRdvRows.length
 
   // Daily activity last 7 days (for bar chart)
@@ -333,7 +336,7 @@ export async function GET() {
   const rdvThisWeekRows = await db
     .select({ scheduled_at: rdv.scheduled_at })
     .from(rdv)
-    .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`, ne(rdv.status, 'proposed')))
+    .where(and(gte(rdv.scheduled_at, weekStart), sql`${rdv.scheduled_at} < ${weekEnd}`, notInArray(rdv.status, ['proposed', 'cancelled'])))
 
   const rdvByDate: Record<string, number> = {}
   for (const r of rdvThisWeekRows) {
@@ -368,7 +371,7 @@ export async function GET() {
       const [{ rdvCnt }] = await db
         .select({ rdvCnt: count() })
         .from(rdv)
-        .where(and(eq((rdv as typeof rdv & { campaign_id?: unknown }).campaign_id as Parameters<typeof eq>[0], c.id), gte(rdv.created_at, monthStart), ne(rdv.status, 'proposed')))
+        .where(and(eq((rdv as typeof rdv & { campaign_id?: unknown }).campaign_id as Parameters<typeof eq>[0], c.id), gte(rdv.created_at, monthStart), notInArray(rdv.status, ['proposed', 'cancelled'])))
         .catch(() => [{ rdvCnt: 0 }])
       // TAUX DE RÉPONSE de CETTE campagne (avant : numérateur = TOUTES les réponses du mois, non
       // filtré campagne ni spam → taux > 100% aberrant). Numérateur = PERSONNES distinctes ayant

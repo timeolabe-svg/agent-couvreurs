@@ -183,33 +183,23 @@ export async function POST(request: NextRequest) {
     },
   })
 
-  // Auto-charge 50€ if customer has a saved payment method
-  if (process.env.STRIPE_SECRET_KEY) {
-    try {
-      const { stripe } = await import('@/lib/stripe')
-      const { agent_config } = await import('@/lib/db/schema')
-
-      const [customerRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
-      const [pmRow] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
-
-      if (customerRow?.value && pmRow?.value) {
-        await stripe.paymentIntents.create({
-          amount: 5000, // 50€ in cents
-          currency: 'eur',
-          customer: customerRow.value,
-          payment_method: pmRow.value,
-          confirm: true,
-          off_session: true,
-          description: `RDV Hdigiweb — ${contact.company} — ${startTime.toLocaleDateString('fr-FR')}`,
-          metadata: { rdv_id: inserted.id, contact_company: contact.company },
-        })
-        console.log('[api/rdv] Stripe charge 50€ OK for', contact.company)
-      }
-    } catch (stripeErr) {
-      console.error('[api/rdv] Stripe charge failed:', stripeErr)
-      // Don't block RDV creation on payment failure
-    }
-  }
+  /**
+   * ⚠️ AUCUN PRÉLÈVEMENT ICI — RETIRÉ LE 26/08 (audit croisé, session Revele).
+   *
+   * Ce bloc débitait le client de 50 € à la CRÉATION du rendez-vous, en `off_session`, sans
+   * anti-doublon. Trois défauts d'un coup :
+   *
+   *   1. Le tarif de ce client est de 80 €, pas 50. Le tableau de bord calculait déjà sur 80 : deux
+   *      montants pour la même prestation, et c'est celui qui prélevait qui avait tort.
+   *   2. Il prélevait AVANT toute qualification. Or seuls les rendez-vous classés `qualifie`,
+   *      `signe` ou `perdu` sont facturables — le 25/08, neuf rendez-vous sur dix ont justement été
+   *      classés `non_qualifie` parce qu'ils ne comptaient pas.
+   *   3. Rien n'empêchait deux prélèvements pour le même rendez-vous.
+   *
+   * La facturation vit maintenant dans `lib/facturation.ts` et se déclenche au moment où le
+   * rendez-vous DEVIENT facturable, une seule fois. Un rendez-vous qui n'a rien donné ne coûte plus
+   * rien au client.
+   */
 
   // Notification email
   if (RESEND_API_KEY) {

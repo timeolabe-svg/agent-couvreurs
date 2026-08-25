@@ -151,6 +151,26 @@ export async function PATCH(req: NextRequest) {
         unqualified_reason = CASE WHEN ${stage} = 'non_qualifie' THEN unqualified_reason ELSE NULL END
       WHERE id = ${id}
     `
+
+    /**
+     * ⚠️ C'EST ICI, ET NULLE PART AILLEURS, QUE LE CLIENT EST FACTURÉ.
+     *
+     * Le prélèvement se déclenchait auparavant à la CRÉATION du rendez-vous, avant toute
+     * qualification — donc y compris pour les rendez-vous que Timéo classe ensuite « non qualifié »
+     * parce qu'ils n'ont rien donné. Un rendez-vous ne devient facturable qu'au moment où le client
+     * le classe, et c'est ce moment-là qu'on écoute.
+     *
+     * `facturerRdv` ne lève jamais : un échec de paiement ne doit pas empêcher d'enregistrer le
+     * classement commercial. Il porte son propre anti-doublon, garanti par la base.
+     */
+    const { facturerRdv } = await import('@/lib/facturation')
+    const facturation = await facturerRdv(sql as never, id)
+    if (facturation.facture) {
+      await sql`
+        INSERT INTO dashboard_events (type, data)
+        VALUES ('rdv_facture', ${JSON.stringify({ rdv_id: id, etape: stage, montant_eur: facturation.montant_eur })}::jsonb)
+      `.catch(() => {})
+    }
   }
 
   if ('unqualifiedReason' in (body ?? {})) {
