@@ -45,6 +45,21 @@ export const contacts = pgTable('contacts', {
   mv_last_attempt_at: timestamp('mv_last_attempt_at'),
   mv_attempts: integer('mv_attempts').default(0),
   /**
+   * ⚠️ COLONNES QUI EXISTAIENT EN BASE SANS ÊTRE DÉCLARÉES ICI (26/08, audit A→Z).
+   *
+   * Une colonne absente de ce fichier est INVISIBLE à tout le code qui passe par Drizzle :
+   * `db.select().from(...)` ne demande que les colonnes déclarées. C est ce qui avait vidé l onglet
+   * « Absents » — vingt-cinq fiches portaient une date que l écran ne pouvait pas voir.
+   *
+   * Les quatre ci-dessous n étaient lues que par du SQL brut, donc rien ne cassait aujourd hui. Mais
+   * la prochaine requête Drizzle sur ces tables serait repartie dans le même piège. Types relevés
+   * dans information_schema, pas devinés.
+   */
+  /** Verdict rendu par MillionVerifier (ok / catch_all / invalid / unknown...). */
+  mv_status: text('mv_status'),
+  /** Le prospect s est plaint du NOMBRE de mails : plus aucune relance automatique. */
+  pression_signalee_at: timestamp('pression_signalee_at', { withTimezone: true }),
+  /**
    * ABSENCE ANNONCÉE PAR LE PROSPECT (« fermé jusqu'au 25 août »).
    *
    * ⚠️ Ces colonnes existaient en base (migration) mais PAS ici : `db.select().from(contacts)` ne
@@ -84,6 +99,8 @@ export const email_queue = pgTable('email_queue', {
   campaign_id: uuid('campaign_id').references(() => campaigns.id),
   sequence_step: integer('sequence_step').default(0), // 0=initial, 1=follow1, 2=follow2, 3=follow3
   from_email: text('from_email').notNull(),
+  /** Boîte réellement utilisée pour l envoi (réputation, fidélité de boîte). */
+  sent_via: text('sent_via'),
   subject: text('subject').notNull(),
   body: text('body').notNull(),
   status: text('status').default('pending'), // pending/sent/bounced/failed/opened/replied
@@ -167,6 +184,8 @@ export const rdv = pgTable('rdv', {
   // Classement commercial fait par le CLIENT (Haris) : a_venir / qualifie / signe / perdu /
   // non_qualifie. Distinct de `status`, qui est l'état technique du rendez-vous.
   crm_stage: text('crm_stage').default('a_venir'),
+  /** Horodatage de la RÉSERVATION de facturation (cf. lib/facturation.ts : on réserve avant de prélever). */
+  facture_le: timestamp('facture_le', { withTimezone: true }),
   unqualified_reason: text('unqualified_reason'),
   signed_at: timestamp('signed_at'),
   client_note: text('client_note'),

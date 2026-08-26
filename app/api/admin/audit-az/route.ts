@@ -33,6 +33,18 @@ async function handler(req: NextRequest) {
   const out: Record<string, unknown> = {}
 
   /** Structure réelle : sert à repérer toute colonne écrite par le code mais inexistante en base. */
+  /** Types réels — pour déclarer une colonne dans `schema.ts` sans la deviner. */
+  if (quoi === 'types') {
+    out.types = await sql`
+      SELECT table_name, column_name, data_type, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND (table_name, column_name) IN (
+          ('contacts', 'mv_status'), ('contacts', 'pression_signalee_at'),
+          ('email_queue', 'sent_via'), ('rdv', 'facture_le'))
+      ORDER BY table_name, column_name`
+  }
+
   if (quoi === 'schema') {
     out.colonnes = await sql`
       SELECT table_name, string_agg(column_name, ',' ORDER BY ordinal_position) AS colonnes

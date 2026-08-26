@@ -1,10 +1,10 @@
 /**
  * `npm run db:push` NE DOIT PLUS RIEN POUSSER — et voici pourquoi.
  *
- * ⚠️ DIX TABLES DE PRODUCTION VIVENT EN DEHORS DE `lib/db/schema.ts`. Elles ont été créées au fil de
+ * ⚠️ TREIZE TABLES DE PRODUCTION VIVENT EN DEHORS DE `lib/db/schema.ts`. Elles ont été créées au fil de
  * l'eau par des `CREATE TABLE IF NOT EXISTS` dans les crons qui en avaient besoin. `drizzle-kit push`
  * compare le schéma déclaré à la base et **SUPPRIME tout ce qui n'y figure pas**. Une seule commande,
- * lancée de bonne foi après une modification de schéma, effacerait :
+ * lancée de bonne foi après une modification de schéma, effacerait (liste re-mesuree le 26/08 contre information_schema) :
  *
  *   cron_heartbeats         tout l'historique de surveillance des crons
  *   rdv_rappels             les traces de rappels déjà envoyés → tous les rappels repartiraient
@@ -34,7 +34,7 @@ console.error(`
   ✗ db:push est désactivé volontairement.
 
   drizzle-kit push SUPPRIME les tables absentes de lib/db/schema.ts.
-  Dix tables de production vivent en dehors du schéma, dont scrape_couverture
+  Treize tables de production vivent en dehors du schéma, dont scrape_couverture
   (la mémoire anti-rachat) et villes_scraping (5 564 communes).
 
   Pour modifier le schéma : ajouter une étape dans app/api/admin/migrate/route.ts

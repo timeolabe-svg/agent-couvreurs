@@ -146,8 +146,8 @@ async function runCron(req: NextRequest) {
    * feu n'est pas un interrupteur d'urgence.
    *
    * On déclenche donc la maintenance AVANT de rendre la main. Les deux autres greffes de fin de run
-   * (`rappels-rdv`, `reprendre-apres-absence`) restent APRÈS, elles : celles-là écrivent à des
-   * prospects, et une pause d'envoi doit bien les arrêter.
+   * (`reprendre-apres-absence`) reste APRÈS, elle : c'est de la prospection, et une pause d'envoi
+   * doit bien l'arrêter. `rappels-rdv` a dû être remonté — voir la note juste en dessous.
    */
   if (process.env.SEND_PAUSED === '1') {
     try {
@@ -158,6 +158,31 @@ async function runCron(req: NextRequest) {
     } catch { /* la surveillance réessaiera au prochain run */ }
     return NextResponse.json({ ok: true, paused: true, message: 'Envoi en pause (SEND_PAUSED=1) — surveillance maintenue' })
   }
+
+  /**
+   * ⚠️ LES RAPPELS DE RENDEZ-VOUS NE SONT PAS DE LA PROSPECTION (26/08, régression que J'AI créée
+   * ce matin et que mon propre invariant C5 a attrapée en moins d'une heure).
+   *
+   * `rappels-rdv` était déclenché en FIN de run, comme `maintenance-tick`. En posant la fenêtre
+   * d'envoi juste en dessous, je l'ai mis hors d'atteinte dès 19 h et tout le week-end : le cron
+   * s'est tu, et C5 l'a signalé muet depuis plus de trois intervalles.
+   *
+   * La règle qui vaut pour la prospection ne vaut pas ici. Un rappel s'adresse à quelqu'un qui a DÉJÀ
+   * un rendez-vous : le manquer coûte un rendez-vous — donc 80 € et la confiance du client — alors
+   * qu'un rappel envoyé à 20 h ne coûte rien. On le déclenche donc AVANT la fenêtre.
+   *
+   * ⚠️ Mais APRÈS le kill-switch : `SEND_PAUSED` veut dire « on arrête tout », et ça inclut les
+   * rappels. Une fenêtre horaire et un arrêt d'urgence ne se traitent pas de la même façon.
+   *
+   * `reprendre-apres-absence`, lui, reste après : c'est de la prospection, il doit respecter la
+   * fenêtre — et il est de toute façon relancé par `maintenance-tick`, qui passe avant.
+   */
+  try {
+    const base = process.env.PUBLIC_APP_URL || BASE_URL
+    await fetch(`${base}/api/cron/rappels-rdv?key=${process.env.CRON_SECRET ?? ''}`, {
+      signal: AbortSignal.timeout(6000),
+    })
+  } catch { /* les rappels réessaieront au prochain run */ }
 
   /**
    * FENÊTRE D'ENVOI — LUNDI À VENDREDI, 8 h À 19 h, HEURE DE PARIS.
@@ -611,12 +636,8 @@ async function runCron(req: NextRequest) {
      * Borné à 6 s et entièrement isolé : un rappel qui échoue ne doit jamais faire tomber l'envoi,
      * qui est la fonction vitale.
      */
-    try {
-      const base = process.env.PUBLIC_APP_URL || BASE_URL
-      await fetch(`${base}/api/cron/rappels-rdv?key=${process.env.CRON_SECRET ?? ''}`, {
-        signal: AbortSignal.timeout(6000),
-      })
-    } catch { /* les rappels réessaieront au prochain run */ }
+    // ⚠️ DÉPLACÉ EN HAUT DU RUN, avant la fenêtre d'envoi (cf. la note longue là-bas). Le laisser
+    // ici aussi le lancerait deux fois par passage. Un seul déclencheur, et il est en amont.
 
     /**
      * REPRISE APRÈS ABSENCE — même raison, même greffe.
