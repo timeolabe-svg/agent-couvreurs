@@ -518,5 +518,91 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── 28. Changements d adresse : la sequence a-t-elle ete arretee ? ──
+  /**
+   * ── 28. UN CHANGEMENT D'ADRESSE A-T-IL ARRÊTÉ LA SÉQUENCE ? ────────────────────
+   *
+   * Bleu 30 Piscines a écrit le 14/07 « veuillez noter notre changement d'adresse mail ». Six mails
+   * sont partis APRÈS, à l'ancienne adresse, jusqu'au 30/07. On mesure ici l'étendue réelle.
+   *
+   * ⚠️ Volontairement SANS expression régulière : les deux tentatives précédentes ont vu leurs
+   * antislashes mangés par le shell et rendaient zéro ligne — une requête qui ne trouve rien
+   * ressemble exactement à un problème qui n'existe pas.
+   */
+  if (seul === '28') {
+    out.redirections = await sql`
+      WITH signale AS (
+        SELECT ir.contact_id, MIN(ir.created_at) AS le
+        FROM incoming_replies ir
+        WHERE ir.body ILIKE '%changement d%adresse%'
+           OR ir.body ILIKE '%nouvelle adresse%'
+           OR ir.body ILIKE '%nouveau mail%'
+           OR ir.body ILIKE '%nouvel email%'
+        GROUP BY ir.contact_id
+      )
+      SELECT c.company, c.email, c.redirige_vers, s.le AS signale_le,
+             (SELECT COUNT(*) FROM email_queue q
+               WHERE q.contact_id = c.id AND q.status = 'sent' AND q.sent_at > s.le)::int AS mails_apres,
+             (SELECT COUNT(*) FROM email_queue q
+               WHERE q.contact_id = c.id AND q.status IN ('queued','pending'))::int AS encore_en_file
+      FROM signale s JOIN contacts c ON c.id = s.contact_id
+      ORDER BY mails_apres DESC
+    `
+  }
+
+  /**
+   * ── 29. ARRÊTER LES SÉQUENCES QUI PARTENT VERS UNE ADRESSE ABANDONNÉE ─────────
+   *
+   * ⚠️ UN CORRECTIF DE CAUSE NE RÉPARE PAS LE PASSÉ. Le poller annule bien la file depuis août
+   * quand un prospect annonce une nouvelle adresse. Mais les changements signalés AVANT ce
+   * correctif n'ont jamais été traités : Bleu 30 Piscines a reçu six mails après son message du
+   * 14/07, MOREL trois, et SAE REOLON en avait encore TROIS en file au 26/08 — prêts à partir vers
+   * une boîte que le prospect a lui-même déclarée abandonnée.
+   *
+   * ⚠️ Et l'outil censé rattraper ces cas (`rattacher-redirections`) répondait « APPLIQUÉ » en
+   * n'écrivant rien : `fiches_mises_a_jour: 0`. Un outil de réparation qui annonce une action qu'il
+   * ne fait pas est pire qu'une absence d'outil, parce qu'on le croit.
+   *
+   * On annule donc la file, et on marque la fiche comme redirigée pour qu'elle sorte de la
+   * messagerie active. On ne SUPPRIME rien : l'historique des envois reste lisible.
+   */
+  if (seul === '29') {
+    const aArreter = await sql`
+      WITH signale AS (
+        SELECT ir.contact_id, MIN(ir.created_at) AS le
+        FROM incoming_replies ir
+        WHERE ir.body ILIKE '%changement d%adresse%'
+           OR ir.body ILIKE '%nouvelle adresse%'
+           OR ir.body ILIKE '%nouveau mail%'
+           OR ir.body ILIKE '%nouvel email%'
+        GROUP BY ir.contact_id
+      )
+      SELECT c.id, c.company, c.email,
+             (SELECT COUNT(*) FROM email_queue q
+               WHERE q.contact_id = c.id AND q.status IN ('queued','pending','sending'))::int AS en_file
+      FROM signale s JOIN contacts c ON c.id = s.contact_id
+      WHERE c.redirige_vers IS NULL
+      ORDER BY en_file DESC
+    `
+    out.a_arreter = aArreter
+
+    if (req.nextUrl.searchParams.get('appliquer') === '1') {
+      const ids = (aArreter as Array<{ id: string }>).map(r => r.id)
+      if (ids.length > 0) {
+        const annules = (await sql`
+          UPDATE email_queue SET status = 'cancelled'
+          WHERE contact_id = ANY(${ids}) AND status IN ('queued','pending','sending')
+          RETURNING id
+        `) as unknown[]
+        await sql`
+          UPDATE contacts SET redirige_vers = COALESCE(redirige_vers, 'adresse abandonnée, signalée par le prospect')
+          WHERE id = ANY(${ids})
+        `
+        out.mails_annules = annules.length
+        out.fiches_marquees = ids.length
+      }
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
