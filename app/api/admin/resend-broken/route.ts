@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkCronAuth } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,7 +66,19 @@ async function doReset(limit: number) {
   }
 }
 
+
+/**
+ * ⚠️ DÉFENSE EN PROFONDEUR (26/08, signalé par les sessions Revele et Optimum).
+ *
+ * Cette route ne vérifiait AUCUNE clé : elle ne tenait que par le mur d'authentification du proxy.
+ * Une seule règle mal posée dans `proxy.ts` suffisait donc à la rendre publique — et c'est
+ * exactement ce qui s'est produit pendant quarante-sept jours avec `AUTH_DISABLED`. Une route qui
+ * touche aux données des prospects doit porter sa propre serrure, indépendamment de qui garde
+ * l'entrée en amont.
+ */
 export async function GET(request: NextRequest) {
+  const auth = checkCronAuth(request)
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }
@@ -82,7 +95,19 @@ export async function GET(request: NextRequest) {
 }
 
 // POST conservé (équivalent), pour un usage programmatique.
+
+/**
+ * ⚠️ DÉFENSE EN PROFONDEUR (26/08, signalé par les sessions Revele et Optimum).
+ *
+ * Cette route ne vérifiait AUCUNE clé : elle ne tenait que par le mur d'authentification du proxy.
+ * Une seule règle mal posée dans `proxy.ts` suffisait donc à la rendre publique — et c'est
+ * exactement ce qui s'est produit pendant quarante-sept jours avec `AUTH_DISABLED`. Une route qui
+ * touche aux données des prospects doit porter sa propre serrure, indépendamment de qui garde
+ * l'entrée en amont.
+ */
 export async function POST(request: NextRequest) {
+  const authPost = checkCronAuth(request)
+  if (!authPost.ok) return NextResponse.json({ error: authPost.error }, { status: authPost.status })
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
   }

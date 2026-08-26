@@ -765,7 +765,21 @@ async function processReply(params: {
   // engage le client sur des conditions qu'il n'a pas validées. Un agent commercial doit savoir
   // reconnaître ce qui le dépasse. Ici : on n'écrit rien, on remonte la balle.
   if (isNegociationCommerciale(cleanBody)) {
-    await sql`UPDATE incoming_replies SET classification = 'negociation', agent_decision = 'no_action', status = 'awaiting_validation' WHERE instantly_reply_id = ${dedupKey}`.catch(() => {})
+    /**
+     * ⚠️ CETTE ÉCRITURE VISAIT DEUX COLONNES QUI N'EXISTENT PAS (26/08, signalé par les deux autres
+     * sessions). `incoming_replies` n'a ni `agent_decision` ni `status` — la colonne de décision
+     * s'appelle `action_taken`. L'UPDATE échouait donc EN ENTIER, à chaque fois, et le `.catch`
+     * muet l'avalait : la classification « négociation » n'a jamais été écrite une seule fois.
+     *
+     * Le message était bien mis en attente et l'alerte bien envoyée — mais la messagerie affichait
+     * une classification fausse, et rien ne le signalait. Une écriture qui échoue en silence est
+     * une donnée qu'on croit avoir.
+     *
+     * On garde un `.catch` pour ne pas faire tomber le traitement du message sur un incident de
+     * base, mais il TRACE désormais au lieu de se taire.
+     */
+    await sql`UPDATE incoming_replies SET classification = 'negociation', action_taken = 'draft_for_validation' WHERE instantly_reply_id = ${dedupKey}`
+      .catch((e) => { console.error('[poll-imap] classification negociation non ecrite:', String(e).slice(0, 160)) })
     const titre = `[DÉCISION] Proposition commerciale — ${from}`
     await sql`
       INSERT INTO urgent_tasks (type, title, description)
@@ -782,10 +796,24 @@ async function processReply(params: {
     return { processed: true, classification: 'negociation' }
   }
 
-  // ── Opt-out / désintérêt (classé par l'IA) → blocklist + annulation des relances ──
+  /**
+   * ── Opt-out / désintérêt (classé par l'IA) → blocklist + annulation des relances ──
+   *
+   * ⚠️ CE CHEMIN NE BLOQUAIT QUE L'EXPÉDITEUR (26/08, signalé par les sessions Optimum et Revele).
+   *
+   * Les deux chemins déterministes juste au-dessus appellent `ciblesArret(from, cleanBody,
+   * contact.email)` : ils bloquent la personne, la FICHE démarchée, les adresses citées dans le
+   * message et le domaine professionnel. Celui-ci, lui, se contentait de `blocklistOnce(from)`.
+   *
+   * L'écart n'est pas théorique, c'est l'incident du 12/08 : un prospect refuse depuis son adresse
+   * personnelle, on blockliste le particulier, et l'entreprise démarchée garde ses relances. Un refus
+   * ferme le DOSSIER, pas seulement le message — et il doit le fermer de la même façon, que le refus
+   * ait été reconnu par une expression figée ou par l'IA. Deux détecteurs pour une même règle ne
+   * doivent jamais produire deux effets différents.
+   */
   if (classification.action === 'blocklist') {
-    await blocklistOnce(from, 'desinterest')
-    if (contact?.id) await cancelSteps(from)
+    const cibles = await ciblesArret(from, cleanBody, contact?.email)
+    for (const c of cibles) { await blocklistOnce(c, 'desinterest'); await cancelSteps(c) }
     await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, classification: classification.classification, action: 'blocklist', company: contact?.company ?? from })}::jsonb)`
     return { processed: true, classification: classification.classification }
   }
@@ -875,7 +903,7 @@ async function processReply(params: {
     })
 
     // Le prospect propose-t-il une AUTRE heure ? On le signale, sans trancher à sa place.
-    const nouvelleHeure = analysisText.match(/(?:plut[oô]t|plutot|vers|à|a)\s*(\d{1,2})\s*(?:h|:)\s*(\d{2})?/i)
+    const nouvelleHeure = analysisText.match(/\b(?:plut[oô]t|plutot|vers|à|a)\s*(\d{1,2})\s*(?:h|:)\s*(\d{2})?\b/i)
     const indice = nouvelleHeure ? `Le prospect semble proposer ${nouvelleHeure[1]}h${nouvelleHeure[2] ?? ''} à la place.` : ''
 
     const corps = [

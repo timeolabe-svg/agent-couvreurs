@@ -130,9 +130,33 @@ async function runCron(req: NextRequest) {
   const auth = checkCronAuth(req)
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
-  // KILL-SWITCH d'urgence : coupe tout envoi si SEND_PAUSED=1 (env Vercel).
+  /**
+   * KILL-SWITCH d'urgence : coupe tout envoi si SEND_PAUSED=1 (env Vercel).
+   *
+   * ⚠️ IL COUPAIT AUSSI TOUTE LA SURVEILLANCE (26/08, signalé par les sessions Revele et Optimum).
+   *
+   * `maintenance-tick` est déclenché en FIN de run, donc ce `return` ne l'atteignait jamais. Or il
+   * porte `heartbeat-check` (le chien de garde de tous les crons), le relevé du dossier Envoyés,
+   * `watchlist-recheck`, l'apprentissage et les exports. Et `send-campaign` n'étant pas dans
+   * `vercel.json`, il n'existe aucun autre chemin vers lui.
+   *
+   * Autrement dit : mettre l'envoi en pause — ce qu'on fait précisément pendant une chauffe de boîte
+   * ou après un incident, c'est-à-dire aux moments les plus risqués — éteignait du même coup toutes
+   * les alarmes. Un interrupteur d'urgence qui coupe les détecteurs de fumée en même temps que le
+   * feu n'est pas un interrupteur d'urgence.
+   *
+   * On déclenche donc la maintenance AVANT de rendre la main. Les deux autres greffes de fin de run
+   * (`rappels-rdv`, `reprendre-apres-absence`) restent APRÈS, elles : celles-là écrivent à des
+   * prospects, et une pause d'envoi doit bien les arrêter.
+   */
   if (process.env.SEND_PAUSED === '1') {
-    return NextResponse.json({ ok: true, paused: true, message: 'Envoi en pause (SEND_PAUSED=1)' })
+    try {
+      const base = process.env.PUBLIC_APP_URL || BASE_URL
+      await fetch(`${base}/api/cron/maintenance-tick?key=${process.env.CRON_SECRET ?? ''}`, {
+        signal: AbortSignal.timeout(6000),
+      })
+    } catch { /* la surveillance réessaiera au prochain run */ }
+    return NextResponse.json({ ok: true, paused: true, message: 'Envoi en pause (SEND_PAUSED=1) — surveillance maintenue' })
   }
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
 

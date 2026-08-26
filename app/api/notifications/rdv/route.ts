@@ -75,7 +75,10 @@ export async function POST(request: NextRequest) {
       Authorization: `Bearer ${RESEND_API_KEY}`,
     },
     body: JSON.stringify({
-      from: 'agent@hdigiweb.fr',
+      // ⚠️ Expéditeur écrit en dur alors que `lib/notify.ts` lit `RESEND_FROM_EMAIL` : le jour où le
+      // domaine d'envoi change, cette notification-ci part d'une adresse non vérifiée et Resend la
+      // rejette. Le client cesse alors d'être prévenu de ses rendez-vous, sans erreur visible.
+      from: process.env.RESEND_FROM_EMAIL ?? 'agent@hdigiweb.fr',
       to: CLIENT_NOTIFY_EMAIL,
       subject: `🎯 Nouveau RDV confirmé — ${contact?.company ?? 'Contact'}`,
       html,

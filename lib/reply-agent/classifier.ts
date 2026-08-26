@@ -184,7 +184,13 @@ export function isAutoResponder(body: string, subject: string, fromEmail: string
      * Les motifs ci-dessous visent la FERMETURE D'ENTREPRISE, qui est toujours automatique — une
      * personne qui écrit vraiment ne présente pas sa société à la troisième personne.
      */
-    /^s*absence/,
+    // ⚠️ TROISIÈME REGEX MUTILÉE PAR UN HEREDOC (26/08, signalé par la session Optimum). Le motif
+    // s'écrivait `/^s*absence\b/` — sauf que l'antislash de `\s` avait disparu ET que le `\b` était
+    // devenu un OCTET « retour arrière » (0x08), invisible dans l'éditeur. Il ne cherchait donc pas
+    // « un espace éventuel puis absence » mais la lettre « s » répétée, suivie d'un caractère de
+    // contrôle : il ne matchait RIEN, en silence. Or c'est ce détecteur qui empêche de répondre à un
+    // répondeur automatique. Les expressions régulières s'écrivent dans l'éditeur, jamais en heredoc.
+    /^\s*absence\b/,
     /fermeture (estivale|annuelle|exceptionnelle|de nos bureaux|des bureaux)/,
     /(bureaux|magasin|soci[ée]t[ée]|entreprise|agence|secr[ée]tariat)[^.]{0,60}ferm[ée]/,
     /ferm[ée]e?s? (exceptionnellement )?(pour cong[ée]s|du d)/,

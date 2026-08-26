@@ -79,10 +79,23 @@ async function handler(req: Request) {
         })
         .from(rdvTable)
         .leftJoin(contacts, sql`${rdvTable.contact_id} = ${contacts.id}`)
+        /**
+         * ⚠️ L'AGENDA DU MATIN ANNONÇAIT DES RENDEZ-VOUS ANNULÉS (26/08, signalé par la session
+         * Optimum). Le filtre ne portait que sur l'horaire, pas sur le statut : un rendez-vous
+         * `cancelled` — dont ceux que `dedupe-rdv` annule automatiquement — ou un simple créneau
+         * `proposed`, pas encore confirmé par le prospect, apparaissait comme un vrai rendez-vous
+         * du jour.
+         *
+         * C'est la faute la plus coûteuse de la famille « écran qui ment » : Haris se déplace pour
+         * un rendez-vous qui n'existe pas. Et la règle « un créneau proposé n'est pas un rendez-vous
+         * tant que le prospect n'a pas dit oui » était déjà posée ailleurs — elle n'avait simplement
+         * jamais été portée ici.
+         */
         .where(
           and(
             gte(rdvTable.scheduled_at, todayStart),
             sql`${rdvTable.scheduled_at} < ${new Date(todayStart.getTime() + 24 * 60 * 60 * 1000)}`,
+            sql`COALESCE(${rdvTable.status}, '') NOT IN ('cancelled', 'proposed', 'rescheduled')`,
           ),
         )
         .orderBy(rdvTable.scheduled_at),

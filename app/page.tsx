@@ -200,7 +200,19 @@ export default function DashboardPage() {
   const barMax = Math.max(...barData.map(d => d.count), 1)
 
   // pipeline
-  const pipeline = s?.pipeline ?? { prospects: 847, contacted: 234, replied: 18, rdv: 5, signed: 0 }
+  /**
+   * ⚠️ AUCUN CHIFFRE INVENTÉ EN REPLI (26/08, signalé par la session Revele).
+   *
+   * Ce repli affichait « 847 prospects, 234 contactés, 18 réponses, 5 RDV » quand l'API ne
+   * répondait pas. Des valeurs crédibles, donc invérifiables à l'œil : le client regardait un
+   * tableau de bord en panne en le prenant pour la réalité de sa prospection. C'est exactement la
+   * faute des « 11 RDV affichés dont 0 généré par l'agent ».
+   *
+   * Un écran qui ne sait pas doit le dire, pas meubler. Zéro partout est faux aussi, mais c'est un
+   * faux VISIBLE : personne ne croit un tableau de bord entièrement vide, tout le monde croit un
+   * tableau de bord plausible.
+   */
+  const pipeline = s?.pipeline ?? { prospects: 0, contacted: 0, replied: 0, rdv: 0, signed: 0 }
   const pTotal = pipeline.prospects || 1
 
   // week calendar
@@ -222,13 +234,9 @@ export default function DashboardPage() {
   const todayStr = today.toISOString().slice(0, 10)
 
   // top campaigns
-  const topCampaigns: TopCampaign[] = s?.topCampaigns?.length
-    ? s.topCampaigns
-    : [
-        { name: 'Couvreurs IDF — Relance Q2', sentThisMonth: 234, replyRate: 7.7, rdvCount: 5, status: 'active' },
-        { name: 'Couvreurs Lyon — Initial', sentThisMonth: 98, replyRate: 4.1, rdvCount: 2, status: 'active' },
-        { name: 'Toitures Nord — Test A/B', sentThisMonth: 45, replyRate: 0, rdvCount: 0, status: 'paused' },
-      ]
+  // Même règle qu'au-dessus : pas de campagnes fictives en repli. « Couvreurs IDF — Relance Q2 »
+  // n'a jamais existé, et son taux de réponse de 7,7 % non plus. La liste reste vide.
+  const topCampaigns: TopCampaign[] = s?.topCampaigns ?? []
 
   // recent activity
   const recentActivity: RecentActivity[] = s?.recentActivity?.length

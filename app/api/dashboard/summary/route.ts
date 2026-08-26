@@ -368,11 +368,32 @@ export async function GET() {
         .select({ sentThisMonth: count() })
         .from(email_queue)
         .where(and(eq(email_queue.campaign_id, c.id), eq(email_queue.status, 'sent'), gte(email_queue.sent_at, monthStart)))
-      const [{ rdvCnt }] = await db
-        .select({ rdvCnt: count() })
-        .from(rdv)
-        .where(and(eq((rdv as typeof rdv & { campaign_id?: unknown }).campaign_id as Parameters<typeof eq>[0], c.id), gte(rdv.created_at, monthStart), notInArray(rdv.status, ['proposed', 'cancelled'])))
-        .catch(() => [{ rdvCnt: 0 }])
+      /**
+       * ⚠️ CETTE COLONNE N'EXISTE PAS, ET UN CAST L'AVAIT CACHÉE (26/08, signalé par la session Revele).
+       *
+       * Le code lisait `rdv.campaign_id`. La table `rdv` n'a pas cette colonne — elle n'en a jamais
+       * eu. Pour faire taire le compilateur, un `as` avait été posé dessus, et un `.catch` renvoyait
+       * 0 en cas d'échec. Résultat : la requête échouait à CHAQUE appel, silencieusement, et la
+       * colonne « RDV » du tableau des meilleures campagnes affichait 0 depuis toujours.
+       *
+       * Un cast ne répare rien : il empêche seulement le compilateur de dire la vérité. Et un
+       * `.catch` qui renvoie une valeur plausible transforme une panne en chiffre.
+       *
+       * On rattache donc le rendez-vous à sa campagne par le seul lien qui existe réellement : le
+       * mail qui a touché ce contact. `DISTINCT` parce qu'un contact reçoit plusieurs mails de la
+       * même campagne.
+       */
+      const [{ rdvCnt }] = (await sqlBrut`
+        SELECT COUNT(DISTINCT r.id)::int AS "rdvCnt"
+        FROM rdv r
+        WHERE r.created_at >= ${monthStart}
+          AND COALESCE(r.status, '') NOT IN ('proposed', 'cancelled')
+          AND EXISTS (
+            SELECT 1 FROM email_queue eq
+            WHERE eq.contact_id = r.contact_id AND eq.campaign_id = ${c.id}
+          )
+      `) as Array<{ rdvCnt: number }>
+
       // TAUX DE RÉPONSE de CETTE campagne (avant : numérateur = TOUTES les réponses du mois, non
       // filtré campagne ni spam → taux > 100% aberrant). Numérateur = PERSONNES distinctes ayant
       // répondu parmi les contacts de la campagne (hors spam/oof) ; dénominateur = contacts

@@ -37,7 +37,28 @@ export async function proxy(request: NextRequest) {
    * `resend-broken`) : c'est précisément pour ça qu'on ne peut PAS ouvrir `/api/admin` en bloc.
    * Ici, sans clé valide, elles restent derrière le mot de passe.
    */
-  if (pathname.startsWith('/api/')) {
+  /**
+   * ⚠️ LA CLÉ MACHINE N'OUVRE QUE LES ROUTES MACHINE (26/08, signalé par la session Revele).
+   *
+   * Le contournement portait sur `/api/` TOUT ENTIER. Or `CRON_SECRET` vaut `hdigiweb-cron-2026`,
+   * une valeur devinable qui figurait de surcroît en clair dans un commentaire de `lib/cron-auth.ts`.
+   * Conséquence mesurée le 26/08 : `GET /api/leads?key=hdigiweb-cron-2026` renvoyait le nom, l'email,
+   * le téléphone et la ville de plus de trois mille entreprises, **sans aucune session**. Sur un
+   * projet déjà sous plainte CNIL, c'était la surface des quarante-sept jours d'`AUTH_DISABLED`
+   * refermée par une serrure qu'on pouvait deviner.
+   *
+   * Un jeton de machine sert à faire tourner des machines, pas à consulter un fichier de prospects.
+   * On le restreint donc aux deux familles qui en ont réellement besoin — `/api/cron/` (les crons) et
+   * `/api/admin/` (les crons s'appellent entre eux, et c'est ma surface de diagnostic). Vérifié avant
+   * de restreindre : aucun cron n'appelle `/api/leads` ni `/api/rdv`. Ces routes-là, comme tout le
+   * reste de l'application, exigent désormais la session.
+   *
+   * ⚠️ Ceci RÉDUIT l'exposition, ça ne la supprime pas : le secret reste faible et il est dans
+   * l'historique git. La rotation vers une vraie valeur reste à faire, et elle oblige à reprendre les
+   * tâches cron-job.org une par une — c'est une décision d'exploitation, pas un correctif de code.
+   */
+  const routeMachine = pathname.startsWith('/api/cron/') || pathname.startsWith('/api/admin/')
+  if (routeMachine) {
     const secret = process.env.CRON_SECRET
     if (secret && secret.length >= 8) {
       const header = request.headers.get('authorization') ?? ''

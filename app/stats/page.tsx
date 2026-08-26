@@ -252,7 +252,12 @@ export default function StatsPage() {
                         </div>
                         <div className="text-right text-[12px]" style={{ color: '#5c9b82' }}>{city.rdv}</div>
                         <div className="text-right text-[12px] font-bold" style={{ color: '#a99cc9' }}>
-                          {city.rdv * 50} €
+                          {/* ⚠️ Cette colonne recalculait le revenu à 50 € par rendez-vous, en dur, alors
+                              que l'API renvoie déjà `revenue` — au bon tarif (80 €) et sur les seuls
+                              rendez-vous facturables. La page ignorait la réponse qu'elle venait de
+                              recevoir : un écran qui refait le calcul du serveur finit toujours par en
+                              donner un autre. On affiche la valeur reçue, sans y toucher. */}
+                          {city.revenue} €
                         </div>
                       </div>
                     ))

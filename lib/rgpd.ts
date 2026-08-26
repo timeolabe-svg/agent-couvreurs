@@ -105,7 +105,16 @@ export function stripOurFooterAndQuotes(text: string): string {
 /** Opt-out simple : le prospect ne veut plus être contacté. */
 export function isExplicitOptOut(text: string): boolean {
   const t = stripOurFooterAndQuotes(text).trim().toLowerCase()
-  if (/^stop\b/.test(t)) return true
+  /**
+   * ⚠️ ANCRE MULTILIGNE (26/08, signalé par la session Optimum). Sans le drapeau `m`, `^stop` ne
+   * regardait que le tout début du message : un « Bonjour\nStop\nMerci » — la forme la plus courante,
+   * puisque les gens saluent avant de refuser — passait à travers. Un refus raté est une relance
+   * envoyée à quelqu'un qui a dit non.
+   *
+   * L'ancre reste SERRÉE (`$` avec ponctuation tolérée) : sans elle, « Stop and Go SARL » en tête de
+   * signature blockliste un lead chaud. Trop large et trop étroit sont deux fautes, pas une seule.
+   */
+  if (/^stop\b[ .!,;:)-]*$/m.test(t)) return true
   if (/^\s*(arr[êe]tez|arr[êe]te)\s*[.!]*\s*$/.test(t)) return true
   return new RegExp(
     [

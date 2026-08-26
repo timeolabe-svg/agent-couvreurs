@@ -489,6 +489,22 @@ async function runCron(req: Request) {
       -- plus aucune relance automatique, même s'il n'a jamais écrit "stop". Devoir se désabonner
       -- après s'être plaint de la pression d'envoi, c'est ce qui déclenche le signalement.
       AND c.pression_signalee_at IS NULL
+      /**
+       * ⚠️ UN BROUILLON REFUSÉ PAR TIMÉO FERME LE SUJET (26/08, signalé par les deux autres sessions).
+       *
+       * La Partie A de ce même cron filtrait déjà les conversations où Timéo a rejeté un brouillon.
+       * La Partie C, non : elle pouvait donc relancer, toute seule, un prospect à qui Timéo venait
+       * de décider de ne PAS écrire. Sa consigne est pourtant sans ambiguïté — « si c'est dans à
+       * valider, ne prend pas l'initiative d'envoyer le mail, t'attends mon accord ».
+       *
+       * Deux parties d'un même fichier appliquaient deux règles différentes à la même décision
+       * humaine. Un refus ne vaut pas pour le chemin qui l'a vu, il vaut pour le dossier.
+       */
+      AND NOT EXISTS (
+        SELECT 1 FROM reply_drafts rd
+        JOIN incoming_replies ir3 ON ir3.id = rd.incoming_reply_id
+        WHERE ir3.contact_id = c.id AND rd.status = 'rejected' AND rd.rejete_par = 'humain'
+      )
     LIMIT 200
   `) as Array<{ id: string; email: string; company: string; name: string | null; city: string | null; sector: string | null; website: string | null; owner_box: string | null; last_subject: string | null; last_out: string; last_in: string; last_classification: string | null; convo_relances: number }>
 

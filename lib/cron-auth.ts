@@ -1,6 +1,11 @@
 // Auth centralisée des crons.
+//
+// ⚠️ NE JAMAIS ÉCRIRE LA VALEUR DU SECRET ICI. Elle y figurait, dans l'exemple ci-dessous, et un
+// commentaire est aussi lisible que du code : la session Revele a pu interroger la production avec.
+// Un secret cité « pour l'exemple » est un secret publié.
+//
 // IMPORTANT : cron-job.org permet d'ajouter des variables dans le header, ex.
-// "Bearer hdigiweb-cron-2026%cjo:uuid4%%cjo:unixtime%". Ces %cjo:...% sont
+// "Bearer <CRON_SECRET>%cjo:uuid4%%cjo:unixtime%". Ces %cjo:...% sont
 // remplacées à CHAQUE appel par des valeurs aléatoires → un match EXACT échoue
 // systématiquement (401) → l'agent n'ajoute aucun lead et ne traite aucune réponse.
 //

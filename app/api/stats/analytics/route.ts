@@ -2,8 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-// Prix facturé par RDV généré (accord Hdigiweb). À mettre à jour si le tarif change.
-const PRIX_PAR_RDV = 80
+/**
+ * Prix facturé par rendez-vous et étapes réellement facturables : LUS DEPUIS LA FACTURATION.
+ *
+ * ⚠️ Cette valeur était écrite ici en dur (80), et à trois autres endroits (`50` dans les données de
+ * démonstration, `50` en dur dans `app/stats/page.tsx`). Un tarif recopié est un tarif qui diverge :
+ * le jour où Timéo renégocie, il en corrige un sur quatre et les trois autres mentent en silence.
+ * `lib/facturation.ts` est le seul endroit qui prélève réellement de l'argent — c'est donc lui qui
+ * fait foi.
+ */
+import { PRIX_PAR_RDV, ETAPES_FACTURABLES } from '@/lib/facturation'
 
 type Period = '7d' | '30d' | '90d' | 'all'
 
@@ -151,7 +159,13 @@ export async function GET(request: NextRequest) {
   const commission = +(caApporte * 0.05).toFixed(2)
 
   const replyRate = emailsSent > 0 ? +(Math.min(replies, emailsSent) / emailsSent * 100).toFixed(1) : 0
-  const revenue = rdvCount * PRIX_PAR_RDV
+  // Voir la note sur `cityRdvFacturableRaw` : le chiffre d'affaires suit ETAPES_FACTURABLES, jamais
+  // le nombre brut de rendez-vous. Un rendez-vous `a_venir` ou `non_qualifie` ne rapporte rien.
+  const [{ rdvFacturables }] = await db
+    .select({ rdvFacturables: count() })
+    .from(rdv)
+    .where(and(rdvConditions, inArray(rdv.crm_stage, [...ETAPES_FACTURABLES])))
+  const revenue = rdvFacturables * PRIX_PAR_RDV
   const conversionRate = emailsSent > 0 ? +(rdvCount / emailsSent * 100).toFixed(2) : 0
 
   // Top cities
@@ -178,8 +192,27 @@ export async function GET(request: NextRequest) {
     .where(rdvConditions)
     .groupBy(contacts.city)
 
+  /**
+   * ⚠️ TOUS LES RENDEZ-VOUS NE SONT PAS FACTURABLES (26/08, signalé par les deux autres sessions).
+   *
+   * Cet écran multipliait le nombre BRUT de rendez-vous par 80 €, alors que la facturation ne retient
+   * que les étapes `qualifie`, `signe` et `perdu` — un rendez-vous encore `a_venir` ou classé
+   * `non_qualifie` ne rapporte rien. Le tableau de bord, lui, appliquait déjà la bonne règle : deux
+   * écrans annonçaient donc deux chiffres d'affaires différents pour le même mois.
+   *
+   * On lit désormais la MÊME source de vérité que la facturation (`ETAPES_FACTURABLES`), pour que le
+   * chiffre affiché soit celui qui sera réellement facturé à Haris.
+   */
+  const cityRdvFacturableRaw = await db
+    .select({ city: contacts.city, cnt: count() })
+    .from(rdv)
+    .innerJoin(contacts, eq(rdv.contact_id, contacts.id))
+    .where(and(rdvConditions, inArray(rdv.crm_stage, [...ETAPES_FACTURABLES])))
+    .groupBy(contacts.city)
+
   const replyMap = Object.fromEntries(cityRepliesRaw.map(r => [r.city ?? '', r.cnt]))
   const rdvMap = Object.fromEntries(cityRdvRaw.map(r => [r.city ?? '', r.cnt]))
+  const rdvFacturableMap = Object.fromEntries(cityRdvFacturableRaw.map(r => [r.city ?? '', r.cnt]))
 
   // Fusionne les villes avec emails envoyés + les villes avec RDV (même si hors top 10 envois)
   const sentMap = Object.fromEntries(citySentRaw.filter(r => r.city).map(r => [r.city ?? '', r.cnt]))
@@ -196,7 +229,8 @@ export async function GET(request: NextRequest) {
         replies: cityReplies,
         replyRate: sent > 0 ? +(cityReplies / sent * 100).toFixed(1) : 0,
         rdv: cityRdv,
-        revenue: cityRdv * PRIX_PAR_RDV,
+        rdvFacturables: rdvFacturableMap[city] ?? 0,
+        revenue: (rdvFacturableMap[city] ?? 0) * PRIX_PAR_RDV,
       }
     })
     // Trier : RDV d'abord, puis taux de réponse, puis volume envoyé
