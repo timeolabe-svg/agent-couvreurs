@@ -177,8 +177,29 @@ async function handler(req: NextRequest) {
       const extra = Object.entries(t.params ?? {}).map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')
       const r = await fetch(`${base}/api/cron/${t.cron}?key=${cle}${extra}`, { signal: AbortSignal.timeout(25_000) })
       lances.push(`${t.cron} → HTTP ${r.status} (${t.pourquoi})`)
+      /**
+       * ⚠️ UN TRAVAIL QUI ÉCHOUE DOIT SE VOIR (26/08, audit A→Z).
+       *
+       * Le code de retour était enregistré dans `lances` — c'est-à-dire dans la réponse HTTP de ce
+       * cron, que personne ne lit. Un travail qui répond 500 à chaque passage aurait donc échoué
+       * indéfiniment en silence. C'est le motif de la journée : la panne n'est pas l'échec, c'est
+       * l'échec que rien n'annonce.
+       */
+      if (!r.ok) {
+        const { alertIndependent } = await import('@/lib/alert')
+        await alertIndependent(
+          `Travail de maintenance en echec — ${t.cron}`,
+          `${t.cron} a repondu HTTP ${r.status}.\nRole : ${t.pourquoi}.\n`
+          + `Ce travail est relance toutes les ${t.toutesLesHeures} h par maintenance-tick ; tant qu il echoue, sa fonction n est pas assuree.`,
+        ).catch(() => {})
+      }
     } catch (e) {
       lances.push(`${t.cron} → échec : ${String(e).slice(0, 80)}`)
+      const { alertIndependent } = await import('@/lib/alert')
+      await alertIndependent(
+        `Travail de maintenance injoignable — ${t.cron}`,
+        `${t.cron} n a pas repondu.\nRole : ${t.pourquoi}.\nErreur : ${String(e).slice(0, 200)}`,
+      ).catch(() => {})
     }
     break
   }

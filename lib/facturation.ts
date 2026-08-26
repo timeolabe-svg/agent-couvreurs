@@ -75,7 +75,8 @@ export async function facturerRdv(sql: Sql, rdvId: string): Promise<ResultatFact
     const [client] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_customer_id'))
     const [moyen] = await db.select().from(agent_config).where(eq(agent_config.key, 'stripe_payment_method_id'))
     if (!client?.value || !moyen?.value) {
-      await sql`UPDATE rdv SET facture_le = NULL WHERE id = ${rdvId}::uuid`.catch(() => {})
+      await sql`UPDATE rdv SET facture_le = NULL WHERE id = ${rdvId}::uuid`
+      .catch((err) => { console.error(`[facturation] reservation NON rendue pour le rdv ${rdvId} — il restera marque comme facture sans avoir ete preleve :`, String(err).slice(0, 160)) })
       return { facture: false, raison: 'aucun moyen de paiement enregistré' }
     }
 
@@ -92,9 +93,16 @@ export async function facturerRdv(sql: Sql, rdvId: string): Promise<ResultatFact
 
     return { facture: true, raison: 'prélevé', montant_eur: PRIX_PAR_RDV }
   } catch (e) {
-    // ⚠️ On REND la réservation : sans ça, un échec de paiement rendrait le rendez-vous
-    // définitivement non facturable, et personne ne s'en apercevrait.
-    await sql`UPDATE rdv SET facture_le = NULL WHERE id = ${rdvId}::uuid`.catch(() => {})
+    /**
+     * ⚠️ On REND la réservation : sans ça, un échec de paiement rendrait le rendez-vous
+     * définitivement non facturable, et personne ne s'en apercevrait.
+     *
+     * ⚠️ Et si CETTE écriture échoue à son tour, il faut le savoir : le rendez-vous resterait marqué
+     * comme facturé sans avoir été prélevé, donc invisible pour toujours. C'est le pire état
+     * possible — pas une erreur, un manque à gagner silencieux. Le `catch` journalise désormais.
+     */
+    await sql`UPDATE rdv SET facture_le = NULL WHERE id = ${rdvId}::uuid`
+      .catch((err) => { console.error(`[facturation] reservation NON rendue pour le rdv ${rdvId} — il restera marque comme facture sans avoir ete preleve :`, String(err).slice(0, 160)) })
     return { facture: false, raison: `échec Stripe : ${String(e).slice(0, 120)}` }
   }
 }

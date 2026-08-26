@@ -4,6 +4,7 @@ export const maxDuration = 30
 import { NextRequest, NextResponse } from "next/server"
 import { checkCronAuth } from "@/lib/cron-auth"
 import { alertIndependent } from "@/lib/alert"
+import { pingHeartbeat } from "@/lib/heartbeat"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HEARTBEAT-CHECK (Hdigiweb) — détecte un cron MORT, indépendamment de cron-job.org.
@@ -99,6 +100,31 @@ async function handler(req: NextRequest) {
     if (minutesAgo > r.expected_interval_minutes * 3) stale.push({ name: r.cron_name, minutesAgo, expected: r.expected_interval_minutes })
     else if (!r.last_ok) failed.push({ name: r.cron_name, detail: r.last_detail })
   }
+
+  /**
+   * ⚠️ LE CHIEN DE GARDE N'ÉCRIVAIT PAS SON PROPRE BATTEMENT (26/08, audit A→Z).
+   *
+   * Sur les trente-deux crons du projet, sept n'avaient aucune ligne dans `cron_heartbeats`. Six
+   * sont des outils de test lancés à la main — normal. Le septième était celui-ci : **le cron qui
+   * surveille tous les autres ne surveillait pas sa propre survie**.
+   *
+   * Deux conséquences, l'une visible et l'autre pas :
+   *
+   *  · `maintenance-tick` décide de relancer un travail en comparant son DERNIER BATTEMENT à sa
+   *    cadence. Sans battement, l'écart vaut l'infini : celui-ci était donc considéré comme dû à
+   *    CHAQUE passage, et comme un seul travail part par passage, il prenait la place des suivants
+   *    dès qu'il arrivait à son tour dans la liste.
+   *  · surtout, s'il cessait de tourner, RIEN ne pouvait le dire — les autres crons paraissent sains
+   *    tant que personne ne les regarde, et c'est lui qui regarde.
+   *
+   * Il se déclare donc maintenant, comme les autres. Sa disparition devient un fait mesurable, et sa
+   * cadence redevient horaire au lieu de « tout le temps ».
+   */
+  await pingHeartbeat(
+    'heartbeat-check', true,
+    `${rows.length} crons verifies, ${stale.length} muet(s), ${failed.length} en echec`,
+    120,
+  ).catch(() => { /* la surveillance ne doit jamais faire tomber la surveillance */ })
 
   if (stale.length === 0 && failed.length === 0) {
     return NextResponse.json({ ok: true, alert: false, checked: rows.length })

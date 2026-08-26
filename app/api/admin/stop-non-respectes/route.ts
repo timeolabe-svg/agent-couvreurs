@@ -60,11 +60,33 @@ async function handler(req: NextRequest) {
       UPDATE email_queue SET status = 'cancelled'
       WHERE contact_id = ${c.id} AND status IN ('queued', 'pending') RETURNING id
     `) as unknown as Array<{ id: string }>
+    /**
+     * ⚠️ CETTE INSERTION N'A JAMAIS RIEN INSÉRÉ (26/08).
+     *
+     * Elle visait `source` et `notes` : ces deux colonnes N'EXISTENT PAS dans `blocklist`, qui n'a
+     * que `id, email, domain, reason, created_at`. Postgres rejetait donc l'INSERT EN ENTIER, et le
+     * `.catch(() => {})` l'avalait sans un mot.
+     *
+     * Conséquence, et c'est la plus grave de la journée : ce fichier EST le filet CNIL. Il annulait
+     * bien la file — cet UPDATE-là est correct — mais il ne blocklistait personne. Une personne
+     * ayant demandé l'arrêt se retrouvait donc avec sa file vidée et AUCUNE trace dans la blocklist :
+     * le gate du moteur d'envoi (`NOT EXISTS blocklist`) ne la protégeait plus, et la moindre
+     * nouvelle ligne de file — ré-import, nouvelle campagne, relance de conversation — repartait
+     * chez elle.
+     *
+     * Pire : les invariants A1 et A2, qui partent de la blocklist, ne pouvaient rien voir. Encore un
+     * tableau vert par conséquence du bug.
+     *
+     * ⚠️ On aligne le code sur la table, pas l'inverse : `schema.ts` et la base sont d'accord entre
+     * eux, c'est cette requête qui était seule à croire à deux colonnes de plus. La trace du « pourquoi »
+     * n'est pas perdue — le message du prospect reste dans `incoming_replies`, et `reason` distingue
+     * déjà un refus simple d'une demande RGPD.
+     */
     await sql`
-      INSERT INTO blocklist (email, reason, source, notes)
-      VALUES (${email}, 'unsubscribe', 'manuel', 'Coupure manuelle : demande d arret constatee')
+      INSERT INTO blocklist (email, reason)
+      VALUES (${email}, 'unsubscribe')
       ON CONFLICT (email) DO NOTHING
-    `.catch(() => {})
+    `.catch((e) => { console.error('[stop-non-respectes] blocklist non ecrite:', String(e).slice(0, 160)) })
     return NextResponse.json({ ok: true, email, mails_annules: annules.length })
   }
 
@@ -113,12 +135,14 @@ async function handler(req: NextRequest) {
         blockliste: Boolean(bl), mails_envoyes_APRES: envoyes_apres, encore_programmes: encore_en_file,
       })
       if (apply) {
+        // Mêmes colonnes fantômes qu'au-dessus, même effet : le balayage QUOTIDIEN n'a jamais
+        // blocklisté personne depuis qu'il existe. Voir la note détaillée plus haut.
+        // ⚠️ Le `.catch` ne se tait plus : c'est lui qui a rendu la panne invisible pendant des jours.
         await sql`
-          INSERT INTO blocklist (email, reason, source, notes)
-          VALUES (${email}, ${d.motif.startsWith('rgpd') ? 'rgpd' : 'unsubscribe'}, 'auto',
-                  ${`Rattrapage 10/08 : demande d'arrêt du ${String(d.date).slice(0, 10)} non appliquée`})
+          INSERT INTO blocklist (email, reason)
+          VALUES (${email}, ${d.motif.startsWith('rgpd') ? 'rgpd' : 'unsubscribe'})
           ON CONFLICT (email) DO NOTHING
-        `.catch(() => {})
+        `.catch((e) => { console.error('[stop-non-respectes] blocklist non ecrite:', String(e).slice(0, 160)) })
         await sql`
           UPDATE email_queue SET status = 'cancelled'
           WHERE contact_id = ${c.id} AND status IN ('queued', 'pending')

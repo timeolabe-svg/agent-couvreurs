@@ -792,7 +792,14 @@ async function processReply(params: {
         }
         // Trace le renvoi SUR LA FICHE : c'est ce que lira l'affichage, plutôt que de re-chercher
         // l'intention dans le texte avec une seconde expression qui finit toujours par diverger.
-        await sql`UPDATE contacts SET redirige_vers = ${newEmail} WHERE id = ${contact.id}`.catch(() => {})
+        // ⚠️ Cette trace est la seule chose qui distingue « fiche redirigée » de « fiche normale ».
+        // Si elle échoue en silence, la fiche redevient une cible ordinaire et on recommence à lui
+        // écrire — c'est très exactement l'incident Bleu 30 Piscines. Elle ne se tait plus.
+        await sql`UPDATE contacts SET redirige_vers = ${newEmail} WHERE id = ${contact.id}`
+          .catch(async (e: unknown) => {
+            console.error('[changement adresse] redirige_vers non ecrit', e)
+            await sql`INSERT INTO dashboard_events (type, data) VALUES ('redirection_non_tracee', ${JSON.stringify({ contactEmail: from, newEmail, company: contact.company, erreur: String(e).slice(0, 200) })}::jsonb)`.catch(() => {})
+          })
         await sql`INSERT INTO dashboard_events (type, data) VALUES ('reply_received', ${JSON.stringify({ contactEmail: from, newEmail, company: contact.company, action: 'email_updated' })}::jsonb)`
         results.push(`✉ changement d'adresse : ${contact.email} -> ${newEmail} (contact neuf, file propre)`)
         return { processed: true, classification: classification.classification }
