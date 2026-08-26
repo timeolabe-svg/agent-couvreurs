@@ -422,11 +422,32 @@ async function processBox(box: { email: string; password: string }, started: num
         .filter(t => t.length > 8))]
       const contactParSujet = new Map<string, string>()
       if (sujetsBase.length > 0) {
+        /**
+         * ⚠️ UN OBJET DE CAMPAGNE NE DÉSIGNE PERSONNE (26/08, signalé par la session LabegarIA).
+         *
+         * Cette requête prenait le contact le plus RÉCEMMENT démarché avec cet objet
+         * (`DISTINCT ON ... ORDER BY sent_at DESC`), sans jamais vérifier que l'objet n'en désignait
+         * qu'un seul. Or nos objets sont des objets de campagne : mesuré en production le 26/08,
+         * **417 objets sur 3 799 sont partagés par plusieurs contacts, jusqu'à 26 pour un seul objet**
+         * (« votre visibilité quand on cherche un artisan du bâtiment à … »).
+         *
+         * Le « plus récent » n'était donc pas l'auteur de la réponse : c'était quelqu'un d'autre. Et
+         * comme ce rattachement sert à BLOQUER et à ANNULER des files, un refus pouvait être imputé à
+         * une entreprise tierce — qui, elle, ne viendra jamais réclamer.
+         *
+         * Tant qu'on se contente de lire, se tromper de contact coûte un affichage faux. Dès qu'on
+         * écrit, ça coûte une entreprise. On n'accepte donc le rattachement par objet QUE si l'objet
+         * a un destinataire unique ; sinon on laisse le message non rattaché — le filet RGPD plus bas
+         * le lit quand même et le trace, ce qui est très exactement le comportement voulu.
+         *
+         * Un rattachement approximatif est pire qu'une absence de rattachement, parce qu'il écrit.
+         */
         const lignes = (await sql`
-          SELECT DISTINCT ON (LOWER(subject)) LOWER(subject) AS sujet, contact_id
+          SELECT LOWER(subject) AS sujet, MIN(contact_id::text) AS contact_id
           FROM email_queue
           WHERE LOWER(subject) = ANY(${sujetsBase}) AND status = 'sent' AND contact_id IS NOT NULL
-          ORDER BY LOWER(subject), sent_at DESC
+          GROUP BY LOWER(subject)
+          HAVING COUNT(DISTINCT contact_id) = 1
         `.catch(() => [])) as Array<{ sujet: string; contact_id: string }>
         for (const l of lignes) contactParSujet.set(l.sujet, l.contact_id)
       }

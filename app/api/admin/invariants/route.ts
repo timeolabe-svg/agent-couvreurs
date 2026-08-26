@@ -548,6 +548,31 @@ async function handler(req: NextRequest) {
       GROUP BY c.email, c.email_validated LIMIT 500`,
     'Le catch_all est une source de bounce : seules les adresses validées partent.')
 
+  /**
+   * ⚠️ D10 — UN RATTACHEMENT QUI ÉCRIT DOIT DÉSIGNER QUELQU'UN (26/08, session LabegarIA).
+   *
+   * Une réponse venue d'une adresse inconnue est rattachée à une fiche par l'OBJET du mail. Si cet
+   * objet a servi à plusieurs contacts — 417 objets sur 3 799 chez nous — le rattachement ne désigne
+   * personne, et il sert pourtant à blockliser et à annuler des files.
+   *
+   * L'invariant ne juge que ce qui est encore réparable : une réponse rattachée à une fiche dont ce
+   * n'est pas l'adresse, alors que son objet est ambigu. C'est le contre-exemple exact.
+   */
+  await verifier('D10', 'juridique',
+    'Aucune réponse n\'est rattachée à une fiche par un objet qui désigne plusieurs contacts',
+    async () => await sql`
+      SELECT ir.from_email, c.email AS fiche, c.company, ir.created_at,
+             (SELECT COUNT(DISTINCT eq.contact_id)::int FROM email_queue eq
+               WHERE LOWER(eq.subject) = LOWER(ir.subject) AND eq.status = 'sent') AS contacts_partageant_l_objet
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      WHERE ir.subject IS NOT NULL
+        AND LOWER(c.email) <> LOWER(ir.from_email)
+        AND (SELECT COUNT(DISTINCT eq.contact_id) FROM email_queue eq
+              WHERE LOWER(eq.subject) = LOWER(ir.subject) AND eq.status = 'sent') > 1
+      ORDER BY ir.created_at DESC LIMIT 500`,
+    'Un rattachement approximatif est pire qu\'une absence de rattachement, parce qu\'il écrit.')
+
   // ── MÉMOIRE DES FAUTES DÉJÀ COMMISES ─────────────────────────────────
   // Un invariant doit être SATISFIABLE : s'il compte des faits passés qu'on ne peut plus défaire,
   // il reste rouge à vie et on cesse de le regarder — c'est ce qui est arrivé à l'alerte

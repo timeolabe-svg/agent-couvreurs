@@ -158,6 +158,47 @@ async function runCron(req: NextRequest) {
     } catch { /* la surveillance réessaiera au prochain run */ }
     return NextResponse.json({ ok: true, paused: true, message: 'Envoi en pause (SEND_PAUSED=1) — surveillance maintenue' })
   }
+
+  /**
+   * FENÊTRE D'ENVOI — LUNDI À VENDREDI, 8 h À 19 h, HEURE DE PARIS.
+   *
+   * ⚠️ MESURÉ LE 26/08, ET C'ÉTAIT PIRE QUE PRÉVU. Aucune fenêtre n'existait dans le code : on
+   * dépendait entièrement de l'heure à laquelle cron-job.org déclenchait. Sur les quatorze derniers
+   * jours, **1 598 mails sur 2 854 — soit 56 % — sont partis hors de la plage 8 h-20 h** : 178 à
+   * minuit, 217 à deux heures du matin, 150 à trois heures. Et **763 sont partis un samedi ou un
+   * dimanche**.
+   *
+   * Un couvreur qui reçoit une prospection commerciale à deux heures du matin un dimanche ne se dit
+   * pas « tiens, une agence sérieuse ». Ça coûte sur trois plans à la fois : la délivrabilité (Gmail
+   * lit le rythme d'envoi comme un signal de robot), l'image du client dont le nom est dans la
+   * signature, et le risque de signalement — se plaindre du démarchage commence souvent par « ils
+   * m'écrivent en pleine nuit ».
+   *
+   * Le plafond quotidien étant déjà posé (23 nouveaux, 35 par boîte), restreindre les heures ne
+   * réduit pas le volume : ça le concentre là où il sera lu.
+   *
+   * ⚠️ Cette fenêtre ne concerne QUE la prospection sortante. Les RÉPONSES aux prospects passent par
+   * `send-reply.ts` et ne sont pas bridées : quelqu'un qui écrit à 21 h doit avoir sa réponse, pas
+   * un délai de quatorze heures.
+   */
+  const maintenantParis = new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' })
+  const dParis = new Date(maintenantParis)
+  const jour = dParis.getDay()          // 0 = dimanche, 6 = samedi
+  const heure = dParis.getHours()
+  const FENETRE_ACTIVE = process.env.FENETRE_ENVOI_OFF !== '1'
+  if (FENETRE_ACTIVE && (jour === 0 || jour === 6 || heure < 8 || heure >= 19)) {
+    try {
+      const base = process.env.PUBLIC_APP_URL || BASE_URL
+      await fetch(`${base}/api/cron/maintenance-tick?key=${process.env.CRON_SECRET ?? ''}`, {
+        signal: AbortSignal.timeout(6000),
+      })
+    } catch { /* la surveillance réessaiera au prochain run */ }
+    return NextResponse.json({
+      ok: true,
+      hors_fenetre: true,
+      message: `Hors fenêtre d'envoi (lun-ven 8h-19h Paris) — il est ${String(heure).padStart(2, '0')}h à Paris. Les lignes restent en file.`,
+    })
+  }
   if (!process.env.DATABASE_URL) return NextResponse.json({ error: 'DATABASE_URL not configured' }, { status: 503 })
 
   // Si MillionVerifier est configuré → on n'envoie QU'aux emails VALIDÉS (email_validated=true),

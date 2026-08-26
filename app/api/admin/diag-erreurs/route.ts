@@ -732,5 +732,84 @@ export async function GET(req: NextRequest) {
       WHERE q.status = 'pending' AND q.body = '__pending_generation__'`
   }
 
+  /**
+   * 36. LE RATTACHEMENT PAR OBJET DÉSIGNE-T-IL QUELQU'UN ? (signalé par la session LabegarIA, 26/08)
+   *
+   * Quand un prospect répond depuis une adresse inconnue, on le rattache au contact par l'OBJET du
+   * mail, en prenant le plus récent. Or un objet de CAMPAGNE est identique pour des centaines de
+   * contacts : le « plus récent » n'est alors pas l'auteur de la réponse, c'est quelqu'un d'autre.
+   * On mesure donc, pour chaque objet réellement utilisé, combien de contacts distincts le portent.
+   */
+  if (seul === '36') {
+    out.objets_ambigus = await sql`
+      SELECT LOWER(subject) AS objet,
+             COUNT(DISTINCT contact_id)::int AS contacts_distincts,
+             MAX(sent_at) AS dernier_envoi
+      FROM email_queue
+      WHERE status = 'sent' AND subject IS NOT NULL AND contact_id IS NOT NULL
+      GROUP BY LOWER(subject)
+      HAVING COUNT(DISTINCT contact_id) > 1
+      ORDER BY 2 DESC LIMIT 15`
+    const [t] = (await sql`
+      SELECT
+        COUNT(*) FILTER (WHERE n > 1)::int AS objets_ambigus,
+        COUNT(*)::int AS objets_total,
+        COALESCE(MAX(n), 0)::int AS pire_cas
+      FROM (
+        SELECT COUNT(DISTINCT contact_id) AS n
+        FROM email_queue
+        WHERE status = 'sent' AND subject IS NOT NULL AND contact_id IS NOT NULL
+        GROUP BY LOWER(subject)
+      ) x`) as Array<{ objets_ambigus: number; objets_total: number; pire_cas: number }>
+    out.synthese = t
+    // Combien de réponses sont réellement passées par ce chemin (expéditeur inconnu des fiches) ?
+    out.reponses_d_expediteurs_inconnus = await sql`
+      SELECT COUNT(*)::int AS n FROM incoming_replies ir
+      WHERE NOT EXISTS (SELECT 1 FROM contacts c WHERE LOWER(c.email) = LOWER(ir.from_email))`
+  }
+
+  /**
+   * 37. LES 9 RATTACHEMENTS AMBIGUS ONT-ILS COÛTÉ UNE ENTREPRISE ?
+   *
+   * Un rattachement faux ne fait de dégât que s'il a ÉCRIT. On regarde donc, pour chaque fiche
+   * touchée : sa classification, si elle a été blocklistée, et si sa file a été annulée. Une
+   * entreprise blocklistée à cause du refus de quelqu'un d'autre est un lead perdu définitif — et
+   * elle ne viendra jamais réclamer.
+   */
+  if (seul === '37') {
+    out.degats = await sql`
+      SELECT ir.from_email, c.email AS fiche, c.company, ir.classification, ir.action_taken,
+             ir.created_at,
+             EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email)) AS fiche_blocklistee,
+             (SELECT b.reason FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email) LIMIT 1) AS motif_blocage,
+             (SELECT COUNT(*)::int FROM email_queue q
+               WHERE q.contact_id = c.id AND q.status = 'cancelled') AS mails_annules,
+             (SELECT COUNT(*)::int FROM email_queue q
+               WHERE q.contact_id = c.id AND q.status IN ('queued','pending')) AS encore_en_file
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      WHERE ir.subject IS NOT NULL
+        AND LOWER(c.email) <> LOWER(ir.from_email)
+        AND (SELECT COUNT(DISTINCT eq.contact_id) FROM email_queue eq
+              WHERE LOWER(eq.subject) = LOWER(ir.subject) AND eq.status = 'sent') > 1
+      ORDER BY ir.created_at DESC`
+  }
+
+  /** 38. À quelle HEURE DE PARIS partent réellement les mails, et quel jour de la semaine ? */
+  if (seul === '38') {
+    out.par_heure_paris = await sql`
+      SELECT EXTRACT(HOUR FROM sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::int AS heure,
+             COUNT(*)::int AS n
+      FROM email_queue
+      WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '14 days'
+      GROUP BY 1 ORDER BY 1`
+    out.week_end = await sql`
+      SELECT to_char(sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris', 'Dy') AS jour,
+             COUNT(*)::int AS n
+      FROM email_queue
+      WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '14 days'
+      GROUP BY 1 ORDER BY 2 DESC`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
