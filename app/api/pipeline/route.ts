@@ -170,6 +170,41 @@ export async function PATCH(req: NextRequest) {
         INSERT INTO dashboard_events (type, data)
         VALUES ('rdv_facture', ${JSON.stringify({ rdv_id: id, etape: stage, montant_eur: facturation.montant_eur })}::jsonb)
       `.catch(() => {})
+    } else {
+      /**
+       * ⚠️ UN PRÉLÈVEMENT QUI ÉCHOUE DOIT SE VOIR (26/08).
+       *
+       * `facturerRdv` échoue proprement — elle rend la réservation et renvoie un motif — mais ce
+       * motif n'allait nulle part. Un rendez-vous passait donc en « qualifié », l'écran affichait le
+       * classement, et les 80 € n'étaient jamais prélevés sans que personne ne l'apprenne.
+       *
+       * Mesuré le 26/08 : `stripe_customer_id` et `stripe_payment_method_id` n'existent PAS en base.
+       * Le mandat n'a jamais été enregistré, parce que le webhook Stripe qui l'écrit était derrière
+       * le mur d'authentification (corrigé le même jour). Le tout premier rendez-vous facturable
+       * serait donc passé à la trappe en silence.
+       *
+       * C'est la règle « un engagement de l'agent doit être visible tout seul », appliquée à
+       * l'argent : une facturation ratée s'annonce, elle ne se déduit pas d'un écran qu'on regarde.
+       */
+      await sql`
+        INSERT INTO dashboard_events (type, data)
+        VALUES ('rdv_non_facture', ${JSON.stringify({ rdv_id: id, etape: stage, raison: facturation.raison })}::jsonb)
+      `.catch(() => {})
+      // On n'alerte que sur une étape RÉELLEMENT facturable : un « non facturable » attendu
+      // (a_venir, non_qualifie) est le fonctionnement normal, et une alerte permanente est une
+      // alerte morte.
+      if (['qualifie', 'signe', 'perdu'].includes(String(stage))) {
+        const { alertIndependent } = await import('@/lib/alert')
+        await alertIndependent(
+          `Prelevement RDV NON effectue — ${stage}`,
+          `Le rendez-vous ${id} vient d'etre classe « ${stage} », donc facturable 80 EUR.\n`
+          + `Le prelevement N A PAS eu lieu.\n\nMotif : ${facturation.raison}\n\n`
+          + `Si le motif est « aucun moyen de paiement enregistre » : le mandat SEPA n a jamais ete `
+          + `enregistre en base. Verifier STRIPE_WEBHOOK_SECRET cote Vercel, puis refaire le parcours `
+          + `de mise en place du prelevement — le webhook ecrit alors stripe_customer_id et `
+          + `stripe_payment_method_id, dont la facturation depend.`,
+        ).catch(() => { /* l'alerte ne doit jamais empecher d'enregistrer le classement */ })
+      }
     }
   }
 

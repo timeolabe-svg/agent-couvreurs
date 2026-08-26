@@ -109,6 +109,23 @@ export const config = {
      *
      * Le jeton EST l'authentification de cette route : il est signé et propre au destinataire.
      */
-    '/((?!login$|login/|api/auth/|api/cron/|u/|_next/|favicon\\.ico$).*)',
+    /*
+     * ⚠️ `/api/stripe/webhook` — STRIPE NE PEUT PAS SE CONNECTER À NOTRE OUTIL (26/08).
+     *
+     * Mesuré : cette route renvoyait 307 vers la page de connexion. Un serveur de Stripe n'a ni
+     * session ni clé de cron — il ne l'a donc jamais atteinte. Ce n'est pas une régression du jour,
+     * elle était derrière le mur depuis le rétablissement du mot de passe.
+     *
+     * Ce que ça coûte : le webhook traite `setup_intent.succeeded`, l'événement qui enregistre
+     * `stripe_customer_id` et `stripe_payment_method_id`. Ce sont exactement les deux valeurs dont
+     * `lib/facturation.ts` a besoin pour prélever les 80 € par rendez-vous. Sans elles, la
+     * facturation ne lève aucune erreur : elle ne prélève simplement rien. Une panne d'encaissement
+     * silencieuse, sur l'argent de Timéo.
+     *
+     * La route est sûre à ouvrir : elle vérifie la signature Stripe (`constructEvent`) avant tout,
+     * et refuse en 400 sans en-tête valide, en 503 sans `STRIPE_WEBHOOK_SECRET`. La signature EST
+     * son authentification, exactement comme le jeton l'est pour `/u/`.
+     */
+    '/((?!login$|login/|api/auth/|api/cron/|api/stripe/webhook$|u/|_next/|favicon\\.ico$).*)',
   ],
 }

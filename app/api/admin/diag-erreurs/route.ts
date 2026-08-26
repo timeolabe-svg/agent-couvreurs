@@ -830,5 +830,49 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /**
+   * 40. TOUS LES CRONS BATTENT-ILS ENCORE ? (contrôle de non-régression)
+   *
+   * Après une journée de corrections, la question de Timéo est la bonne : « tu n'as rien cassé ? ».
+   * Relire le diff ne suffit pas — un cron peut compiler et ne plus jamais tourner. On lit donc les
+   * battements réels, et on trie par ancienneté : ce qui est en tête de liste est ce qui s'est tu.
+   */
+  if (seul === '40') {
+    out.battements = await sql`
+      SELECT cron_name,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - last_run_at)) / 60)::int AS il_y_a_min,
+             expected_interval_minutes AS attendu_min,
+             CASE
+               WHEN expected_interval_minutes IS NULL THEN 'sans cadence declaree'
+               WHEN last_run_at < NOW() - (expected_interval_minutes * 3 || ' minutes')::interval THEN 'MUET'
+               ELSE 'ok'
+             END AS etat
+      FROM cron_heartbeats
+      ORDER BY (last_run_at IS NULL) DESC, il_y_a_min DESC NULLS FIRST`
+    const [n] = (await sql`SELECT COUNT(*)::int AS n FROM cron_heartbeats`) as Array<{ n: number }>
+    out.total_crons_suivis = n?.n ?? 0
+    out.check_replies_avait_il_un_battement = await sql`
+      SELECT cron_name, last_run_at FROM cron_heartbeats WHERE cron_name ILIKE '%check-replies%'`
+  }
+
+  /** 41. Le mandat de prélèvement est-il enregistré ? Sans lui, la facturation ne prélève RIEN. */
+  if (seul === '41') {
+    out.mandat_stripe = await sql`
+      SELECT key,
+             CASE WHEN value IS NULL OR value = '' THEN 'VIDE' ELSE 'renseigne' END AS etat,
+             updated_at
+      FROM agent_config
+      WHERE key IN ('stripe_customer_id', 'stripe_payment_method_id')`
+    // ⚠️ `facture_le` est créée par un ALTER à l'intérieur de `facturerRdv` : si la facturation n'a
+    // jamais tourné, la colonne n'existe pas et la requête échoue. On la crée ici aussi (idempotent),
+    // sinon le diagnostic censé révéler le problème tombe sur le problème lui-même.
+    await sql`ALTER TABLE rdv ADD COLUMN IF NOT EXISTS facture_le TIMESTAMPTZ`.catch(() => {})
+    out.rdv_factures = await sql`
+      SELECT COUNT(*) FILTER (WHERE facture_le IS NOT NULL)::int AS deja_factures,
+             COUNT(*) FILTER (WHERE facture_le IS NULL AND crm_stage IN ('qualifie','signe','perdu'))::int AS facturables_jamais_factures,
+             COUNT(*)::int AS rdv_total
+      FROM rdv`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
