@@ -152,6 +152,7 @@ export async function GET() {
 
   const [
     [{ totalEmailsSent }],
+    [{ personnesContactees }],
     [{ totalReplies }],
     [{ totalRdv }],
     [{ totalSigned }],
@@ -173,6 +174,23 @@ export async function GET() {
     weeklyLearningRaw,
   ] = await Promise.all([
     db.select({ totalEmailsSent: count() }).from(email_queue).where(eq(email_queue.status, 'sent')),
+    /**
+     * ⚠️ « CONTACTÉS » COMPTAIT DES MAILS, PAS DES PERSONNES (26/08, signalé par la session LabegarIA).
+     *
+     * L'entonnoir posait `const contacted = totalEmailsSent`. Or un prospect reçoit jusqu'à six mails
+     * de séquence : il comptait donc six fois. Mesuré en production : **8 584 « contactés » affichés
+     * pour 4 032 prospects existants**, soit plus de deux fois le nombre de personnes en base.
+     *
+     * Le taux de réponse, qui divise par ce nombre, était donc faux d'un facteur proche de quatre —
+     * dans le sens qui minimise nos résultats. Et le dénominateur du haut d'entonnoir dépassait le
+     * total des prospects, ce qui aurait dû sauter aux yeux.
+     *
+     * La règle est la même que pour les réponses juste en dessous, et que dans `stats/analytics` où
+     * elle était déjà appliquée : on compte des PERSONNES. Le correctif existait à un fichier de
+     * distance.
+     */
+    db.select({ personnesContactees: sql<number>`count(distinct contact_id)::int` })
+      .from(email_queue).where(eq(email_queue.status, 'sent')),
     // Nombre de PERSONNES distinctes ayant vraiment répondu (hors spam et auto-répondeurs)
     // — pas le nombre de messages : un prospect qui répond 3 fois compte 1.
     db.select({ totalReplies: sql<number>`count(distinct lower(from_email))::int` }).from(incoming_replies).where(
@@ -310,7 +328,7 @@ export async function GET() {
     .from(incoming_replies)
     .where(and(gte(incoming_replies.created_at, lastWeekStart), sql`${incoming_replies.created_at} < ${lastWeekEnd}`))
 
-  const contacted = totalEmailsSent
+  const contacted = personnesContactees
   const replied = totalReplies
   const replyRate = contacted > 0 ? +((replied / contacted) * 100).toFixed(1) : 0
   const rdvRate = replied > 0 ? +((totalRdv / replied) * 100).toFixed(1) : 0

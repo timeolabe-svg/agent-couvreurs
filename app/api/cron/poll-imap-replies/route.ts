@@ -138,7 +138,9 @@ export async function POST(req: NextRequest) {
 
   const started = Date.now()
   const results: string[] = []
-  const stats = { processed: 0, replies: 0, bounces: 0, cancelled: 0, sentReplies: 0 }
+  // `nonRattaches` = messages reçus qu'on n'a pas su relier à une fiche. Compté et TRACÉ, jamais
+  // jeté en silence : un message écarté sans trace est un lead qu'on ne saura jamais avoir perdu.
+  const stats = { processed: 0, replies: 0, bounces: 0, cancelled: 0, sentReplies: 0, nonRattaches: 0 }
 
   // ── Partie A : envoyer les auto-réponses programmées et prêtes (délai humain écoulé) ──
   // BORNÉE EN TEMPS : cron-job.org (gratuit) coupe à 30s. Sans limite, 10 envois SMTP
@@ -286,7 +288,7 @@ export async function POST(req: NextRequest) {
   })
 }
 
-interface Stats { processed: number; replies: number; bounces: number; cancelled: number; sentReplies: number }
+interface Stats { processed: number; replies: number; bounces: number; cancelled: number; sentReplies: number; nonRattaches: number }
 
 /** Traite UNE boîte : connexion IMAP, lecture des non-lus, routage vers le pipeline. */
 async function processBox(box: { email: string; password: string }, started: number, results: string[], stats: Stats): Promise<void> {
@@ -504,7 +506,34 @@ async function processBox(box: { email: string; password: string }, started: num
         if (!known) {
           const baseSubject = subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim()
           if (baseSubject.length > 8) contactHint = contactParSujet.get(baseSubject.toLowerCase())
-          if (!contactHint) { await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {}); continue }
+          /**
+           * ⚠️ NE PAS RATTACHER NE VEUT PAS DIRE JETER (26/08, deuxième passe).
+           *
+           * En resserrant le rattachement par objet — il ne désigne un contact que si l'objet lui est
+           * propre — j'ai augmenté le nombre de messages non rattachés. Or cette ligne les marquait
+           * lus et passait au suivant, SANS RIEN ÉCRIRE : j'aurais échangé une mauvaise attribution
+           * contre un lead perdu en silence. C'est le défaut que le resserrement était censé éviter,
+           * déplacé d'un cran.
+           *
+           * Un message qu'on ne sait pas rattacher reste un message reçu. On le TRACE donc — objet,
+           * expéditeur, boîte — pour qu'il soit rattachable à la main, et on continue. Écarter un
+           * message sans l'écrire, c'est le repayer à chaque passage et ne jamais le voir.
+           *
+           * ⚠️ On ne l'écrit PAS dans `incoming_replies` : sans `contact_id`, il polluerait les
+           * compteurs de réponses et les filets qui joignent sur la fiche. Sa place est le registre
+           * des messages écartés, avec un motif qui dit quoi en faire.
+           */
+          if (!contactHint) {
+            const motif = baseSubject.length > 8 ? 'objet partage par plusieurs contacts' : 'expediteur et objet inconnus'
+            await sql`
+              INSERT INTO imap_messages_ecartes (message_id, motif, boite)
+              VALUES (${'imap:' + messageId}, ${`A RATTACHER A LA MAIN — ${motif} — de ${from} — "${(subject ?? '').slice(0, 90)}"`}, ${box.email})
+              ON CONFLICT (message_id) DO NOTHING
+            `.catch(() => {})
+            stats.nonRattaches++
+            await client.messageFlagsAdd({ uid }, ['\\Seen']).catch(() => {})
+            continue
+          }
         }
 
         const body = await fetchBody()

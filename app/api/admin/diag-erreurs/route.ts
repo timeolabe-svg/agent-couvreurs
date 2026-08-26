@@ -811,5 +811,24 @@ export async function GET(req: NextRequest) {
       GROUP BY 1 ORDER BY 2 DESC`
   }
 
+  /** 39. L'entonnoir dit-il enfin la vérité ? Des PERSONNES, jamais des mails. */
+  if (seul === '39') {
+    const [r] = (await sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM contacts) AS prospects,
+        (SELECT COUNT(*)::int FROM email_queue WHERE status = 'sent') AS mails_envoyes,
+        (SELECT COUNT(DISTINCT contact_id)::int FROM email_queue WHERE status = 'sent') AS personnes_contactees,
+        (SELECT COUNT(DISTINCT LOWER(from_email))::int FROM incoming_replies
+          WHERE classification IS NULL OR classification NOT IN ('spam','oof')) AS personnes_ayant_repondu
+    `) as Array<Record<string, number>>
+    out.entonnoir = {
+      ...r,
+      taux_de_reponse_juste: r.personnes_contactees > 0
+        ? +((r.personnes_ayant_repondu / r.personnes_contactees) * 100).toFixed(1) : 0,
+      taux_de_reponse_avant_correctif: r.mails_envoyes > 0
+        ? +((r.personnes_ayant_repondu / r.mails_envoyes) * 100).toFixed(1) : 0,
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }

@@ -573,6 +573,60 @@ async function handler(req: NextRequest) {
       ORDER BY ir.created_at DESC LIMIT 500`,
     'Un rattachement approximatif est pire qu\'une absence de rattachement, parce qu\'il écrit.')
 
+  /**
+   * ⚠️ D11 — CE QU'ON N'A PAS SU RATTACHER DOIT ÊTRE REPRIS À LA MAIN.
+   *
+   * Depuis qu'on refuse les rattachements par objet ambigu (D10), des messages restent sans fiche.
+   * Ils sont tracés dans `imap_messages_ecartes` avec le motif « A RATTACHER A LA MAIN ». Cet
+   * invariant s'assure qu'ils ne dorment pas : au-delà de trois jours, personne ne les reprendra
+   * jamais, et un message reçu qu'on n'a jamais lu est le pire des leads perdus — on ne sait même
+   * pas qu'il existait.
+   */
+  await verifier('D11', 'lead_perdu',
+    'Aucun message non rattaché n\'attend d\'être repris depuis plus de 3 jours',
+    async () => await sql`
+      SELECT message_id, motif, boite, vu_le
+      FROM imap_messages_ecartes
+      WHERE motif LIKE 'A RATTACHER A LA MAIN%'
+        AND vu_le < NOW() - INTERVAL '3 days'
+      ORDER BY vu_le LIMIT 500`,
+    'Ne pas rattacher ne veut pas dire jeter : un message écarté sans reprise est un lead perdu invisible.')
+
+  /**
+   * ⚠️ D12 — LA FENÊTRE D'ENVOI MORD-ELLE VRAIMENT ?
+   *
+   * Avoir écrit la règle ne prouve pas qu'elle s'applique : un kill-switch laissé en environnement,
+   * un autre chemin d'envoi, et la fenêtre devient inopérante sans que rien ne le signale. On mesure
+   * donc le fait, pas l'intention.
+   *
+   * Deux précautions de mise en œuvre, données par la session LabegarIA qui s'est fait piéger sur les
+   * deux :
+   *
+   *  1. BORNER AU LENDEMAIN DE LA POSE, pas au jour même. Sinon les mails partis quelques heures
+   *     avant le déploiement ressortent à chaque passage — un invariant rouge à vie sur une faute
+   *     irréversible est un invariant qu'on cesse de regarder. C'est la leçon de D4, appliquée à une
+   *     borne fixe.
+   *  2. NE COMPTER QUE LE COLD (étape < 20). Les relances de conversation sont un autre régime ;
+   *     les inclure ferait échouer le contrôle en permanence, et on finirait par relâcher la fenêtre
+   *     pour faire taire l'alerte — exactement l'inverse du but.
+   */
+  await verifier('D12', 'coherence',
+    'Aucun mail froid n\'est parti hors de la fenêtre lun-ven 8h-19h Paris',
+    async () => await sql`
+      SELECT c.email, q.sequence_step, q.sent_at,
+             to_char(q.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris', 'Dy HH24:MI') AS heure_paris
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status = 'sent'
+        AND q.sequence_step < 20
+        AND q.sent_at >= TIMESTAMP '2026-08-27'
+        AND (
+          EXTRACT(DOW FROM q.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') IN (0, 6)
+          OR EXTRACT(HOUR FROM q.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') < 8
+          OR EXTRACT(HOUR FROM q.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') >= 19
+        )
+      ORDER BY q.sent_at DESC LIMIT 500`,
+    'Borné au 27/08, lendemain de la pose : avant, 56 % des mails partaient hors fenêtre — dette irréversible, pas alerte.')
+
   // ── MÉMOIRE DES FAUTES DÉJÀ COMMISES ─────────────────────────────────
   // Un invariant doit être SATISFIABLE : s'il compte des faits passés qu'on ne peut plus défaire,
   // il reste rouge à vie et on cesse de le regarder — c'est ce qui est arrivé à l'alerte
