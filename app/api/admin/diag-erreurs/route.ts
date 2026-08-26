@@ -604,5 +604,133 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /** 30. Ce qui a été RÉPONDU à des messages classés robot (invariant D5) — pour trancher alarme ou faux positif. */
+  if (seul === '30') {
+    out.reponses_a_des_robots = await sql`
+      SELECT ir.from_email, ir.classification, rd.sent_at,
+             LEFT(REPLACE(ir.body, E'\n', ' '), 130) AS message_recu,
+             LEFT(REPLACE(rd.body, E'\n', ' '), 200) AS notre_reponse
+      FROM reply_drafts rd JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      WHERE rd.status = 'sent' AND ir.classification IN ('oof', 'spam', 'warmup')
+      ORDER BY rd.sent_at DESC LIMIT 20`
+  }
+
+  /** 31. Le brouillon refusé par Timéo puis renvoyé (invariant D2). */
+  if (seul === '31') {
+    out.refuse_puis_renvoye = await sql`
+      SELECT ir.from_email, rd.status, rd.rejete_par, rd.rejete_le, rd.sent_at,
+             LEFT(REPLACE(rd.body, E'\n', ' '), 220) AS corps
+      FROM reply_drafts rd JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      WHERE LOWER(ir.from_email) = 'lesagecouvreur@gmail.com'
+      ORDER BY rd.created_at LIMIT 20`
+  }
+
+  /** 32. Étapes de séquence parties à moins de 24 h l'une de l'autre — sur TOUT l'historique. */
+  if (seul === '32') {
+    out.sequences_trop_rapprochees = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sequence_step, q.sent_at, q.scheduled_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent,
+               LAG(q.sequence_step) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS step_precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT c.email, e.step_precedent, e.sequence_step, e.precedent, e.sent_at, e.scheduled_at,
+             ROUND(EXTRACT(EPOCH FROM (e.sent_at - e.precedent)) / 60)::int AS minutes
+      FROM e JOIN contacts c ON c.id = e.contact_id
+      WHERE e.precedent IS NOT NULL AND e.sent_at - e.precedent < INTERVAL '24 hours'
+      ORDER BY e.sent_at DESC LIMIT 60`
+    const [t] = (await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT COUNT(*)::int AS n FROM e
+      WHERE precedent IS NOT NULL AND sent_at - precedent < INTERVAL '24 hours'`) as Array<{ n: number }>
+    out.total_reel = t?.n ?? 0
+  }
+
+  /** 33. Répartition des écarts entre deux étapes de séquence, et étapes parties dans le désordre. */
+  if (seul === '33') {
+    out.repartition_des_ecarts = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT CASE
+               WHEN sent_at - precedent < INTERVAL '2 hours'  THEN 'a. moins de 2 h'
+               WHEN sent_at - precedent < INTERVAL '12 hours' THEN 'b. 2 h a 12 h'
+               WHEN sent_at - precedent < INTERVAL '23 hours' THEN 'c. 12 h a 23 h'
+               WHEN sent_at - precedent < INTERVAL '25 hours' THEN 'd. environ 1 jour'
+               WHEN sent_at - precedent < INTERVAL '2 days'   THEN 'e. 1 a 2 jours'
+               ELSE 'f. 2 jours ou plus (normal)' END AS ecart,
+             COUNT(*)::int AS n
+      FROM e WHERE precedent IS NOT NULL
+      GROUP BY 1 ORDER BY 1`
+    out.etapes_dans_le_desordre = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sequence_step, q.sent_at,
+               LAG(q.sequence_step) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS step_precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT COUNT(*)::int AS n FROM e
+      WHERE step_precedent IS NOT NULL AND sequence_step < step_precedent`
+    out.ecarts_recents = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT COUNT(*)::int AS moins_de_2_jours_depuis_le_20_aout FROM e
+      WHERE precedent IS NOT NULL AND sent_at > '2026-08-20' AND sent_at - precedent < INTERVAL '2 days'`
+  }
+
+  /** 34. Quand les envois trop rapprochés ont-ils eu lieu ? Dette ancienne ou fuite en cours ? */
+  if (seul === '34') {
+    out.par_semaine = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT to_char(date_trunc('week', sent_at), 'YYYY-MM-DD') AS semaine,
+             COUNT(*) FILTER (WHERE sent_at - precedent < INTERVAL '2 hours')::int AS moins_2h,
+             COUNT(*) FILTER (WHERE sent_at - precedent < INTERVAL '2 days')::int AS moins_2j,
+             COUNT(*)::int AS total_paires
+      FROM e WHERE precedent IS NOT NULL
+      GROUP BY 1 ORDER BY 1`
+    out.les_29_recents = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sequence_step, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent,
+               LAG(q.sequence_step) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS step_precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT c.email, e.step_precedent, e.sequence_step, e.precedent, e.sent_at,
+             ROUND(EXTRACT(EPOCH FROM (e.sent_at - e.precedent)) / 3600)::int AS heures
+      FROM e JOIN contacts c ON c.id = e.contact_id
+      WHERE e.precedent IS NOT NULL AND e.sent_at > '2026-08-20'
+        AND e.sent_at - e.precedent < INTERVAL '2 days'
+      ORDER BY e.sent_at DESC LIMIT 30`
+  }
+
+  /** 35. Étapes parties dans le désordre (step 4 avant step 3) — datées, pour séparer dette et fuite. */
+  if (seul === '35') {
+    out.desordre_par_semaine = await sql`
+      WITH e AS (
+        SELECT q.contact_id, q.sequence_step, q.sent_at,
+               LAG(q.sequence_step) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS step_precedent
+        FROM email_queue q WHERE q.status = 'sent' AND q.sequence_step < 20
+      )
+      SELECT to_char(date_trunc('week', sent_at), 'YYYY-MM-DD') AS semaine, COUNT(*)::int AS n
+      FROM e WHERE step_precedent IS NOT NULL AND sequence_step < step_precedent
+      GROUP BY 1 ORDER BY 1`
+    out.placeholder_bloque = await sql`
+      SELECT q.id, c.email, c.company, q.sequence_step, q.created_at, q.scheduled_at, q.status
+      FROM email_queue q LEFT JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status = 'pending' AND q.body = '__pending_generation__'`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }

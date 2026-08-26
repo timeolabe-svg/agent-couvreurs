@@ -295,13 +295,29 @@ async function handler(req: NextRequest) {
         AND last_run_at < NOW() - (expected_interval_minutes * 3 || ' minutes')::interval
       LIMIT 500`)
 
+  /**
+   * ⚠️ CET INVARIANT ALERTAIT SUR LE STOCK NORMAL (recalibré le 26/08).
+   *
+   * Il criait dès qu'un `__pending_generation__` dépassait 24 h. Or c'est exactement ce que la
+   * réserve EST : une ligne `pending` porteuse d'un placeholder est un lead en attente d'admission,
+   * et `autopilot-tick` n'écrit son mail qu'au moment de l'admettre. Avec 23 admissions par jour et
+   * 425 leads en réserve, la quasi-totalité du stock a par construction plus de 24 h — l'invariant
+   * serait passé au rouge sur 425 lignes demain matin, pour un système en parfait état.
+   *
+   * La bonne question n'est pas « depuis quand attend-il » mais « la file s'écoule-t-elle ». À 23
+   * par jour, un lead admis en dernier attend environ trois semaines. Au-delà de soixante jours, ce
+   * n'est plus de l'attente, c'est un blocage — et c'est ce qu'on surveille.
+   */
   await verifier('C6', 'coherence',
-    'Aucun placeholder de génération n\'est resté figé plus de 24 h',
+    'Aucun lead en réserve n\'attend son admission depuis plus de 60 jours',
     async () => await sql`
-      SELECT id, contact_id, created_at FROM email_queue
-      WHERE status = 'pending' AND body = '__pending_generation__'
-        AND created_at < NOW() - INTERVAL '24 hours'
-      LIMIT 500`)
+      SELECT q.id, c.email, c.company,
+             EXTRACT(DAY FROM NOW() - q.created_at)::int AS jours_d_attente
+      FROM email_queue q LEFT JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status = 'pending' AND q.body = '__pending_generation__'
+        AND q.created_at < NOW() - INTERVAL '60 days'
+      ORDER BY q.created_at LIMIT 500`,
+    'La réserve attend par construction : ce qui doit alerter, c\'est un stock qui ne s\'écoule plus.')
 
   /**
    * ⚠️ C8 — LE CONTRÔLE QUI AURAIT ATTRAPÉ L'INCIDENT DU 12/08.
@@ -356,6 +372,181 @@ async function handler(req: NextRequest) {
       GROUP BY LOWER(email)
       HAVING COUNT(*) > 1
       LIMIT 500`)
+
+  /**
+   * ─────────────────────── D. LES CONSIGNES DE TIMÉO ───────────────────────
+   *
+   * ⚠️ POURQUOI CETTE FAMILLE EXISTE (26/08/2026). Timéo m'avait demandé de relire le skill pour
+   * vérifier qu'aucune fonctionnalité n'avait disparu. J'ai relu du CODE, trouvé les règles à leur
+   * place, et conclu que tout allait bien. Trois jours plus tard il découvre Bleu 30 Piscines : le
+   * prospect avait donné une nouvelle adresse le 14/07 et six mails sont partis à l'ancienne.
+   *
+   *   « c'était ça mon réel objectif, tu t'es planté dans ça alors qu'avant ça marchait,
+   *     c'est peut-être le cas pour d'autres fonctionnalités »
+   *
+   * Il a raison, et le défaut de méthode est net : **relire du code ne prouve rien**. Le code des
+   * redirections était PARFAITEMENT correct — et trois prospects se faisaient quand même relancer,
+   * parce qu'ils dataient d'avant le correctif. Une règle peut être vraie dans le code et fausse
+   * dans la base ; c'est la base que les prospects reçoivent.
+   *
+   * Chaque consigne donnée par Timéo devient donc ici un FAIT vérifiable, et non une intention
+   * qu'on relit. Toute consigne future s'ajoute à cette liste — c'est la réponse à sa demande
+   * « faut bien réenregistrer toutes les consignes que je t'ai données, que ça marche vraiment et
+   * que ça ne se supprime pas ». Une consigne qui n'est pas mesurée ici n'est pas tenue : elle est
+   * seulement espérée.
+   */
+
+  await verifier('D1', 'juridique',
+    'Un prospect qui a donné une nouvelle adresse n\'a plus aucun mail en file',
+    async () => await sql`
+      SELECT c.company, c.email, c.redirige_vers,
+             COUNT(*)::int AS encore_en_file
+      FROM contacts c JOIN email_queue q ON q.contact_id = c.id
+      WHERE q.status IN ('queued', 'pending', 'sending', 'scheduled')
+        AND EXISTS (
+          SELECT 1 FROM incoming_replies ir
+          WHERE ir.contact_id = c.id
+            AND (ir.body ILIKE '%changement d%adresse%' OR ir.body ILIKE '%nouvelle adresse%'
+              OR ir.body ILIKE '%nouveau mail%' OR ir.body ILIKE '%nouvel email%')
+        )
+      GROUP BY c.company, c.email, c.redirige_vers LIMIT 500`,
+    'Le cas Bleu 30 Piscines : nouvelle adresse annoncée le 14/07, six mails partis à l\'ancienne.')
+
+  /**
+   * ⚠️ CE QUE CET INVARIANT NE DOIT PAS COMPTER (corrigé le 26/08, dès sa première exécution).
+   *
+   * Ma première version joignait sur `incoming_reply_id` : elle criait dès qu'un message PARTAIT
+   * après un refus sur le même fil. Elle a donc épinglé Jaky Lesage, où Timéo avait refusé un
+   * « Bien noté, merci » puis m'avait demandé lui-même d'écrire « on n'a pas pu se libérer, quel
+   * jour vous arrange ». Deux textes n'ayant rien à voir.
+   *
+   * Or ce que la consigne interdit, c'est de REPRÉSENTER le texte refusé, pas de reparler au
+   * prospect. On compare donc les corps : seule la réapparition du MÊME message est une faute. Une
+   * alerte qui se déclenche sur le comportement voulu est une alerte qu'on apprend à ignorer, et
+   * c'est justement ce tableau qui doit rester crédible.
+   */
+  await verifier('D2', 'lead_perdu',
+    'Aucun brouillon REFUSÉ par Timéo n\'est reparti avec le même texte',
+    async () => await sql`
+      SELECT ir.from_email, rd.rejete_le, rd2.sent_at AS renvoye_le,
+             LEFT(rd2.body, 80) AS texte
+      FROM reply_drafts rd
+      JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      JOIN reply_drafts rd2 ON rd2.incoming_reply_id = rd.incoming_reply_id
+      WHERE rd.status = 'rejected' AND rd.rejete_par = 'humain'
+        AND rd2.status = 'sent' AND rd2.sent_at > rd.rejete_le
+        AND LEFT(REGEXP_REPLACE(rd2.body, '\\s+', ' ', 'g'), 60)
+          = LEFT(REGEXP_REPLACE(rd.body, '\\s+', ' ', 'g'), 60)
+      ORDER BY rd2.sent_at DESC LIMIT 500`,
+    '« À valider » est sacré : un texte que Timéo a refusé ne doit jamais repartir par un autre chemin.')
+
+  await verifier('D3', 'coherence',
+    'Aucun mail n\'est parti à un prospect APRÈS que son rendez-vous a été confirmé',
+    async () => await sql`
+      SELECT c.email, r.scheduled_at AS rdv_le, q.sequence_step, q.sent_at
+      FROM rdv r JOIN contacts c ON c.id = r.contact_id
+      JOIN email_queue q ON q.contact_id = c.id
+      WHERE r.status = 'confirmed' AND q.status = 'sent'
+        AND q.sent_at > r.created_at + INTERVAL '1 hour'
+        AND q.sequence_step < 20
+        AND q.sent_at > NOW() - INTERVAL '30 days'
+      ORDER BY q.sent_at DESC LIMIT 500`,
+    'Consigne du 20/08 : « une fois qu\'il a dit oui tu dois arrêter de lui envoyer des messages ».')
+
+  await verifier('D4', 'coherence',
+    'Jamais deux messages de notre part à moins de 2 h sans que le prospect ait écrit entre les deux',
+    async () => await sql`
+      WITH envois AS (
+        SELECT q.contact_id, q.sent_at,
+               LAG(q.sent_at) OVER (PARTITION BY q.contact_id ORDER BY q.sent_at) AS precedent
+        FROM email_queue q
+        WHERE q.status = 'sent' AND q.sent_at > NOW() - INTERVAL '14 days'
+      )
+      SELECT c.email, e.precedent, e.sent_at,
+             ROUND(EXTRACT(EPOCH FROM (e.sent_at - e.precedent)) / 60)::int AS minutes
+      FROM envois e JOIN contacts c ON c.id = e.contact_id
+      WHERE e.precedent IS NOT NULL
+        AND e.sent_at - e.precedent < INTERVAL '120 minutes'
+        AND NOT EXISTS (
+          SELECT 1 FROM incoming_replies ir
+          WHERE ir.contact_id = e.contact_id
+            AND ir.created_at BETWEEN e.precedent AND e.sent_at
+        )
+      ORDER BY e.sent_at DESC LIMIT 500`,
+    'Jaky Lesage, 25/08 : six messages en vingt et une minutes, trois voix sur le même fil.')
+
+  /**
+   * ⚠️ RÉPONDRE À UN ROBOT N'EST PAS RÉPONDRE À UN ROBOT (corrigé le 26/08, dès la première
+   * exécution : seize lignes rouges, seize faux positifs).
+   *
+   * Il existe DEUX gestes très différents sur un message d'absence, et ma première version les
+   * confondait :
+   *
+   *   · répondre TOUT DE SUITE à l'auto-répondeur, comme si une personne avait écrit. C'est la
+   *     faute du 19/08 (« t'es con ou quoi tu veux répondre à un bot ?? »).
+   *   · relancer APRÈS la date de retour annoncée — « vous m'aviez indiqué être fermé, j'espère
+   *     que la reprise se passe bien ». C'est une fonctionnalité que Timéo a explicitement voulue,
+   *     et dispensée de validation le 21/08.
+   *
+   * Les seize lignes étaient toutes des reprises après congés, envoyées le lendemain du retour. La
+   * frontière n'est donc pas « a-t-on répondu » mais « QUAND ». On ne signale que la réponse tirée
+   * dans les 24 h suivant l'auto-répondeur : à ce moment-là, l'entreprise est encore fermée et
+   * personne ne lit.
+   */
+  await verifier('D5', 'coherence',
+    'Aucune réponse immédiate n\'a été envoyée à un robot (absence, accusé de réception)',
+    async () => await sql`
+      SELECT ir.from_email, ir.classification, ir.created_at AS robot_recu_le, rd.sent_at
+      FROM reply_drafts rd JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      WHERE rd.status = 'sent' AND ir.classification IN ('oof', 'spam', 'warmup')
+        AND rd.sent_at < ir.created_at + INTERVAL '24 hours'
+      ORDER BY rd.sent_at DESC LIMIT 500`,
+    'Répondre tout de suite à un auto-répondeur est une faute ; relancer après la date de retour est la fonctionnalité voulue.')
+
+  await verifier('D6', 'coherence',
+    'Aucun contact sous les 20 avis Google n\'a été démarché',
+    async () => await sql`
+      SELECT c.company, c.email, c.google_reviews_count, MAX(q.sent_at) AS dernier_envoi
+      FROM contacts c JOIN email_queue q ON q.contact_id = c.id
+      WHERE q.status IN ('sent', 'queued', 'pending')
+        AND c.google_reviews_count IS NOT NULL AND c.google_reviews_count < 20
+        AND q.sent_at > NOW() - INTERVAL '30 days'
+      GROUP BY c.company, c.email, c.google_reviews_count
+      ORDER BY c.google_reviews_count LIMIT 500`,
+    'Signalé le 12/08 : une entreprise à moins de 20 avis avait été contactée malgré le filtre.')
+
+  await verifier('D7', 'coherence',
+    'Aucun mail en partance ne contient de tiret cadratin',
+    async () => await sql`
+      SELECT c.email, q.sequence_step, q.status
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status IN ('queued', 'pending')
+        AND (q.body LIKE '%—%' OR q.body LIKE '%–%')
+      LIMIT 500`,
+    'Consigne de style : les mails ne contiennent ni tiret cadratin ni deux-points.')
+
+  await verifier('D8', 'juridique',
+    'Une plainte sur le NOMBRE de mails a bien coupé les relances',
+    async () => await sql`
+      SELECT c.email, ir.created_at AS plainte_le, COUNT(q.id)::int AS encore_en_file
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      JOIN email_queue q ON q.contact_id = c.id AND q.status IN ('queued', 'pending', 'scheduled')
+      WHERE (ir.body ILIKE '%arretez de m%envoyer%' OR ir.body ILIKE '%trop de mails%'
+          OR ir.body ILIKE '%cesser de m%envoyer%' OR ir.body ILIKE '%combien de mails%'
+          OR ir.body ILIKE '%plusieurs mails%' OR ir.body ILIKE '%harc%')
+      GROUP BY c.email, ir.created_at LIMIT 500`,
+    'Se plaindre de la pression d\'envoi vaut « stop », même sans le mot : leçon écrite le 14/08 et jamais mise en code jusqu\'ici.')
+
+  await verifier('D9', 'coherence',
+    'Aucune adresse non validée par MillionVerifier n\'a reçu de mail',
+    async () => await sql`
+      SELECT c.email, c.email_validated, MAX(q.sent_at) AS dernier_envoi
+      FROM contacts c JOIN email_queue q ON q.contact_id = c.id
+      WHERE q.status = 'sent' AND q.sent_at > NOW() - INTERVAL '30 days'
+        AND COALESCE(c.email_validated, false) = false
+      GROUP BY c.email, c.email_validated LIMIT 500`,
+    'Le catch_all est une source de bounce : seules les adresses validées partent.')
 
   // ── MÉMOIRE DES FAUTES DÉJÀ COMMISES ─────────────────────────────────
   // Un invariant doit être SATISFIABLE : s'il compte des faits passés qu'on ne peut plus défaire,
