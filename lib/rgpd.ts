@@ -128,6 +128,21 @@ export function isExplicitOptOut(text: string): boolean {
       "cessez de (m'|nous |me )?([ée]crire|envoyer|contacter|solliciter)",
       "je ne souhaite plus",
       "merci de (ne plus|cesser|arr[êe]ter)",
+      /**
+       * ⚠️ LE VERBE CONJUGUÉ ENTRE « NE » ET « PLUS » (trouvé le 26/08 par la recette des détecteurs).
+       *
+       * Tous les motifs ci-dessus exigent « ne plus » COLLÉS. Or la formulation la plus courante en
+       * français glisse le verbe au milieu : « je ne VEUX plus recevoir vos mails ». Mesuré : cette
+       * phrase n'était pas reconnue comme un refus. C'est la famille exacte qui a produit la plainte
+       * CNIL, et elle était encore ouverte ici alors qu'elle avait été fermée sur agent-revele.
+       *
+       * ⚠️ On exige un VERBE DE CONTACT après « plus », jamais « ne … plus … » tout seul : sinon
+       * « je ne suis plus disponible cette semaine » — un report, donc un lead vivant — deviendrait
+       * un refus définitif. Trop large et trop étroit sont deux fautes, pas une seule.
+       */
+      "ne\\s+\\w+\\s+plus\\s+(?:[ée]tre\\s+)?(?:me\\s+|nous\\s+|m'|de\\s+)?(recevoir|recontact|contact|[ée]crire|solliciter|envoyer|d[ée]march)",
+      "n'?(ai|avons)\\s+plus\\s+besoin\\s+(de\\s+|d')?(vos|ces|vous)",
+      "ne\\s+(veux|voudrais|souhaite|d[ée]sire|veut)\\s+plus\\s+(de\\s+|d')?(mail|e-?mail|message|sollicit|pub|newsletter|prospection)",
     ].join('|'), 'i').test(t)
 }
 
