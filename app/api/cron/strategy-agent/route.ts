@@ -248,4 +248,11 @@ Analyse et décide en JSON STRICT (pas de texte avant ou après) :
 }
 
 /** Enveloppe d erreur + battement (cf. lib/cron-wrap.ts, audit 09/08). */
-export const GET = wrapCron('strategy-agent', handler)
+
+/**
+ * ⚠️ CADENCE DÉCLARÉE (26/08, audit A→Z). Sans elle, heartbeat-check ne peut PAS signaler ce cron
+ * muet : sa requête ne regarde que les crons ayant un intervalle attendu. 26 des 43 crons étaient
+ * dans ce cas — dont celui-ci. Le battement prouvait qu il avait tourné un jour, jamais qu il tourne
+ * encore. 1440 minutes = une fois par jour ; l alerte part après trois jours de silence.
+ */
+export const GET = wrapCron('strategy-agent', handler, 1440)

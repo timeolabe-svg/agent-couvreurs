@@ -292,6 +292,35 @@ export async function GET(request: NextRequest) {
           ADD COLUMN IF NOT EXISTS sector   TEXT
       `),
     },
+    /**
+     * ⚠️ `blocklist` N'AVAIT AUCUNE CONTRAINTE UNIQUE SUR `email` (26/08, audit A→Z).
+     *
+     * Deux `INSERT … ON CONFLICT (email) DO NOTHING` visaient cette colonne. Or `ON CONFLICT` n'est
+     * pas tolérant : **sans contrainte unique sur la colonne visée, Postgres LÈVE une erreur** au
+     * lieu d'ignorer le doublon. Les deux insertions échouaient donc systématiquement — et elles
+     * sont dans `stop-non-respectes`, c'est-à-dire dans le filet CNIL.
+     *
+     * ⚠️ Le plus instructif : j'avais « corrigé » ce filet une heure plus tôt en retirant deux
+     * colonnes fantômes. Le vrai défaut était double, et je n'en avais vu qu'une moitié. Une cause
+     * corrigée ne prouve pas un chemin réparé — il faut le faire tourner et regarder le résultat.
+     *
+     * On déduplique AVANT de créer l'index (une contrainte unique échoue s'il existe des doublons),
+     * en gardant la plus ANCIENNE entrée : c'est elle qui porte la vraie date du refus, et un refus
+     * se date.
+     */
+    {
+      nom: 'blocklist : dédoublonnage par email avant contrainte unique',
+      run: () => db.execute(sql`
+        DELETE FROM blocklist a USING blocklist b
+        WHERE a.email IS NOT NULL AND b.email IS NOT NULL
+          AND LOWER(a.email) = LOWER(b.email)
+          AND (a.created_at > b.created_at OR (a.created_at = b.created_at AND a.id > b.id))
+      `),
+    },
+    {
+      nom: 'blocklist : contrainte unique sur email (sans elle, ON CONFLICT lève une erreur)',
+      run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS blocklist_email_uq ON blocklist(email)`),
+    },
   ]
 
   const resultats: string[] = []

@@ -101,6 +101,26 @@ async function handler(req: NextRequest) {
       SELECT reason, COUNT(*)::int AS n FROM blocklist GROUP BY reason ORDER BY 2 DESC`
   }
 
+  /**
+   * CONTRAINTES D'UNICITÉ RÉELLES.
+   *
+   * ⚠️ `INSERT … ON CONFLICT (colonne) DO NOTHING` exige une contrainte unique SUR CETTE COLONNE.
+   * Sans elle, Postgres ne « passe » pas : il LÈVE une erreur. Combinée à un `.catch` muet, l'insertion
+   * disparaît en silence — exactement le mode de panne du filet CNIL, par une autre porte.
+   */
+  if (quoi === 'index') {
+    out.contraintes_uniques = await sql`
+      SELECT t.relname AS table_name, i.relname AS index_name,
+             string_agg(a.attname, ',' ORDER BY a.attnum) AS colonnes
+      FROM pg_class t
+      JOIN pg_index ix ON t.oid = ix.indrelid
+      JOIN pg_class i ON i.oid = ix.indexrelid
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      WHERE ix.indisunique AND n.nspname = 'public'
+      GROUP BY t.relname, i.relname ORDER BY t.relname`
+  }
+
   /** Volumétrie des tables : une table vide que le code lit est une fonctionnalité qui ne tourne pas. */
   if (quoi === 'volumes') {
     out.tables = await sql`
