@@ -225,6 +225,103 @@ async function handler(req: NextRequest) {
     }
   }
 
+  /**
+   * 🔎 POURQUOI PAS DE RENDEZ-VOUS ? — l'entonnoir étape par étape, sur 30 jours.
+   *
+   * Timéo, 27/08 : « ça fait un moment que j'obtiens pas de RDV, faut vraiment qu'il y en ait qui
+   * tombe ». La question n'est pas « combien de mails » mais À QUELLE ÉTAPE ça s'arrête. Un entonnoir
+   * qui perd tout au premier palier ne se répare pas comme un entonnoir qui perd tout au dernier.
+   */
+  if (quoi === 'pourquoi-pas-de-rdv') {
+    out.entonnoir_30j = await sql`
+      SELECT
+        (SELECT COUNT(DISTINCT contact_id)::int FROM email_queue
+          WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '30 days') AS personnes_contactees,
+        (SELECT COUNT(DISTINCT contact_id)::int FROM incoming_replies
+          WHERE created_at > NOW() - INTERVAL '30 days'
+            AND (classification IS NULL OR classification NOT IN ('spam','oof','warmup'))) AS ont_repondu,
+        (SELECT COUNT(DISTINCT contact_id)::int FROM incoming_replies
+          WHERE created_at > NOW() - INTERVAL '30 days'
+            AND classification IN ('interest','rdv_request','question')) AS interesses,
+        (SELECT COUNT(*)::int FROM rdv WHERE created_at > NOW() - INTERVAL '30 days') AS rdv_crees,
+        (SELECT COUNT(*)::int FROM rdv WHERE created_at > NOW() - INTERVAL '30 days'
+          AND COALESCE(status,'') NOT IN ('cancelled','proposed')) AS rdv_tenus`
+
+    /** Les réponses par nature : ce que les gens répondent vraiment. */
+    out.reponses_par_nature = await sql`
+      SELECT COALESCE(classification, '(non classe)') AS nature, COUNT(*)::int AS n
+      FROM incoming_replies WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY 1 ORDER BY 2 DESC`
+
+    /**
+     * ⚠️ LE POINT LE PLUS COÛTEUX : un lead chaud qui attend une décision humaine. Chaque jour
+     * d'attente refroidit un prospect qui, lui, a répondu.
+     */
+    out.leads_chauds_en_attente = await sql`
+      SELECT c.company, c.email, ir.classification, ir.created_at AS a_ecrit_le,
+             rd.status AS etat_brouillon,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - ir.created_at)) / 3600)::int AS depuis_heures
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      LEFT JOIN reply_drafts rd ON rd.incoming_reply_id = ir.id
+      WHERE ir.classification IN ('interest','rdv_request','question')
+        AND ir.created_at > NOW() - INTERVAL '30 days'
+        AND (rd.status IS NULL OR rd.status IN ('pending','awaiting_validation','scheduled'))
+      ORDER BY ir.created_at DESC LIMIT 20`
+
+    /**
+     * ⚠️ QUI A DEMANDÉ UN RENDEZ-VOUS SANS EN OBTENIR UN ? C'est le seul endroit où un rendez-vous
+     * peut être PERDU plutôt que simplement pas encore gagné — et donc le seul qui se rattrape.
+     */
+    out.demandes_rdv_sans_rdv = await sql`
+      SELECT c.company, c.email, ir.created_at AS a_demande_le,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - ir.created_at)) / 86400)::int AS il_y_a_jours,
+             (SELECT COUNT(*)::int FROM rdv r WHERE r.contact_id = c.id) AS rdv_existants,
+             (SELECT rd.status FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id LIMIT 1) AS brouillon,
+             LEFT(REPLACE(ir.body, E'\n', ' '), 140) AS extrait
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      WHERE ir.classification IN ('rdv_request', 'interest')
+        AND ir.created_at > NOW() - INTERVAL '30 days'
+        AND NOT EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id)
+      ORDER BY ir.created_at DESC LIMIT 15`
+
+    /**
+     * ⚠️ LE GISEMENT LE PLUS PROCHE : ceux qui étaient EN CONGÉS et qui sont revenus.
+     *
+     * Sur 110 réponses en 30 jours, 66 sont des absences automatiques — 60 %. Ce ne sont pas des
+     * refus, ce sont des gens qui n'ont pas encore lu. Chacun porte une date de retour qu'il a
+     * annoncée lui-même : le jour où elle passe, c'est le meilleur moment pour reprendre, et c'est
+     * du volume qui ne coûte aucun lead neuf.
+     */
+    out.absents_revenus = await sql`
+      SELECT c.company, c.email, c.absent_jusqu_au,
+             (CURRENT_DATE - c.absent_jusqu_au)::int AS revenu_depuis_jours,
+             (SELECT MAX(q.sent_at) FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent') AS dernier_mail,
+             (SELECT COUNT(*)::int FROM email_queue q WHERE q.contact_id = c.id AND q.status IN ('queued','pending')) AS en_file,
+             /**
+              * ⚠️ LE MESSAGE DE REPRISE NE PASSE PAS PAR LA FILE. Il part par le chemin des RÉPONSES
+              * (reply_drafts), puisque c'est une réponse à leur message d'absence. Un contrôle qui
+              * ne regarde que email_queue conclut donc « jamais relancé » pour quelqu'un qui l'a
+              * parfaitement été. J'ai failli l'annoncer à Timéo — troisième fausse alerte évitée
+              * aujourd'hui en vérifiant avant de parler.
+              */
+             (SELECT MAX(rd.sent_at) FROM reply_drafts rd
+               JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+               WHERE ir.contact_id = c.id AND rd.status = 'sent') AS derniere_reponse_envoyee
+      FROM contacts c
+      WHERE c.absent_jusqu_au IS NOT NULL
+        AND c.absent_jusqu_au <= CURRENT_DATE
+        AND NOT EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email))
+      ORDER BY c.absent_jusqu_au DESC LIMIT 40`
+
+    /** Depuis quand n'a-t-on pas créé de rendez-vous ? */
+    out.dernier_rdv = await sql`
+      SELECT MAX(created_at) AS dernier_cree,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) / 86400)::int AS il_y_a_jours
+      FROM rdv`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
