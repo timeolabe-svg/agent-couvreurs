@@ -503,17 +503,60 @@ async function handler(req: NextRequest) {
       ORDER BY rd.sent_at DESC LIMIT 500`,
     'Répondre tout de suite à un auto-répondeur est une faute ; relancer après la date de retour est la fonctionnalité voulue.')
 
+  /**
+   * ⚠️ CET INVARIANT ÉTAIT VERT POUR LA MAUVAISE RAISON (corrigé le 27/08).
+   *
+   * Il filtrait sur `q.sent_at > NOW() - INTERVAL '30 days'`. Or `sent_at` est NULL tant qu'un mail
+   * n'est pas parti : la condition écartait donc TOUTE la file, c'est-à-dire précisément ce qu'on
+   * peut encore empêcher. Mesuré ce jour-là : 326 entreprises sous 20 avis avaient des mails en
+   * file, et l'invariant affichait vert.
+   *
+   * Le moteur les filtre bien au moment d'envoyer (`send-campaign`, clause sur `google_reviews_count`),
+   * donc rien ne partait — mais un invariant qui ne peut pas voir la file ne surveille que le passé.
+   * On sépare donc les deux : ce qui est PARTI (faute consommée) et ce qui est EN FILE (encore
+   * évitable), sans jamais confondre les deux.
+   */
   await verifier('D6', 'coherence',
-    'Aucun contact sous les 20 avis Google n\'a été démarché',
+    'Aucun mail froid vers une entreprise sous les 20 avis Google, parti OU en file',
     async () => await sql`
-      SELECT c.company, c.email, c.google_reviews_count, MAX(q.sent_at) AS dernier_envoi
+      SELECT c.company, c.email, c.google_reviews_count,
+             COUNT(*) FILTER (WHERE q.status = 'sent')::int AS deja_partis,
+             COUNT(*) FILTER (WHERE q.status IN ('queued', 'pending'))::int AS en_file
       FROM contacts c JOIN email_queue q ON q.contact_id = c.id
-      WHERE q.status IN ('sent', 'queued', 'pending')
-        AND c.google_reviews_count IS NOT NULL AND c.google_reviews_count < 20
-        AND q.sent_at > NOW() - INTERVAL '30 days'
+      WHERE c.google_reviews_count IS NOT NULL AND c.google_reviews_count < 20
+        AND q.sequence_step < 20
+        AND (
+          (q.status = 'sent' AND q.sent_at > NOW() - INTERVAL '30 days')
+          OR q.status IN ('queued', 'pending')
+        )
       GROUP BY c.company, c.email, c.google_reviews_count
       ORDER BY c.google_reviews_count LIMIT 500`,
-    'Signalé le 12/08 : une entreprise à moins de 20 avis avait été contactée malgré le filtre.')
+    'Consigne Timéo : on ne contacte QUE les entreprises à 20 avis ou plus. Les autres vont à LabegarIA.')
+
+  /**
+   * ⚠️ D13 — LE NUMÉRO QUI SORT DOIT ÊTRE LE VRAI, PAS SEULEMENT « PAS UN FAUX ».
+   *
+   * Consigne de Timéo le 27/08, après avoir appris que 640 entreprises avaient reçu le numéro
+   * d'exemple : « pour tous les prochains mails tu dois mettre le bon numéro, c'est important ».
+   *
+   * L'invariant A3 ne cherchait que trois numéros d'exemple connus — il ne voyait donc pas un
+   * quatrième numéro inventé. Celui-ci prend le problème par l'autre bout : on extrait TOUS les
+   * numéros français du corps et on vérifie qu'il n'en reste aucun autre que celui de l'agence.
+   * Une liste de choses interdites est toujours incomplète ; une liste de ce qui est autorisé, non.
+   */
+  await verifier('D13', 'juridique',
+    'Aucun numéro de téléphone sortant autre que celui de l\'agence',
+    async () => await sql`
+      SELECT numero, COUNT(*)::int AS occurrences
+      FROM (
+        SELECT REGEXP_REPLACE((REGEXP_MATCHES(body, '0[1-9](?:[ .-]?[0-9]{2}){4}', 'g'))[1], '[^0-9]', '', 'g') AS numero
+        FROM email_queue
+        WHERE status IN ('queued', 'pending')
+           OR (status = 'sent' AND sent_at > NOW() - INTERVAL '14 days')
+      ) x
+      WHERE numero <> '0629990396'
+      GROUP BY numero ORDER BY 2 DESC LIMIT 20`,
+    'Le vrai numéro Hdigiweb est le 06 29 99 03 96. Tout autre numéro dans un mail est une invention.')
 
   await verifier('D7', 'coherence',
     'Aucun mail en partance ne contient de tiret cadratin',

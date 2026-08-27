@@ -123,6 +123,108 @@ async function handler(req: NextRequest) {
       GROUP BY 1 HAVING COUNT(*) > 1 ORDER BY 2 DESC LIMIT 10`
   }
 
+  /**
+   * SUPPRESSION DES TROIS FICHES BLOQUÉES À TORT (décision de Timéo, 27/08).
+   *
+   * Paradis Latin, France Bâtiment FBRE et Emmanuel Lambal ont été blocklistées à cause du refus de
+   * QUELQU'UN D'AUTRE : une réponse venue d'une adresse inconnue avait été rattachée à leur dossier
+   * par l'objet du mail, alors que cet objet servait à des dizaines de contacts.
+   *
+   * Timéo tranche : on les retire de la base, elles ne seront plus jamais démarchées.
+   *
+   * ⚠️ ON CONSERVE L'ENTRÉE DE BLOCKLIST, et on l'ajoute si elle manque. Supprimer la fiche sans
+   * cela ne protège de rien : le prochain import Outscraper les remettrait dans la file, et on
+   * recommencerait. La blocklist est la seule mémoire qui survit à une suppression de fiche.
+   *
+   * ⚠️ ON REFUSE DE SUPPRIMER S'IL EXISTE UN RENDEZ-VOUS. Un rendez-vous porte de la facturation :
+   * l'effacer réécrirait des factures passées. La règle est déjà posée pour les clients perdus, elle
+   * vaut ici.
+   */
+  if (quoi === 'supprimer-3') {
+    const EMAILS = ['alesia@francebatiment.com', 'paradislatin@paradislatin.com', 'contact@emmanuel-lambal.fr']
+    const appliquer = req.nextUrl.searchParams.get('appliquer') === '1'
+
+    const etat = await sql`
+      SELECT c.id, c.email, c.company,
+             (SELECT COUNT(*)::int FROM rdv r WHERE r.contact_id = c.id) AS rdv,
+             (SELECT COUNT(*)::int FROM email_queue q WHERE q.contact_id = c.id) AS lignes_de_file,
+             (SELECT COUNT(*)::int FROM incoming_replies ir WHERE ir.contact_id = c.id) AS reponses,
+             EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email)) AS deja_blocklistee
+      FROM contacts c WHERE LOWER(c.email) = ANY(${EMAILS.map(e => e.toLowerCase())})`
+    out.etat = etat
+
+    const avecRdv = (etat as Array<{ rdv: number; company: string }>).filter(r => r.rdv > 0)
+    if (avecRdv.length > 0) {
+      out.refus = `suppression refusée : ${avecRdv.map(r => r.company).join(', ')} porte(nt) un rendez-vous, donc de la facturation`
+      return NextResponse.json({ ok: false, ...out })
+    }
+
+    if (appliquer) {
+      const ids = (etat as Array<{ id: string }>).map(r => r.id)
+      // 1) La blocklist d'abord : elle doit survivre à la fiche.
+      for (const e of EMAILS) {
+        await sql`INSERT INTO blocklist (email, reason) VALUES (${e}, 'manuel') ON CONFLICT (email) DO NOTHING`
+      }
+      // 2) Puis les dépendances, puis la fiche (les clés étrangères l'exigent dans cet ordre).
+      if (ids.length > 0) {
+        await sql`DELETE FROM reply_drafts WHERE incoming_reply_id IN (SELECT id FROM incoming_replies WHERE contact_id = ANY(${ids}))`
+        await sql`DELETE FROM incoming_replies WHERE contact_id = ANY(${ids})`
+        await sql`DELETE FROM email_queue WHERE contact_id = ANY(${ids})`
+        const restants = (await sql`DELETE FROM contacts WHERE id = ANY(${ids}) RETURNING email`) as Array<{ email: string }>
+        out.supprimees = restants.map(r => r.email)
+      }
+      out.blocklist_posee = EMAILS
+    }
+  }
+
+  /** Répartition des avis Google : combien de fiches sont sous le seuil, et combien sont INCONNUES. */
+  if (quoi === 'avis') {
+    out.repartition = await sql`
+      SELECT CASE
+               WHEN google_reviews_count IS NULL THEN 'inconnu'
+               WHEN google_reviews_count < 20 THEN 'sous 20'
+               ELSE '20 et plus' END AS tranche,
+             COUNT(*)::int AS fiches,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = contacts.id AND q.status = 'sent'))::int AS deja_demarchees
+      FROM contacts GROUP BY 1 ORDER BY 2 DESC`
+  }
+
+  /**
+   * VIDER LA FILE DES ENTREPRISES SOUS 20 AVIS (consigne Timéo, 27/08).
+   *
+   * « Faut contacter que ceux avec plus de 20 avis, les autres tu dois les envoyer à LabegarIA et
+   * seulement LabegarIA. »
+   *
+   * Ces lignes ne partiraient de toute façon jamais : le moteur exige 20 avis au moment de réclamer
+   * un mail. Elles restaient donc en file indéfiniment — du poids mort qui fausse les compteurs et
+   * qui, surtout, maintient l'invariant D6 au rouge sur des cas qui ne peuvent plus nuire. **Un
+   * invariant rouge en permanence est un invariant qu'on cesse de lire**, et le jour où une vraie
+   * fuite apparaîtra, elle se perdra dans le bruit.
+   *
+   * ⚠️ On ANNULE, on ne supprime pas : la ligne reste lisible, et la décision est réversible.
+   * ⚠️ On ne touche QUE le froid (étape < 20). Une relance de conversation s'adresse à quelqu'un qui
+   * a déjà écrit — le nombre d'avis Google n'a plus rien à voir avec elle.
+   */
+  if (quoi === 'vider-file-sous-20') {
+    const constat = await sql`
+      SELECT COUNT(DISTINCT c.id)::int AS entreprises, COUNT(*)::int AS lignes
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE q.status IN ('queued', 'pending') AND q.sequence_step < 20
+        AND c.google_reviews_count IS NOT NULL AND c.google_reviews_count < 20`
+    out.a_annuler = constat
+
+    if (req.nextUrl.searchParams.get('appliquer') === '1') {
+      const annulees = (await sql`
+        UPDATE email_queue q SET status = 'cancelled'
+        FROM contacts c
+        WHERE c.id = q.contact_id
+          AND q.status IN ('queued', 'pending') AND q.sequence_step < 20
+          AND c.google_reviews_count IS NOT NULL AND c.google_reviews_count < 20
+        RETURNING q.id`) as unknown[]
+      out.lignes_annulees = annulees.length
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

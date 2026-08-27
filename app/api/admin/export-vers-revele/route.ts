@@ -74,6 +74,18 @@ async function handler(req: NextRequest) {
     FROM contacts c
     WHERE c.email IS NOT NULL
       AND (c.sector IS NULL OR LOWER(c.sector) = ANY(${METIERS_BTP}))
+      /**
+       * ⚠️ LES LEADS SOUS 20 AVIS VONT À LabegarIA, ET SEULEMENT À LabegarIA (consigne Timéo, 27/08).
+       *
+       * Cet export ne filtrait pas sur les avis Google : une entreprise trop petite pour Hdigiweb
+       * partait donc chez Revele aussi. Or Timéo a tranché une destination unique — sans ça, la même
+       * entreprise se fait démarcher par deux agences différentes, avec deux discours, et c'est nous
+       * qui passons pour un annuaire revendu.
+       *
+       * Le seuil est le MÊME que celui du moteur d'envoi (send-campaign, 20 avis) : deux endroits
+       * qui trient sur le même critère doivent utiliser le même chiffre, sinon ils divergeront.
+       */
+      AND COALESCE(c.google_reviews_count, 0) >= 20
       -- Jamais quelqu'un qui s'est opposé, quel qu'en soit le motif.
       AND NOT EXISTS (
         SELECT 1 FROM blocklist b
@@ -96,7 +108,11 @@ async function handler(req: NextRequest) {
            'non_verifiee' AS fiabilite
     FROM outscraper_leads ol
     WHERE ol.email IS NOT NULL
-      AND ol.status IN ('skipped_lowreviews', 'no_website', 'deja_en_base')
+      -- ⚠️ 'skipped_lowreviews' RETIRÉ le 27/08 : c'est exactement la catégorie « sous 20 avis »,
+      -- et Timéo a tranché qu'elle part chez LabegarIA et NULLE PART AILLEURS. La laisser ici
+      -- envoyait les mêmes entreprises aux deux agences.
+      AND ol.status IN ('no_website', 'deja_en_base')
+      AND COALESCE(ol.reviews, 0) >= 20
       AND (ol.sector IS NULL OR LOWER(ol.sector) = ANY(${METIERS_BTP}))
       AND NOT EXISTS (
         SELECT 1 FROM blocklist b

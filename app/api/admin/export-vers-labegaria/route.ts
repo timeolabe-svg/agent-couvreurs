@@ -8,7 +8,7 @@ import { wrapCron } from '@/lib/cron-wrap'
  * ⚠️ Défini ICI et pas importé : `isConcurrentAgence` existe côté labegaria, pas côté Hdigiweb —
  * les deux projets ont des bibliothèques distinctes malgré des noms de fichiers identiques. Croire
  * qu'une fonction est disponible parce qu'elle existe « dans l'autre projet » est une erreur que
- * j'ai déjà faite aujourd'hui (le schéma `contacts` n'a pas les mêmes colonnes non plus).
+ * j'ai déjà faite aujourd'hui (le schéma contacts n'a pas les mêmes colonnes non plus).
  */
 function estConcurrent(texte: string): boolean {
   const t = (texte || '').toLowerCase()
@@ -68,7 +68,32 @@ async function handler(req: NextRequest) {
         SELECT 1 FROM blocklist b
         WHERE (ol.email IS NOT NULL AND LOWER(b.email) = LOWER(ol.email))
       )
-    ORDER BY ol.reviews DESC NULLS LAST
+    /**
+     * ⚠️ LES FICHES DÉJÀ EN BASE SOUS 20 AVIS PARTENT AUSSI (consigne Timéo, 27/08).
+     *
+     * Cet export ne prenait que les leads REJETÉS À L'IMPORT (outscraper_leads). Or il y a aussi,
+     * dans contacts, des entreprises importées avant que le seuil existe : mesuré le 27/08,
+     * **326 d'entre elles ont des mails en file qui ne partiront JAMAIS**, puisque le moteur exige
+     * 20 avis au moment d'envoyer. Elles dormaient donc en stock, ni démarchées ni transmises.
+     *
+     * Timéo tranche : sous 20 avis, ça va à LabegarIA, et à LabegarIA seulement. On les ajoute donc
+     * ici, avec exactement les mêmes garde-fous — jamais quelqu'un qui a répondu, jamais quelqu'un
+     * de bloqué, jamais quelqu'un qu'on a déjà démarché.
+     */
+    UNION ALL
+    SELECT c.company, c.website, c.phone, c.city, c.postal_code,
+           c.email, c.google_reviews_count AS reviews, c.google_rating AS rating
+    FROM contacts c
+    WHERE c.email IS NOT NULL
+      AND COALESCE(c.google_reviews_count, 0) < 20
+      AND NOT EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent')
+      AND NOT EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM blocklist b
+        WHERE (b.email IS NOT NULL AND LOWER(b.email) = LOWER(c.email))
+           OR (b.domain IS NOT NULL AND b.domain <> '' AND LOWER(c.email) LIKE '%@' || LOWER(b.domain))
+      )
+    ORDER BY reviews DESC NULLS LAST
   `) as Array<{
     company: string; website: string | null; phone: string | null; city: string | null
     postal_code: string | null; email: string | null; reviews: number | null; rating: number | null
