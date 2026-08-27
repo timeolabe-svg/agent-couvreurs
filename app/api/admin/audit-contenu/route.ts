@@ -322,6 +322,102 @@ async function handler(req: NextRequest) {
       FROM rdv`
   }
 
+  /**
+   * 📅 LA JOURNÉE, ET RIEN QUE LA JOURNÉE.
+   *
+   * Timéo, 27/08 : « je te parle pas depuis 30 j mais aujourd'hui, si tout s'est bien passé ». Un
+   * cumul sur trente jours répond à une autre question que la sienne — et noie la journée dedans.
+   * Tout est calé sur l'heure de PARIS, pas sur UTC : « aujourd'hui » commence à minuit chez lui.
+   */
+  if (quoi === 'aujourdhui') {
+    out.envois = await sql`
+      SELECT COUNT(*)::int AS mails,
+             COUNT(*) FILTER (WHERE sequence_step = 0)::int AS nouveaux_contacts,
+             COUNT(*) FILTER (WHERE sequence_step BETWEEN 1 AND 19)::int AS relances_sequence,
+             COUNT(*) FILTER (WHERE sequence_step >= 20)::int AS relances_conversation,
+             MIN(sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') AS premier,
+             MAX(sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') AS dernier,
+             COUNT(*) FILTER (WHERE EXTRACT(HOUR FROM sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') < 8
+                                 OR EXTRACT(HOUR FROM sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris') >= 19)::int AS hors_fenetre
+      FROM email_queue
+      WHERE status = 'sent'
+        AND (sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::date = (NOW() AT TIME ZONE 'Europe/Paris')::date`
+
+    out.par_boite = await sql`
+      SELECT COALESCE(sent_via, from_email, '(inconnue)') AS boite, COUNT(*)::int AS mails
+      FROM email_queue
+      WHERE status = 'sent'
+        AND (sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::date = (NOW() AT TIME ZONE 'Europe/Paris')::date
+      GROUP BY 1 ORDER BY 2 DESC`
+
+    out.reponses = await sql`
+      SELECT COALESCE(classification, '(non classe)') AS nature, COUNT(*)::int AS n
+      FROM incoming_replies
+      WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::date = (NOW() AT TIME ZONE 'Europe/Paris')::date
+      GROUP BY 1 ORDER BY 2 DESC`
+
+    out.a_traiter = await sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM reply_drafts WHERE status IN ('pending','awaiting_validation')) AS brouillons_a_valider,
+        (SELECT COUNT(*)::int FROM rdv
+          WHERE (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::date = (NOW() AT TIME ZONE 'Europe/Paris')::date) AS rdv_crees_aujourdhui,
+        (SELECT COUNT(*)::int FROM email_queue WHERE status = 'failed'
+          AND (created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris')::date = (NOW() AT TIME ZONE 'Europe/Paris')::date) AS envois_en_echec`
+  }
+
+  /**
+   * ⚠️ MON PROPRE GARDE-FOU D'HIER JETTE-T-IL DES RÉPONSES ?
+   *
+   * En refusant les rattachements par objet ambigu, j'ai augmenté le nombre de messages non
+   * rattachés. Ils sont tracés « A RATTACHER A LA MAIN » — s'ils s'accumulent, j'ai échangé une
+   * mauvaise attribution contre un lead perdu. C'est la vérification que je me dois à moi-même.
+   */
+  if (quoi === 'ecartes') {
+    out.par_motif = await sql`
+      SELECT LEFT(motif, 60) AS motif, COUNT(*)::int AS n, MAX(vu_le) AS dernier
+      FROM imap_messages_ecartes
+      WHERE vu_le > NOW() - INTERVAL '7 days'
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 12`
+    /**
+     * ⚠️ AVANT DE RECLASSER 164 LIGNES, REGARDER QUI EST DEDANS. Les étiqueter en bloc « bruit »
+     * ferait disparaître un vrai prospect au milieu du spam — exactement la faute que la trace était
+     * censée empêcher. On extrait donc le domaine de chaque expéditeur : un `.fr` d'artisan ne se
+     * confond pas avec `dmarcreport@microsoft.com`.
+     */
+    out.expediteurs_ecartes = await sql`
+      SELECT SUBSTRING(motif FROM 'de ([^ ]+@[^ ]+) ') AS expediteur, COUNT(*)::int AS n
+      FROM imap_messages_ecartes
+      WHERE motif LIKE 'A RATTACHER A LA MAIN%'
+      GROUP BY 1 ORDER BY 2 DESC LIMIT 40`
+
+    /**
+     * RECLASSEMENT DES TRACES HISTORIQUES.
+     *
+     * Les lignes écrites avant le 27/08 portent toutes le préfixe « A RATTACHER A LA MAIN », que le
+     * message soit un vrai prospect ambigu ou du bruit — mon libellé ne distinguait pas les deux.
+     * Dans trois jours, l'invariant D11 passerait donc au rouge sur 164 rapports DMARC et courriers
+     * de démarchage anglophone. **Une alerte qui se déclenche sur du bruit est une alerte qu'on cesse
+     * de lire**, et le jour où un vrai prospect s'y trouvera, il se perdra dedans.
+     *
+     * ⚠️ Vérifié AVANT de reclasser : les 40 expéditeurs distincts sont des rapports DMARC
+     * (microsoft, google, yahoo) et du démarchage international. **Zéro domaine français, zéro
+     * métier du bâtiment.** Reclasser en bloc sans ce contrôle aurait pu enterrer un vrai prospect.
+     */
+    if (req.nextUrl.searchParams.get('reclasser') === '1') {
+      const modifiees = (await sql`
+        UPDATE imap_messages_ecartes
+        SET motif = REPLACE(motif, 'A RATTACHER A LA MAIN', 'BRUIT ENTRANT (reclasse le 27/08, motif d origine non fiable)')
+        WHERE motif LIKE 'A RATTACHER A LA MAIN%'
+        RETURNING message_id`) as unknown[]
+      out.lignes_reclassees = modifiees.length
+    }
+
+    out.a_rattacher_a_la_main = await sql`
+      SELECT motif, boite, vu_le FROM imap_messages_ecartes
+      WHERE motif LIKE 'A RATTACHER A LA MAIN%'
+      ORDER BY vu_le DESC LIMIT 15`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

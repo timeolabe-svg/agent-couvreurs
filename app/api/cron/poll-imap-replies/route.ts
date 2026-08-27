@@ -423,6 +423,9 @@ async function processBox(box: { email: string; password: string }, started: num
         .map(v => v.subject.replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').replace(/^\s*(re|ré|fwd|fw|tr|rép)\s*:\s*/gi, '').trim().toLowerCase())
         .filter(t => t.length > 8))]
       const contactParSujet = new Map<string, string>()
+      // Objets qui EXISTENT mais désignent plusieurs entreprises : le vrai cas ambigu, à distinguer
+      // du bruit entrant dont l'objet ne correspond à aucun envoi.
+      const sujetsAmbigus = new Map<string, number>()
       if (sujetsBase.length > 0) {
         /**
          * ⚠️ UN OBJET DE CAMPAGNE NE DÉSIGNE PERSONNE (26/08, signalé par la session LabegarIA).
@@ -444,14 +447,31 @@ async function processBox(box: { email: string; password: string }, started: num
          *
          * Un rattachement approximatif est pire qu'une absence de rattachement, parce qu'il écrit.
          */
+        /**
+         * ⚠️ ON RAMÈNE AUSSI LE NOMBRE DE CONTACTS, pas seulement les objets non ambigus.
+         *
+         * Sans ça, impossible de distinguer deux situations très différentes quand un message n'est
+         * pas rattaché : l'objet EXISTE mais désigne plusieurs entreprises (le vrai cas ambigu, un
+         * prospect dont il faut s'occuper), ou l'objet n'existe NULLE PART (du spam entrant, un
+         * rapport DMARC, une notification d'hébergeur — du bruit).
+         *
+         * Mesuré le 27/08 : sur 164 messages tracés « à rattacher à la main », la quasi-totalité
+         * venait de `dmarcreport@microsoft.com`, `noreply@dmarc.yahoo.com` ou de démarchage anglophone
+         * — et mon libellé les annonçait tous comme des objets ambigus. Une trace qui se trompe de
+         * motif fait chercher au mauvais endroit, et fait croire à 164 leads en attente là où il n'y
+         * en a aucun. C'est l'écran qui ment, version journal.
+         */
         const lignes = (await sql`
-          SELECT LOWER(subject) AS sujet, MIN(contact_id::text) AS contact_id
+          SELECT LOWER(subject) AS sujet, MIN(contact_id::text) AS contact_id,
+                 COUNT(DISTINCT contact_id)::int AS nb_contacts
           FROM email_queue
           WHERE LOWER(subject) = ANY(${sujetsBase}) AND status = 'sent' AND contact_id IS NOT NULL
           GROUP BY LOWER(subject)
-          HAVING COUNT(DISTINCT contact_id) = 1
-        `.catch(() => [])) as Array<{ sujet: string; contact_id: string }>
-        for (const l of lignes) contactParSujet.set(l.sujet, l.contact_id)
+        `.catch(() => [])) as Array<{ sujet: string; contact_id: string; nb_contacts: number }>
+        for (const l of lignes) {
+          if (l.nb_contacts === 1) contactParSujet.set(l.sujet, l.contact_id)
+          else sujetsAmbigus.set(l.sujet, l.nb_contacts)
+        }
       }
 
       const dejaTraites = new Set(
@@ -524,10 +544,13 @@ async function processBox(box: { email: string; password: string }, started: num
            * des messages écartés, avec un motif qui dit quoi en faire.
            */
           if (!contactHint) {
-            const motif = baseSubject.length > 8 ? 'objet partage par plusieurs contacts' : 'expediteur et objet inconnus'
+            const nbPartage = sujetsAmbigus.get(baseSubject.toLowerCase()) ?? 0
+            const motif = nbPartage > 1
+              ? `objet partage par ${nbPartage} contacts — PROSPECT A RATTACHER`
+              : 'expediteur inconnu, objet ne correspondant a aucun envoi — probablement du bruit'
             await sql`
               INSERT INTO imap_messages_ecartes (message_id, motif, boite)
-              VALUES (${'imap:' + messageId}, ${`A RATTACHER A LA MAIN — ${motif} — de ${from} — "${(subject ?? '').slice(0, 90)}"`}, ${box.email})
+              VALUES (${'imap:' + messageId}, ${`${nbPartage > 1 ? 'A RATTACHER A LA MAIN' : 'BRUIT ENTRANT'} — ${motif} — de ${from} — "${(subject ?? '').slice(0, 90)}"`}, ${box.email})
               ON CONFLICT (message_id) DO NOTHING
             `.catch(() => {})
             stats.nonRattaches++
