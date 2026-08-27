@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { jetonMachineValide } from '@/lib/cron-auth'
 import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 
@@ -61,14 +62,19 @@ export async function proxy(request: NextRequest) {
   if (routeMachine) {
     const secret = process.env.CRON_SECRET
     if (secret && secret.length >= 8) {
-      const header = request.headers.get('authorization') ?? ''
-      const fourni = header.replace(/^Bearer\s+/i, '').trim()
-        || request.nextUrl.searchParams.get('key')
-        || request.nextUrl.searchParams.get('token')
-        || ''
-      // Même tolérance que checkCronAuth : cron-job.org ajoute des suffixes aléatoires au jeton.
-      const fixe = secret.split('%')[0]
-      if (fourni === secret || (fixe.length >= 8 && fourni.startsWith(fixe))) {
+      /**
+       * ⚠️ MÊME DÉFAUT QUE DANS `checkCronAuth`, ET IL ÉTAIT ICI AUSSI (27/08).
+       *
+       * Le `||` en chaîne s'arrête au premier terme non vide : un en-tête `Authorization` périmé
+       * empêchait donc de regarder le `?key=` valide de l'URL, et la requête était refusée EN AMONT
+       * de la route — qui, elle, l'aurait acceptée. Deux copies de la même règle, une qui protège et
+       * une qui bloque : c'est le pire des deux mondes, et c'est indiagnostiquable.
+       *
+       * On appelle désormais la MÊME fonction que les routes, sur chaque source séparément.
+       */
+      const entete = (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+      const param = request.nextUrl.searchParams.get('key') ?? request.nextUrl.searchParams.get('token') ?? ''
+      if (jetonMachineValide(entete, secret) || jetonMachineValide(param, secret)) {
         return NextResponse.next()
       }
     }
