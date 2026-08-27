@@ -63,16 +63,65 @@ async function handler(req: NextRequest) {
   const metier = METIERS_CIBLES.find(m => m.sector === (metierDemande ?? prochainMetierParDefaut()))
     ?? METIERS_CIBLES[0]
 
-  const lot = (await sql`
+  /**
+   * ⚠️ DÉPARTEMENT PAR DÉPARTEMENT — consigne explicite de Timéo (27/08), et le code faisait
+   * l'inverse.
+   *
+   * Il triait par `population DESC` sur TOUTE LA FRANCE : le lot suivant partait donc à Paris, puis
+   * Marseille, puis Lyon, en sautant d'un département à l'autre. Aucun département n'était jamais
+   * terminé, et c'est exactement ce que Timéo fait à la main pour une bonne raison : **un
+   * département couvert en entier, c'est une zone où le client peut réellement travailler** ; vingt
+   * départements couverts au tiers, c'est de l'argent dépensé sans zone exploitable.
+   *
+   * La règle appliquée ici, dans l'ordre :
+   *   1. on FINIT le département déjà commencé (le plus avancé d'abord) — jamais deux chantiers
+   *      ouverts en même temps ;
+   *   2. s'il n'y en a aucun, on ouvre le département le plus peuplé ;
+   *   3. dans le département retenu, on prend les plus grandes villes d'abord.
+   *
+   * ⚠️ `?departement=31` force un département précis : quand Timéo sait où son client veut aller,
+   * la machine ne doit pas décider à sa place.
+   */
+  const deptDemande = req.nextUrl.searchParams.get('departement')
+  const [deptChoisi] = (await sql`
+    WITH restant AS (
+      SELECT v.departement,
+             COUNT(*)::int AS villes_restantes,
+             SUM(v.population)::bigint AS population_restante
+      FROM villes_scraping v
+      WHERE NOT EXISTS (
+        SELECT 1 FROM scrape_couverture sc
+        WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
+      )
+      GROUP BY v.departement
+    ),
+    deja AS (
+      SELECT v.departement, COUNT(*)::int AS villes_faites
+      FROM villes_scraping v
+      JOIN scrape_couverture sc
+        ON LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
+      GROUP BY v.departement
+    )
+    SELECT r.departement, r.villes_restantes, COALESCE(d.villes_faites, 0) AS villes_faites
+    FROM restant r LEFT JOIN deja d ON d.departement = r.departement
+    WHERE (${deptDemande}::text IS NULL OR r.departement = ${deptDemande})
+    -- 1) le département déjà entamé passe devant  2) sinon le plus peuplé
+    ORDER BY (COALESCE(d.villes_faites, 0) > 0) DESC, COALESCE(d.villes_faites, 0) DESC,
+             r.population_restante DESC NULLS LAST, r.departement ASC
+    LIMIT 1
+  `) as Array<{ departement: string; villes_restantes: number; villes_faites: number }>
+
+  const lot = deptChoisi ? (await sql`
     SELECT v.code_insee, v.nom, v.departement, v.population
     FROM villes_scraping v
-    WHERE NOT EXISTS (
-      SELECT 1 FROM scrape_couverture sc
-      WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
-    )
+    WHERE v.departement = ${deptChoisi.departement}
+      AND NOT EXISTS (
+        SELECT 1 FROM scrape_couverture sc
+        WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
+      )
     ORDER BY v.population DESC NULLS LAST, v.code_insee ASC
     LIMIT ${TAILLE_LOT}
-  `) as Ville[]
+  `) as Ville[] : []
 
   if (lot.length === 0) {
     await pingHeartbeat('achat-leads', true, `${metier.sector} : couverture complète`, 60)
@@ -92,6 +141,11 @@ async function handler(req: NextRequest) {
   const apercu = {
     metier: metier.sector,
     categorie_google: metier.categorie_google,
+    // On expose le département retenu et son AVANCEMENT : c'est la seule façon de vérifier d'un
+    // coup d'œil qu'on finit bien une zone avant d'en ouvrir une autre.
+    departement: deptChoisi
+      ? `${deptChoisi.departement} — ${deptChoisi.villes_faites} ville(s) déjà couverte(s), ${deptChoisi.villes_restantes} restante(s)`
+      : '(aucun département restant)',
     villes: lot.map(v => `${v.nom} (${v.departement}, ${v.population.toLocaleString('fr-FR')} hab)`),
     requetes,
     limite_par_ville: LIMITE_PAR_VILLE,
