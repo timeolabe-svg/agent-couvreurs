@@ -176,6 +176,14 @@ async function handler(req: NextRequest) {
     depense_mois_usd: Number(d.mois.toFixed(2)),
     plafonds_usd: { jour: PLAFOND_JOUR_USD, mois: PLAFOND_MOIS_USD },
     arret_urgence: arret.arrete ? arret.motif : null,
+    /**
+     * ⚠️ « POSÉE » NE VEUT PAS DIRE « LUE ». `vercel env add` stocke une valeur vide en silence sous
+     * Windows, et `vercel env pull` renvoie vide même pour un secret qui fonctionne : seul le
+     * RUNTIME dit la vérité. On expose donc un booléen — jamais la valeur — pour pouvoir vérifier
+     * d'un appel que la clé est réellement disponible côté serveur.
+     */
+    cle_outscraper_lue_par_le_runtime: Boolean(process.env.OUTSCRAPER_API_KEY),
+    achat_reel_actif: process.env.ACHAT_LEADS_ACTIF === '1',
   }
 
   if (!reel) {
