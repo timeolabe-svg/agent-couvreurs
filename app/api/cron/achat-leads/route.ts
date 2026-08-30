@@ -60,8 +60,27 @@ async function handler(req: NextRequest) {
   }
 
   // ── 2. Rien en cours : préparer le prochain lot ──────────────────────────────
-  const metier = METIERS_CIBLES.find(m => m.sector === (metierDemande ?? prochainMetierParDefaut()))
+  /**
+   * ⚠️ SI LE MÉTIER DU CYCLE N'A PLUS DE VILLE, ON PASSE AU SUIVANT — sinon la couverture complète
+   * d'un métier bloquerait les deux autres, et la machine tournerait à vide en disant « terminé ».
+   */
+  const position = await positionRotation(q)
+  let metier = METIERS_CIBLES.find(m => m.sector === (metierDemande ?? metierDuCycle(position)))
     ?? METIERS_CIBLES[0]
+  if (!metierDemande) {
+    for (let pas = 0; pas < CYCLE_METIERS.length; pas++) {
+      const candidat = METIERS_CIBLES.find(m => m.sector === metierDuCycle(position + pas))
+      if (!candidat) continue
+      const [reste] = (await sql`
+        SELECT 1 AS x FROM villes_scraping v
+        WHERE NOT EXISTS (
+          SELECT 1 FROM scrape_couverture sc
+          WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(candidat.categorie_google)})
+        ) LIMIT 1
+      `) as Array<{ x: number }>
+      if (reste) { metier = candidat; break }
+    }
+  }
 
   /**
    * ⚠️ DÉPARTEMENT PAR DÉPARTEMENT — consigne explicite de Timéo (27/08), et le code faisait
@@ -143,6 +162,9 @@ async function handler(req: NextRequest) {
     categorie_google: metier.categorie_google,
     // On expose le département retenu et son AVANCEMENT : c'est la seule façon de vérifier d'un
     // coup d'œil qu'on finit bien une zone avant d'en ouvrir une autre.
+    // Où en est-on dans le cycle 70/15/15 ? Sans ça, impossible de vérifier que la répartition
+    // tient : on verrait passer des couvreurs sans savoir si c'est le tour prévu ou une dérive.
+    rotation: `achat n°${position % CYCLE_METIERS.length + 1}/20 du cycle — 70 % couvreur, 15 % terrassier, 15 % pisciniste`,
     departement: deptChoisi
       ? `${deptChoisi.departement} — ${deptChoisi.villes_faites} ville(s) déjà couverte(s), ${deptChoisi.villes_restantes} restante(s)`
       : '(aucun département restant)',
@@ -186,6 +208,16 @@ async function handler(req: NextRequest) {
     INSERT INTO achat_commandes (request_id, metier, categorie, villes, statut)
     VALUES (${requestId}, ${metier.sector}, ${metier.categorie_google}, ${JSON.stringify(lot)}::jsonb, 'en_cours')
   `
+  /**
+   * ⚠️ LA ROTATION N'AVANCE QU'ICI, après un lancement RÉUSSI.
+   *
+   * Si on l'avançait au moment de choisir le métier, chaque simulation décalerait le cycle — et
+   * comme je simule beaucoup, la répartition 70/15/15 dériverait sans que rien ne le signale. Une
+   * commande qui échoue ne consomme pas non plus son tour : le métier prévu repassera au prochain
+   * essai.
+   */
+  await avancerRotation(q)
+
   await pingHeartbeat('achat-leads', true, `job ${requestId} lance`, 60)
   return NextResponse.json({
     ok: true, lance: true, request_id: requestId, ...apercu,
@@ -193,8 +225,46 @@ async function handler(req: NextRequest) {
   })
 }
 
-function prochainMetierParDefaut(): string {
-  return METIERS_CIBLES[0].sector
+/**
+ * RÉPARTITION DES ACHATS ENTRE MÉTIERS — 70 % couvreur, 15 % terrassier, 15 % pisciniste.
+ *
+ * Consigne de Timéo (27/08). Avant, `prochainMetierParDefaut` renvoyait toujours le premier métier
+ * de la liste : la machine n'achetait QUE des couvreurs, et les deux autres n'existaient qu'en
+ * passant `?metier=` à la main.
+ *
+ * ⚠️ PAS DE TIRAGE AU SORT. Un hasard à 70/15/15 peut donner huit couvreurs d'affilée, ou trois
+ * piscinistes de suite, et personne ne peut vérifier si c'est normal ou si c'est un bug. Ici la
+ * séquence est ÉCRITE : sur vingt achats, exactement quatorze couvreurs, trois terrassiers, trois
+ * piscinistes — et Timéo peut lire la position courante à tout moment.
+ *
+ * Les deux minoritaires sont RÉPARTIS dans le cycle (positions 3, 6, 10, 13, 16, 19) et non groupés
+ * à la fin : sinon les terrassiers n'arriveraient qu'après quatorze achats, soit deux semaines.
+ */
+const CYCLE_METIERS: string[] = (() => {
+  const c = Array<string>(20).fill('couvreur')
+  c[3] = 'terrassier'; c[10] = 'terrassier'; c[16] = 'terrassier'
+  c[6] = 'pisciniste'; c[13] = 'pisciniste'; c[19] = 'pisciniste'
+  return c
+})()
+
+/** Position courante dans le cycle, SANS l'avancer (la simulation ne doit rien décaler). */
+async function positionRotation(sql: Sql): Promise<number> {
+  const r = (await sql`SELECT valeur FROM achat_config WHERE cle = 'rotation_metier'`
+    .catch(() => [])) as Array<{ valeur: string }>
+  return Number(r[0]?.valeur ?? 0)
+}
+
+/** Avance d'un cran — appelé UNIQUEMENT après un lancement réel. */
+async function avancerRotation(sql: Sql): Promise<void> {
+  await sql`
+    INSERT INTO achat_config (cle, valeur, pose_le) VALUES ('rotation_metier', '1', now())
+    ON CONFLICT (cle) DO UPDATE SET
+      valeur = ((COALESCE(NULLIF(achat_config.valeur, ''), '0')::bigint + 1))::text, pose_le = now()
+  `.catch(() => {})
+}
+
+function metierDuCycle(position: number): string {
+  return CYCLE_METIERS[((position % CYCLE_METIERS.length) + CYCLE_METIERS.length) % CYCLE_METIERS.length]
 }
 
 /**
