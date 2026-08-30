@@ -2,6 +2,32 @@ import { NextRequest, NextResponse } from 'next/server'
 import { checkCronAuth } from '@/lib/cron-auth'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * ⚠️ COMBIEN DE FICHES UNE VILLE RAPPORTE-T-ELLE VRAIMENT ?
+ *
+ * L'estimation de coût du cron d'achat suppose 500 fiches par ville — le maximum demandé. C'est
+ * volontairement pessimiste, mais ça a une conséquence que Timéo vient de rencontrer : un lot de
+ * quinze villes est estimé à 22,50 $ et bute sur le plafond de 10 $/jour, alors que la dépense
+ * réelle sera de quelques centimes. **Le garde-fou bloque sur un chiffre imaginaire.**
+ *
+ * On mesure donc le rendement réel, par ville et par métier, pour pouvoir estimer sur des faits.
+ */
+export async function rendementParVille(sql: (s: TemplateStringsArray, ...v: unknown[]) => Promise<unknown[]>) {
+  return await sql`
+    SELECT COALESCE(sector, '(inconnu)') AS metier,
+           COUNT(DISTINCT city)::int AS villes,
+           COUNT(*)::int AS fiches,
+           ROUND(COUNT(*)::numeric / NULLIF(COUNT(DISTINCT city), 0), 1) AS fiches_par_ville,
+           MAX(cnt.n)::int AS pire_ville
+    FROM outscraper_leads ol
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS n FROM outscraper_leads o2
+      WHERE o2.city = ol.city AND COALESCE(o2.sector,'') = COALESCE(ol.sector,'')
+    ) cnt ON TRUE
+    WHERE ol.city IS NOT NULL
+    GROUP BY 1 ORDER BY 3 DESC`
+}
 export const maxDuration = 30
 
 /**
@@ -88,7 +114,9 @@ export async function GET(req: NextRequest) {
   const demarches = Number(c?.reellement_demarches ?? 0)
   const pct = (n: number) => (importees > 0 ? Math.round((n / importees) * 1000) / 10 : 0)
 
+  const rendement_par_ville = await rendementParVille(sql as never)
   return NextResponse.json({
+    rendement_par_ville,
     entonnoir: {
       '1_fiches_importees': importees,
       '2_avec_une_adresse_email': { n: Number(f?.avec_email ?? 0), pct_du_fichier: pct(Number(f?.avec_email ?? 0)) },

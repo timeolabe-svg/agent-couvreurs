@@ -32,7 +32,37 @@ export const maxDuration = 60
  * la classe « épuisée ».
  */
 
-const TAILLE_LOT = 4
+/**
+ * TAILLE DU LOT, PAR MÉTIER — consigne de Timéo (27/08).
+ *
+ * « Pour les couvreurs on demande 15 villes en même temps, mais pour les 2 autres seulement 5 par 5
+ * car ça ne sert à rien de faire plus. »
+ *
+ * Le raisonnement est juste : ce qui coûte, ce n'est pas la requête, c'est la fiche trouvée. Un lot
+ * de quinze villes de terrassiers rapporterait à peine plus qu'un lot de cinq, tout en immobilisant
+ * le budget du jour. On calibre donc le lot sur la densité du métier.
+ */
+const TAILLE_LOT_PAR_METIER: Record<string, number> = { couvreur: 15, terrassier: 5, pisciniste: 5 }
+const TAILLE_LOT_DEFAUT = 5
+
+/**
+ * ⚠️ L'ESTIMATION DE COÛT BLOQUAIT SUR UN CHIFFRE IMAGINAIRE.
+ *
+ * Elle supposait 500 fiches par ville — le maximum DEMANDÉ à l'API. Mesuré sur les 7 962 fiches
+ * déjà achetées : une ville en rapporte **2 à 4** (couvreur 3,7 · pisciniste 2,3 · terrassier 2,1).
+ * L'estimation était donc environ cent cinquante fois trop haute, et un lot de quinze villes était
+ * annoncé à 22,50 $ — au-dessus du plafond de 10 $/jour, donc refusé, alors que la dépense réelle
+ * aurait été de quelques centimes.
+ *
+ * Un garde-fou qui bloque sur une valeur fausse ne protège de rien : il empêche seulement de
+ * travailler, et on finit par le désactiver — ce qui supprime la vraie protection.
+ *
+ * On estime donc sur le rendement OBSERVÉ, avec une marge de sécurité large (×5 environ) pour
+ * couvrir les grandes villes. Les deux vraies protections restent intactes : le plafond compare
+ * cette estimation à la dépense RÉELLE déjà enregistrée, et `LIMITE_PAR_VILLE` borne toujours la
+ * requête à 500 fiches par ville quoi qu'il arrive.
+ */
+const ESTIMATION_FICHES_PAR_VILLE = Number(process.env.ACHAT_ESTIMATION_FICHES_PAR_VILLE ?? 20)
 
 interface Ville { code_insee: string; nom: string; departement: string; population: number }
 
@@ -139,7 +169,7 @@ async function handler(req: NextRequest) {
         WHERE LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
       )
     ORDER BY v.population DESC NULLS LAST, v.code_insee ASC
-    LIMIT ${TAILLE_LOT}
+    LIMIT ${TAILLE_LOT_PAR_METIER[metier.sector] ?? TAILLE_LOT_DEFAUT}
   `) as Ville[] : []
 
   if (lot.length === 0) {
@@ -152,7 +182,10 @@ async function handler(req: NextRequest) {
    * plafond doit être testé contre ce que la commande coûterait si Outscraper les trouvait toutes.
    * Estimer au « probable » revient à autoriser une dépense qu'on n'a pas budgétée.
    */
-  const coutMaximum = (lot.length * LIMITE_PAR_VILLE * PRIX_POUR_MILLE_USD) / 1000
+  // Estimation sur le rendement OBSERVE (cf. la note sur ESTIMATION_FICHES_PAR_VILLE), plus le
+  // maximum theorique garde a titre indicatif — pour que l ecart reste visible dans l apercu.
+  const coutEstime = (lot.length * ESTIMATION_FICHES_PAR_VILLE * PRIX_POUR_MILLE_USD) / 1000
+  const coutMaximumTheorique = (lot.length * LIMITE_PAR_VILLE * PRIX_POUR_MILLE_USD) / 1000
   const requetes = lot.map(v => `${metier.categorie_google}, ${v.nom}, France`)
   const d = await depenses(q)
   const arret = await lireArret(q)
@@ -171,7 +204,10 @@ async function handler(req: NextRequest) {
     villes: lot.map(v => `${v.nom} (${v.departement}, ${v.population.toLocaleString('fr-FR')} hab)`),
     requetes,
     limite_par_ville: LIMITE_PAR_VILLE,
-    cout_maximum_estime_usd: Number(coutMaximum.toFixed(2)),
+    taille_du_lot: lot.length,
+    cout_estime_usd: Number(coutEstime.toFixed(2)),
+    cout_maximum_theorique_usd: Number(coutMaximumTheorique.toFixed(2)),
+    base_estimation: `${ESTIMATION_FICHES_PAR_VILLE} fiches/ville (mesure reelle : 2 a 4)`,
     depense_jour_usd: Number(d.jour.toFixed(2)),
     depense_mois_usd: Number(d.mois.toFixed(2)),
     plafonds_usd: { jour: PLAFOND_JOUR_USD, mois: PLAFOND_MOIS_USD },
@@ -194,7 +230,7 @@ async function handler(req: NextRequest) {
     })
   }
 
-  const vert = await feuVert(q, coutMaximum)
+  const vert = await feuVert(q, coutEstime)
   if (!vert.ok) {
     await pingHeartbeat('achat-leads', true, `bloque : ${vert.raison}`, 60)
     return NextResponse.json({ ok: false, achat_bloque: vert.raison, ...apercu })
