@@ -70,7 +70,18 @@ const TOTAL_CAP_PER_BOX = Number(process.env.TOTAL_CAP_PER_BOX ?? 35)
  * partent des mêmes boîtes et comptent dans le même plafond — pour Gmail, un mail est un mail.
  *
  *   35 mails × 4 boîtes            = 140 mails par jour
- *   140 ÷ 6 mails par contact      = 23 nouveaux contacts par jour
+ *   140 ÷ 5 mails par contact      = 28 nouveaux contacts par jour
+ *
+ * ⚠️ RELEVÉ DE 23 À 28 LE 31/08, ET C'EST UNE LEÇON EN SOI.
+ *
+ * La séquence est passée de six à cinq mails ce jour-là (l'étape 5 rapportait 0,47 % de réponses
+ * contre 1,1 à 1,65 % pour les autres). J'ai annoncé à Timéo que ça libérerait de la capacité pour
+ * environ 20 % de nouveaux contacts en plus. **C'était faux tant que ce plafond restait à 23** : le
+ * jour même, la mesure donnait toujours 24 nouveaux contacts, exactement le plafond.
+ *
+ * Le divisieur avait changé, le résultat était resté écrit en dur. Un chiffre dérivé d'un autre doit
+ * être recalculé quand la source bouge — sinon on gagne de la capacité qu'on n'utilise jamais, et le
+ * gain annoncé n'existe que sur le papier.
  *
  * Ce n'est pas de la prudence : avec ONZE nouveaux par jour la semaine du 19/08, les boîtes
  * tournaient déjà à 240 mails quotidiens, uniquement à cause des relances des fichiers précédents.
@@ -79,9 +90,9 @@ const TOTAL_CAP_PER_BOX = Number(process.env.TOTAL_CAP_PER_BOX ?? 35)
  * 27 leads chauds (59 %) viennent des étapes 1 à 5, et l'étape 4 rend autant que l'étape 1. Couper
  * la queue de séquence ferait démarcher plus de monde pour obtenir MOINS de rendez-vous.
  *
- * À relever quand des boîtes s'ajoutent : 6 boîtes = 210/jour = 35 nouveaux/jour.
+ * À relever quand des boîtes s'ajoutent : 6 boîtes = 210/jour ÷ 5 = 42 nouveaux/jour.
  */
-const NOUVEAUX_PAR_JOUR = Number(process.env.NOUVEAUX_PAR_JOUR ?? 23)
+const NOUVEAUX_PAR_JOUR = Number(process.env.NOUVEAUX_PAR_JOUR ?? 28)
 
 const RELANCE_CAP_PER_BOX = 150 // × 4 boîtes = 600/jour de marge — largement au-dessus du besoin réel
 // 3) RELANCES DE CONVERSATION (step >= 20) : gens qui ont RÉPONDU, risque quasi nul, plafond
