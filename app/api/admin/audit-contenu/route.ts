@@ -564,6 +564,29 @@ async function handler(req: NextRequest) {
       GROUP BY 1 ORDER BY 4 DESC NULLS LAST`
   }
 
+  /**
+   * RETIRER LES ÉTAPES 5 DÉJÀ EN FILE (décision de Timéo, 31/08).
+   *
+   * La séquence passe de six à cinq mails : l'étape 5 obtenait 0,47 % de réponses contre 1,1 à
+   * 1,65 % pour les autres. Changer `SEQUENCE_DELAYS` empêche d'en créer de nouvelles, mais celles
+   * déjà programmées partiraient quand même — un correctif de cause ne répare pas le passé.
+   *
+   * ⚠️ On ANNULE, on ne supprime pas : la ligne reste lisible et la décision est réversible si
+   * Timéo veut rétablir le sixième mail.
+   */
+  if (quoi === 'retirer-etape-5') {
+    out.a_annuler = await sql`
+      SELECT COUNT(*)::int AS lignes, COUNT(DISTINCT contact_id)::int AS personnes
+      FROM email_queue WHERE status IN ('queued', 'pending') AND sequence_step = 5`
+    if (req.nextUrl.searchParams.get('appliquer') === '1') {
+      const annulees = (await sql`
+        UPDATE email_queue SET status = 'cancelled'
+        WHERE status IN ('queued', 'pending') AND sequence_step = 5
+        RETURNING id`) as unknown[]
+      out.lignes_annulees = annulees.length
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

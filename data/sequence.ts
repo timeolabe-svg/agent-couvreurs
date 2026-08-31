@@ -11,8 +11,37 @@ import { verifierAffirmations } from '@/lib/verifier-affirmations'
 // ⛔ Un seul chiffre autorisé : "au grand minimum 30 à 35 000 € de CA de devis" (vraie donnée client).
 // Style imposé : pas de tiret cadratin, pas de deux-points décoratifs, pas de gras, texte brut.
 
-// Cadence validée : J+0 / J+2 / J+5 / J+8 / J+12 / J+16
-export const SEQUENCE_DELAYS = [0, 2, 5, 8, 12, 16]
+/**
+ * Cadence validée : J+0 / J+2 / J+5 / J+8 / J+12.
+ *
+ * ⚠️ LE SIXIÈME MAIL (étape 5, J+16) A ÉTÉ RETIRÉ LE 31/08, SUR MESURE ET SUR DÉCISION DE TIMÉO.
+ *
+ * Taux de réponse par étape, sur toute la base :
+ *
+ *   étape 0   2 627 personnes   1,14 %
+ *   étape 1   1 734             1,27 %
+ *   étape 2   1 395             1,65 %
+ *   étape 3   1 256             1,51 %
+ *   étape 4   1 036             1,25 %
+ *   étape 5     845             0,47 %   <- deux à trois fois moins que les autres
+ *
+ * Huit cent quarante-cinq envois pour quatre réponses. Ce mail ne convainquait personne, mais il
+ * consommait un sixième du quota quotidien — un quota déjà saturé par les relances (110 des 134
+ * mails du jour). Chaque contact coûtait six mails au lieu de cinq, ce qui plafonnait l'acquisition
+ * à vingt-trois nouveaux prospects par jour.
+ *
+ * En le retirant, la même capacité d'envoi finance environ 20 % de nouveaux contacts en plus. C'est
+ * le seul levier gratuit trouvé : il n'exige ni boîte supplémentaire ni achat de leads.
+ *
+ * ⚠️ Ce n'est PAS « les relances ne servent à rien » — l'étape 2 est la MEILLEURE de toute la
+ * séquence. C'est la sixième, et elle seule, qui ne rapporte plus rien. Étrangler les relances en
+ * général ferait baisser les rendez-vous.
+ *
+ * Le texte du sixième mail reste plus bas dans ce fichier : si Timéo veut le rétablir, il suffit de
+ * remettre 16 dans cette liste. On ne supprime pas un texte validé par le client sur une décision
+ * qui peut se reprendre.
+ */
+export const SEQUENCE_DELAYS = [0, 2, 5, 8, 12]
 export const SEQUENCE_LENGTH = SEQUENCE_DELAYS.length
 
 export interface SequenceVars {
