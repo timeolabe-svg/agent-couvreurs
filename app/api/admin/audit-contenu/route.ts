@@ -516,6 +516,54 @@ async function handler(req: NextRequest) {
       ) x`
   }
 
+  /**
+   * 📈 OÙ SONT LES RÉPONSES ? Par étape de séquence et par variante de message.
+   *
+   * Timéo, 31/08 : « j'ai pas beaucoup de résultats là, ça commence à être chiant ». Avant de
+   * proposer quoi que ce soit, il faut savoir ce qui marche déjà : quelle étape déclenche les
+   * réponses, et si une variante de message fait mieux que les autres. Sans ça, changer le texte
+   * revient à jouer à pile ou face avec sa réputation d'expédition.
+   */
+  if (quoi === 'ou-sont-les-reponses') {
+    out.par_etape = await sql`
+      SELECT q.sequence_step AS etape,
+             COUNT(DISTINCT q.contact_id)::int AS personnes_touchees,
+             COUNT(DISTINCT ir.contact_id)::int AS ont_repondu,
+             ROUND(100.0 * COUNT(DISTINCT ir.contact_id) / NULLIF(COUNT(DISTINCT q.contact_id), 0), 2) AS taux_pct
+      FROM email_queue q
+      LEFT JOIN incoming_replies ir
+        ON ir.contact_id = q.contact_id
+       AND ir.created_at > q.sent_at
+       AND ir.created_at < q.sent_at + INTERVAL '4 days'
+       AND (ir.classification IS NULL OR ir.classification NOT IN ('spam','oof','warmup'))
+      WHERE q.status = 'sent' AND q.sequence_step < 20
+      GROUP BY 1 ORDER BY 1`
+
+    /**
+     * ⚠️ L'AUTO-APPRENTISSAGE FAVORISE-T-IL RÉELLEMENT LA MEILLEURE VARIANTE ?
+     *
+     * Le mécanisme existe (`exp_variant_weights`, ajusté par `weekly-learning`). Mais un mécanisme
+     * qui existe n'est pas un mécanisme qui agit : si les poids sont restés à l'uniforme, la
+     * variante la plus faible reçoit toujours autant de prospects que la meilleure, et la boucle
+     * d'apprentissage ne sert à rien.
+     */
+    out.poids_variantes = await sql`
+      SELECT key, value, updated_at FROM agent_config
+      WHERE key IN ('exp_variant_weights', 'exp_sector_weights', 'exp_region_weights')`
+
+    out.par_variante = await sql`
+      SELECT COALESCE(q.variant_id, '(aucune)') AS variante,
+             COUNT(DISTINCT q.contact_id)::int AS personnes,
+             COUNT(DISTINCT ir.contact_id)::int AS ont_repondu,
+             ROUND(100.0 * COUNT(DISTINCT ir.contact_id) / NULLIF(COUNT(DISTINCT q.contact_id), 0), 2) AS taux_pct
+      FROM email_queue q
+      LEFT JOIN incoming_replies ir
+        ON ir.contact_id = q.contact_id
+       AND (ir.classification IS NULL OR ir.classification NOT IN ('spam','oof','warmup'))
+      WHERE q.status = 'sent' AND q.sequence_step = 0
+      GROUP BY 1 ORDER BY 4 DESC NULLS LAST`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

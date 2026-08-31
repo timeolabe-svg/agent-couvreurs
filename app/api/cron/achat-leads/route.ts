@@ -3,6 +3,7 @@ import { checkCronAuth } from '@/lib/cron-auth'
 import { pingHeartbeat } from '@/lib/heartbeat'
 import { alertIndependent } from '@/lib/alert'
 import { METIERS_CIBLES, aliasDe } from '@/app/api/admin/plan-couverture/route'
+import { regionDuDepartement } from '@/lib/regions'
 import {
   assurerTablesAchat, feuVert, lancerJob, recolterJob, estDuMetier, detecterAnomalies,
   poserArret, lireArret, depenses, FicheOutscraper, Sql,
@@ -132,7 +133,7 @@ async function handler(req: NextRequest) {
    * la machine ne doit pas décider à sa place.
    */
   const deptDemande = req.nextUrl.searchParams.get('departement')
-  const [deptChoisi] = (await sql`
+  const candidatsDept = (await sql`
     WITH restant AS (
       SELECT v.departement,
              COUNT(*)::int AS villes_restantes,
@@ -151,14 +152,44 @@ async function handler(req: NextRequest) {
         ON LOWER(sc.ville) = LOWER(v.nom) AND LOWER(sc.categorie) = ANY(${aliasDe(metier.categorie_google)})
       GROUP BY v.departement
     )
-    SELECT r.departement, r.villes_restantes, COALESCE(d.villes_faites, 0) AS villes_faites
+    SELECT r.departement, r.villes_restantes, COALESCE(d.villes_faites, 0) AS villes_faites,
+           r.population_restante
     FROM restant r LEFT JOIN deja d ON d.departement = r.departement
     WHERE (${deptDemande}::text IS NULL OR r.departement = ${deptDemande})
-    -- 1) le département déjà entamé passe devant  2) sinon le plus peuplé
+    -- 1) le département déjà entamé passe devant ; le classement par région se fait ensuite en JS.
     ORDER BY (COALESCE(d.villes_faites, 0) > 0) DESC, COALESCE(d.villes_faites, 0) DESC,
              r.population_restante DESC NULLS LAST, r.departement ASC
-    LIMIT 1
-  `) as Array<{ departement: string; villes_restantes: number; villes_faites: number }>
+  `) as Array<{ departement: string; villes_restantes: number; villes_faites: number; population_restante: string }>
+  /**
+   * ⚠️ ON ACHÈTE LÀ OÙ ÇA RÉPOND, PAS LÀ OÙ IL Y A DU MONDE (31/08).
+   *
+   * Le classement se faisait à la population. Le prochain lot partait donc dans le Rhône —
+   * Auvergne-Rhône-Alpes, poids appris 0,107, la région qui convertit le MOINS de toutes. On
+   * s'apprêtait à payer des fiches là où on sait déjà qu'elles répondent le moins.
+   *
+   * L'auto-apprentissage note pourtant chaque région d'après ce qu'elle rapporte : l'information
+   * existait, le choix du département l'ignorait. On la lit désormais, en gardant la règle
+   * précédente devant — un département commencé se finit avant d'en ouvrir un autre.
+   */
+  const poidsRegion: Record<string, number> = await (async () => {
+    try {
+      const r = (await sql`SELECT value FROM agent_config WHERE key = 'exp_region_weights'`) as Array<{ value: string }>
+      return JSON.parse(r[0]?.value ?? '{}') as Record<string, number>
+    } catch {
+      // Pas de poids appris encore : on retombe sur le classement par population, sans rien casser.
+      return {}
+    }
+  })()
+
+  const deptChoisi = candidatsDept.sort((a, b) => {
+    // Un chantier ouvert se termine : cette règle passe avant la performance.
+    if ((a.villes_faites > 0) !== (b.villes_faites > 0)) return a.villes_faites > 0 ? -1 : 1
+    const pa = poidsRegion[regionDuDepartement(a.departement) ?? ''] ?? 0.5
+    const pb = poidsRegion[regionDuDepartement(b.departement) ?? ''] ?? 0.5
+    if (pa !== pb) return pb - pa
+    return Number(b.population_restante) - Number(a.population_restante)
+  })[0]
+
 
   const lot = deptChoisi ? (await sql`
     SELECT v.code_insee, v.nom, v.departement, v.population
