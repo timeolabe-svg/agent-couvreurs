@@ -42,6 +42,8 @@ export default function ReponsesAValiderPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editBody, setEditBody] = useState<Record<string, string>>({})
   const [fading, setFading] = useState<Set<string>>(new Set())
+  // Motif d echec par brouillon : affiche SUR la carte, pas seulement dans la console.
+  const [erreurs, setErreurs] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
@@ -75,15 +77,26 @@ export default function ReponsesAValiderPage() {
     }
   }
 
+  /**
+   * ⚠️ UN ÉCHEC FAISAIT DISPARAÎTRE LA LIGNE QUAND MÊME (corrigé le 31/08).
+   *
+   * Le `catch` se contentait d'un `console.error`, puis la ligne était retirée de la liste dans tous
+   * les cas. Vu de Timéo : il appuie sur Envoyer, la carte s'efface, et rien n'est parti. C'est la
+   * pire forme d'écran qui ment — celle qui confirme une action qui n'a pas eu lieu.
+   *
+   * Désormais : si l'envoi échoue, la ligne RESTE, et le motif exact renvoyé par le serveur
+   * s'affiche sur la carte. Une erreur qu'on ne voit pas est une erreur qu'on ne corrige jamais.
+   */
   const fadeOut = (draftId: string, then: () => Promise<void>) => {
     setFading((prev) => new Set(prev).add(draftId))
     setTimeout(async () => {
       try {
         await then()
+        setItems((prev) => prev.filter((item) => item.id !== draftId))
       } catch (err) {
         console.error('[reponses-a-valider]', err)
+        setErreurs((prev) => ({ ...prev, [draftId]: err instanceof Error ? err.message : String(err) }))
       }
-      setItems((prev) => prev.filter((item) => item.id !== draftId))
       setFading((prev) => {
         const next = new Set(prev)
         next.delete(draftId)
@@ -306,6 +319,16 @@ export default function ReponsesAValiderPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Motif d'échec, s'il y en a un : la carte reste, et elle dit POURQUOI. */}
+                {erreurs[item.id] && (
+                  <div
+                    className="px-4 py-2.5 text-[12px]"
+                    style={{ background: '#ef444410', borderTop: '1px solid #ef444430', color: '#ef4444' }}
+                  >
+                    Envoi refusé — {erreurs[item.id]}
+                  </div>
+                )}
 
                 {/* Actions */}
                 <div

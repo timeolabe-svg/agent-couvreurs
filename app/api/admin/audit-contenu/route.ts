@@ -418,6 +418,47 @@ async function handler(req: NextRequest) {
       ORDER BY vu_le DESC LIMIT 15`
   }
 
+  /**
+   * 🔎 POURQUOI LE BOUTON « ENVOYER » NE FAIT RIEN ?
+   *
+   * Timéo, 31/08 : « j'appuie sur envoyer ça ne marche pas ». `sendReplyEmail` porte plusieurs
+   * gardes anti-doublon ; l'une d'elles refuse probablement l'envoi, et l'écran ne le dit pas. On
+   * reconstitue donc, pour chaque brouillon en attente, exactement ce que ces gardes voient.
+   */
+  if (quoi === 'pourquoi-envoi-bloque') {
+    out.brouillons = await sql`
+      SELECT rd.id AS brouillon, rd.status, c.company, ir.from_email,
+             ir.created_at AS message_recu_le,
+             (SELECT MAX(t.quand) FROM (
+                SELECT eq.sent_at AS quand FROM email_queue eq
+                  WHERE eq.contact_id = ir.contact_id AND eq.status = 'sent'
+                UNION ALL
+                SELECT rd2.sent_at FROM reply_drafts rd2
+                  JOIN incoming_replies ir2 ON ir2.id = rd2.incoming_reply_id
+                  WHERE ir2.contact_id = ir.contact_id AND rd2.status = 'sent'
+                UNION ALL
+                SELECT mh.envoye_le FROM messages_humains mh
+                  WHERE LOWER(mh.destinataire) = LOWER(ir.from_email)
+             ) t) AS dernier_envoi,
+             (SELECT MAX(ir3.created_at) FROM incoming_replies ir3
+               WHERE ir3.contact_id = ir.contact_id) AS derniere_reponse_prospect,
+             EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(ir.from_email)) AS blocklistee
+      FROM reply_drafts rd
+      JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      LEFT JOIN contacts c ON c.id = ir.contact_id
+      WHERE rd.status IN ('pending', 'awaiting_validation')
+      ORDER BY rd.created_at DESC LIMIT 10`
+
+    /** Ce que sont devenus les brouillons de reprise après congés — partis, ou perdus ? */
+    out.reprises = await sql`
+      SELECT rd.status, rd.sent_at, c.company, c.email, ir.created_at AS oof_recu_le
+      FROM reply_drafts rd
+      JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      LEFT JOIN contacts c ON c.id = ir.contact_id
+      WHERE rd.body LIKE '%aviez indiqué être fermé%'
+      ORDER BY rd.created_at DESC LIMIT 15`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

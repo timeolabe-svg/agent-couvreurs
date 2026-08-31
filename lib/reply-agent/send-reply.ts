@@ -105,11 +105,44 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
      * a-t-il déjà reçu une réponse ». Si un envoi est sorti de la boîte APRÈS l'arrivée du message
      * auquel on veut répondre, il a déjà été traité, par l'agent ou par un humain. On se tait.
      */
+    /**
+     * ⚠️ UNE RELANCE DE SÉQUENCE N'EST PAS UNE RÉPONSE À CE MESSAGE (corrigé le 31/08).
+     *
+     * Cette garde comparait la date d'arrivée du message à `dernier` — le dernier envoi TOUTES
+     * SOURCES CONFONDUES, y compris `email_queue`, c'est-à-dire les mails de séquence.
+     *
+     * Conséquence mesurée : les trois brouillons en attente de validation étaient tous refusés.
+     * Le cas type est la reprise après congés — un prospect répond « fermé jusqu'au 21 août » le 14,
+     * la séquence continue normalement, et le message de reprise préparé pour le 22 est rejeté au
+     * motif qu'« un envoi est parti après son arrivée ». Timéo appuyait sur Envoyer et il ne se
+     * passait rien.
+     *
+     * La question que cette garde doit poser est « QUELQU'UN A-T-IL RÉPONDU À CE MESSAGE ? », pas
+     * « avons-nous écrit depuis ». Une réponse, c'est :
+     *   · un brouillon d'agent réellement envoyé pour CE message précis ;
+     *   · un mail écrit à la main à cette personne après l'arrivée du message.
+     * Un mail de campagne programmé de longue date n'est ni l'un ni l'autre.
+     *
+     * Le délai anti-monologue plus bas, lui, continue de compter TOUS les envois : là, c'est bien
+     * la question « lui a-t-on déjà écrit récemment » qui se pose.
+     */
     const arrivee = r.created_at ? new Date(r.created_at).getTime() : 0
-    if (arrivee && dernier > arrivee) {
-      return {
-        ok: false,
-        error: `ce message a déjà reçu une réponse (un envoi est parti ${Math.round((dernier - arrivee) / 60_000)} min après son arrivée)`,
+    if (arrivee) {
+      const reponses = (await sql`
+        SELECT MAX(t.quand) AS derniere FROM (
+          SELECT rd.sent_at AS quand FROM reply_drafts rd
+            WHERE rd.incoming_reply_id = ${incomingReplyId} AND rd.status = 'sent'
+          UNION ALL
+          SELECT mh.envoye_le FROM messages_humains mh
+            WHERE LOWER(mh.destinataire) = LOWER(r.from_email)
+        ) t
+      `.catch(() => [{ derniere: null }])) as Array<{ derniere: string | null }>
+      const dejaRepondu = reponses[0]?.derniere ? new Date(reponses[0].derniere).getTime() : 0
+      if (dejaRepondu > arrivee) {
+        return {
+          ok: false,
+          error: `ce message a déjà reçu une réponse (partie ${Math.round((dejaRepondu - arrivee) / 60_000)} min après son arrivée)`,
+        }
       }
     }
 
