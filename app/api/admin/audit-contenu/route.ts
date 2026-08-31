@@ -459,6 +459,63 @@ async function handler(req: NextRequest) {
       ORDER BY rd.created_at DESC LIMIT 15`
   }
 
+  /**
+   * 🔎 QUELLES FONCTIONNALITÉS TOURNENT SANS RIEN PRODUIRE ?
+   *
+   * Timéo, 31/08 : « vérifie s'il n'y a pas d'autres problèmes comme ça ». Le défaut du bouton
+   * Envoyer appartient à une famille précise : **une règle écrite, un cron qui tourne, un battement
+   * vert — et zéro effet**. Le heartbeat dit « ok » parce que le cron s'est terminé, pas parce qu'il
+   * a servi à quelque chose.
+   *
+   * On compare donc, pour chaque mécanisme, ce qu'il DEVRAIT produire à ce qu'il a RÉELLEMENT
+   * produit. Un compteur à zéro sur trente jours n'est pas forcément une panne — mais il mérite
+   * toujours qu'on aille voir.
+   */
+  if (quoi === 'effets') {
+    out.effets_30j = await sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM email_queue
+          WHERE status = 'sent' AND sequence_step >= 20 AND sent_at > NOW() - INTERVAL '30 days') AS relances_de_conversation,
+        (SELECT COUNT(*)::int FROM reply_drafts
+          WHERE status = 'sent' AND sent_at > NOW() - INTERVAL '30 days') AS reponses_agent_envoyees,
+        (SELECT COUNT(*)::int FROM reply_drafts
+          WHERE status = 'rejected' AND rejete_le > NOW() - INTERVAL '30 days') AS brouillons_rejetes,
+        (SELECT COUNT(*)::int FROM rdv WHERE created_at > NOW() - INTERVAL '30 days') AS rdv_crees,
+        (SELECT COUNT(*)::int FROM urgent_tasks WHERE created_at > NOW() - INTERVAL '30 days') AS taches_urgentes,
+        (SELECT COUNT(*)::int FROM messages_humains WHERE envoye_le > NOW() - INTERVAL '30 days') AS mails_ecrits_a_la_main,
+        (SELECT COUNT(*)::int FROM contacts WHERE absent_jusqu_au IS NOT NULL) AS absences_detectees,
+        (SELECT COUNT(*)::int FROM contacts WHERE redirige_vers IS NOT NULL) AS changements_d_adresse,
+        (SELECT COUNT(*)::int FROM blocklist WHERE created_at > NOW() - INTERVAL '30 days') AS blocages_30j`
+
+    /**
+     * Le mécanisme de relance de conversation : combien de prospects Y SERAIENT éligibles, et
+     * combien en sortent réellement ? L'écart dit si un filtre mange tout.
+     */
+    out.relance_conversation = await sql`
+      SELECT
+        COUNT(*)::int AS ont_repondu_puis_silence,
+        COUNT(*) FILTER (WHERE bloque)::int AS ecartes_blocklist,
+        COUNT(*) FILTER (WHERE a_un_rdv)::int AS ecartes_rdv,
+        COUNT(*) FILTER (WHERE pression)::int AS ecartes_pression,
+        COUNT(*) FILTER (WHERE rejet_humain)::int AS ecartes_rejet_humain,
+        COUNT(*) FILTER (WHERE deja_relance)::int AS deja_relances,
+        COUNT(*) FILTER (WHERE NOT bloque AND NOT a_un_rdv AND NOT pression AND NOT rejet_humain AND NOT deja_relance)::int AS RESTENT_ELIGIBLES
+      FROM (
+        SELECT c.id,
+          EXISTS (SELECT 1 FROM blocklist b WHERE LOWER(b.email) = LOWER(c.email)) AS bloque,
+          EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id AND r.status = 'confirmed') AS a_un_rdv,
+          c.pression_signalee_at IS NOT NULL AS pression,
+          EXISTS (SELECT 1 FROM reply_drafts rd JOIN incoming_replies ir2 ON ir2.id = rd.incoming_reply_id
+                   WHERE ir2.contact_id = c.id AND rd.status = 'rejected' AND rd.rejete_par = 'humain') AS rejet_humain,
+          EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.sequence_step >= 20) AS deja_relance
+        FROM contacts c
+        WHERE EXISTS (
+          SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id
+            AND ir.classification IN ('interest','question','objection','rdv_request')
+        )
+      ) x`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 

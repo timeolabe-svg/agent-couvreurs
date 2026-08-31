@@ -128,6 +128,22 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
      */
     const arrivee = r.created_at ? new Date(r.created_at).getTime() : 0
     if (arrivee) {
+      /**
+       * ⚠️ LA TABLE S'APPELLE `messages_humains` MAIS ELLE NE CONTIENT PAS QUE DES HUMAINS.
+       *
+       * Le relevé du dossier « Envoyés » enregistre TOUT ce qui sort des boîtes — de l'agent comme
+       * de la main de Timéo — et c'est volontaire : elle sert d'abord au délai anti-monologue, où
+       * seule compte la date du dernier message parti, quel qu'en soit l'auteur.
+       *
+       * Mais l'utiliser telle quelle pour répondre à « un HUMAIN a-t-il répondu ? » est faux : les
+       * mails de séquence de l'agent y figurent, et la garde se déclencherait sur nos propres envois.
+       * Mesuré le 31/08 : 1 394 lignes sur trente jours, soit le volume de l'agent, pas celui d'un
+       * humain. Le nom de la table promet une chose, son contenu en dit une autre.
+       *
+       * On écarte donc les lignes qui correspondent à un envoi CONNU de la machine : un mail de
+       * campagne ou une réponse d'agent partis à la même seconde près. Ce qui reste est écrit à la
+       * main.
+       */
       const reponses = (await sql`
         SELECT MAX(t.quand) AS derniere FROM (
           SELECT rd.sent_at AS quand FROM reply_drafts rd
@@ -135,6 +151,19 @@ export async function sendReplyEmail(incomingReplyId: string, body: string): Pro
           UNION ALL
           SELECT mh.envoye_le FROM messages_humains mh
             WHERE LOWER(mh.destinataire) = LOWER(r.from_email)
+              AND NOT EXISTS (
+                SELECT 1 FROM email_queue eq
+                WHERE eq.contact_id = ${r.contact_id} AND eq.status = 'sent'
+                  AND eq.sent_at BETWEEN mh.envoye_le - INTERVAL '3 minutes'
+                                     AND mh.envoye_le + INTERVAL '3 minutes'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM reply_drafts rd2
+                JOIN incoming_replies ir2 ON ir2.id = rd2.incoming_reply_id
+                WHERE ir2.contact_id = ${r.contact_id} AND rd2.status = 'sent'
+                  AND rd2.sent_at BETWEEN mh.envoye_le - INTERVAL '3 minutes'
+                                      AND mh.envoye_le + INTERVAL '3 minutes'
+              )
         ) t
       `.catch(() => [{ derniere: null }])) as Array<{ derniere: string | null }>
       const dejaRepondu = reponses[0]?.derniere ? new Date(reponses[0].derniere).getTime() : 0
