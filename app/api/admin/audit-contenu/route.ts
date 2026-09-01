@@ -587,6 +587,180 @@ async function handler(req: NextRequest) {
     }
   }
 
+  /**
+   * 🔎 L'OBJET DU MAIL ANNONCE-T-IL LE BON MÉTIER ?
+   *
+   * Capture de Timéo (31/08) : « TCT Couverture - Couvreur Façadier » a reçu un mail dont l'objet
+   * dit « quand on cherche **un peintre** à Valenciennes ». Le prospect lit, en une seconde, qu'on
+   * ne sait pas ce qu'il fait. C'est le pire début possible pour un cold mail — et ça n'apparaît
+   * dans aucun compteur, parce que techniquement le mail est parti sans erreur.
+   */
+  if (quoi === 'metier-dans-objet') {
+    out.incoherences = await sql`
+      SELECT c.company, c.sector, q.subject, q.sequence_step, q.status, q.sent_at
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE c.sector IS NOT NULL AND q.subject IS NOT NULL
+        AND q.subject ILIKE '%cherche un %'
+        AND q.subject NOT ILIKE '%' || c.sector || '%'
+        AND (q.status IN ('queued','pending') OR q.sent_at > NOW() - INTERVAL '60 days')
+      ORDER BY q.sent_at DESC NULLS FIRST LIMIT 25`
+    out.total = await sql`
+      SELECT COUNT(*)::int AS mails, COUNT(DISTINCT q.contact_id)::int AS personnes,
+             COUNT(*) FILTER (WHERE q.status IN ('queued','pending'))::int AS encore_en_file
+      FROM email_queue q JOIN contacts c ON c.id = q.contact_id
+      WHERE c.sector IS NOT NULL AND q.subject IS NOT NULL
+        AND q.subject ILIKE '%cherche un %'
+        AND q.subject NOT ILIKE '%' || c.sector || '%'`
+  }
+
+  /**
+   * ⚠️ UN PROSPECT QUI A ÉCRIT APRÈS SON RENDEZ-VOUS ET QUI ATTEND ENCORE.
+   *
+   * L'écran de Timéo signale « message sans réponse depuis le rendez-vous ». C'est la pire catégorie
+   * de lead perdu : quelqu'un d'assez intéressé pour avoir pris rendez-vous, qui relance, et à qui
+   * personne ne répond.
+   */
+  if (quoi === 'sans-reponse') {
+    out.en_attente = await sql`
+      SELECT c.company, c.email, ir.created_at AS a_ecrit_le,
+             ROUND(EXTRACT(EPOCH FROM (NOW() - ir.created_at)) / 86400)::int AS il_y_a_jours,
+             ir.classification, ir.action_taken,
+             (SELECT rd.status FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id LIMIT 1) AS brouillon,
+             (SELECT MAX(t.quand) FROM (
+                SELECT eq.sent_at AS quand FROM email_queue eq WHERE eq.contact_id = c.id AND eq.status = 'sent'
+                UNION ALL
+                SELECT rd2.sent_at FROM reply_drafts rd2 JOIN incoming_replies i2 ON i2.id = rd2.incoming_reply_id
+                  WHERE i2.contact_id = c.id AND rd2.status = 'sent'
+             ) t) AS dernier_envoi
+      FROM incoming_replies ir
+      JOIN contacts c ON c.id = ir.contact_id
+      WHERE ir.created_at = (SELECT MAX(i3.created_at) FROM incoming_replies i3 WHERE i3.contact_id = c.id)
+        AND COALESCE(ir.classification, '') NOT IN ('spam', 'warmup')
+        AND NOT EXISTS (
+          SELECT 1 FROM reply_drafts rd3 WHERE rd3.incoming_reply_id = ir.id AND rd3.status = 'sent'
+        )
+      ORDER BY ir.created_at DESC LIMIT 20`
+  }
+
+  /**
+   * 🔴 LE MÉTIER ENREGISTRÉ CONTREDIT-IL LE NOM DE L'ENTREPRISE ?
+   *
+   * Cas trouvé le 31/08 sur la capture de Timéo : « TCT Couverture - Couvreur Façadier Valenciennes »
+   * est stocké avec `sector = 'peintre'`. Les cinq mails de sa séquence lui ont donc annoncé
+   * « votre visibilité quand on cherche **un peintre** à Valenciennes ».
+   *
+   * Ce n'est pas une faute de frappe, c'est une perte sèche : un artisan qui lit qu'on le prend pour
+   * un autre métier sait en une seconde qu'il s'agit d'un envoi de masse mal fait. Aucun compteur ne
+   * le voit — le mail part sans erreur, la séquence se déroule, et le prospect ne répond simplement
+   * jamais. Ça se paie sur le taux de réponse, pas dans les logs.
+   *
+   * On compare donc le NOM de l'entreprise, qui dit presque toujours le métier, au secteur stocké.
+   */
+  if (quoi === 'metier-faux') {
+    const INDICES: Array<[string, string]> = [
+      ['couvreur', 'couvreur|couverture|toitur|zinguer|charpent'],
+      ['pisciniste', 'piscin|spa\\b'],
+      ['terrassier', 'terrassement|terrassier|tp\\b|travaux publics'],
+      ['maçon', 'maconnerie|maçonnerie|macon\\b|maçon\\b'],
+      ['menuisier', 'menuiser|fermetur|veranda|véranda'],
+      ['plombier', 'plomb|chauffagi|sanitaire'],
+      ['électricien', 'electric|électric'],
+      ['peintre', 'peintur|peintre|ravalement'],
+    ]
+    /**
+     * ⚠️ NE PAS COMPTER LES ENTREPRISES MULTI-MÉTIERS. « MEJAN RÉNOV | Peinture, Couverture » fait
+     * les deux : la classer « peintre » n'est pas une erreur. Ce qui est faux, c'est de classer
+     * peintre une entreprise dont le nom ne parle QUE de couverture.
+     *
+     * On exige donc que le nom contienne le métier probable ET NE CONTIENNE PAS le métier stocké.
+     * Sans ce second test, on annonce cent trente-huit erreurs là où il y en a bien moins — et une
+     * mesure gonflée fait prendre de mauvaises décisions aussi sûrement qu'une mesure absente.
+     */
+    const MOTIF_DE: Record<string, string> = Object.fromEntries(INDICES)
+    const lignes: unknown[] = []
+    for (const [metier, motif] of INDICES) {
+      const r = (await sql`
+        SELECT c.company, c.sector AS secteur_enregistre, ${metier} AS metier_probable, c.email,
+               (SELECT COUNT(*)::int FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent') AS mails_envoyes,
+               (SELECT COUNT(*)::int FROM email_queue q WHERE q.contact_id = c.id AND q.status IN ('queued','pending')) AS encore_en_file
+        FROM contacts c
+        WHERE c.company ~* ${motif}
+          AND c.sector IS NOT NULL
+          AND LOWER(c.sector) <> ${metier}
+          -- On ignore le fourre-tout : il ne prétend pas nommer un métier précis.
+          AND LOWER(c.sector) <> 'artisan du bâtiment'
+        LIMIT 200`) as unknown[]
+      lignes.push(...r)
+    }
+    /** Filtre multi-métiers : on écarte les entreprises dont le nom évoque AUSSI le métier stocké. */
+    type L = { company: string; secteur_enregistre: string; metier_probable: string; mails_envoyes: number; encore_en_file: number }
+    const vraiesErreurs = (lignes as L[]).filter(r => {
+      const motifStocke = MOTIF_DE[String(r.secteur_enregistre).toLowerCase()]
+      if (!motifStocke) return true
+      return !new RegExp(motifStocke, 'i').test(r.company ?? '')
+    })
+
+    out.total_signale_avant_filtre = lignes.length
+    out.total_vraies_erreurs = vraiesErreurs.length
+    out.multi_metiers_ecartes = lignes.length - vraiesErreurs.length
+    out.mal_classes = vraiesErreurs.slice(0, 30)
+    out.encore_en_file = vraiesErreurs.reduce((s, r) => s + Number(r.encore_en_file ?? 0), 0)
+    out.deja_ecrits = vraiesErreurs.reduce((s, r) => s + Number(r.mails_envoyes ?? 0), 0)
+
+    /**
+     * RÉPARATION. Deux gestes distincts, et le second est le plus important :
+     *
+     *  1. corriger le métier sur la fiche — sans ça, la prochaine relance refait la même erreur ;
+     *  2. ANNULER les mails encore en file qui portent le mauvais métier dans leur objet. Corriger la
+     *     fiche ne réécrit pas un mail déjà rédigé : l'objet et le corps sont figés dans la ligne de
+     *     file au moment où elle est créée. Sans cette annulation, on corrigerait la cause en
+     *     laissant partir les dégâts — l'erreur exacte de Bleu 30 Piscines.
+     *
+     * Les lignes annulées seront régénérées par `refresh-queued`, avec le bon métier.
+     */
+    if (req.nextUrl.searchParams.get('appliquer') === '1') {
+      let fiches = 0, mails = 0
+      for (const r of vraiesErreurs as Array<L & { email: string }>) {
+        const u = (await sql`
+          UPDATE contacts SET sector = ${r.metier_probable}
+          WHERE LOWER(email) = LOWER(${r.email}) RETURNING id`) as Array<{ id: string }>
+        if (!u[0]) continue
+        fiches++
+        const a = (await sql`
+          UPDATE email_queue SET status = 'cancelled'
+          WHERE contact_id = ${u[0].id} AND status IN ('queued', 'pending')
+          RETURNING id`) as unknown[]
+        mails += a.length
+      }
+      out.fiches_corrigees = fiches
+      out.mails_annules_a_regenerer = mails
+    }
+  }
+
+  /** Fil complet d'un prospect : ses messages, nos brouillons, nos envois — dans l'ordre. */
+  if (quoi === 'fil') {
+    const email = (req.nextUrl.searchParams.get('email') ?? '').toLowerCase()
+    out.messages_recus = await sql`
+      SELECT ir.id, ir.created_at, ir.classification, ir.action_taken,
+             LEFT(REPLACE(ir.body, E'\n', ' '), 160) AS extrait
+      FROM incoming_replies ir
+      WHERE LOWER(ir.from_email) = ${email}
+         OR ir.contact_id IN (SELECT id FROM contacts WHERE LOWER(email) = ${email})
+      ORDER BY ir.created_at`
+    out.brouillons = await sql`
+      SELECT rd.status, rd.created_at, rd.sent_at, rd.rejete_par,
+             LEFT(REPLACE(rd.body, E'\n', ' '), 120) AS extrait
+      FROM reply_drafts rd
+      JOIN incoming_replies ir ON ir.id = rd.incoming_reply_id
+      WHERE LOWER(ir.from_email) = ${email}
+         OR ir.contact_id IN (SELECT id FROM contacts WHERE LOWER(email) = ${email})
+      ORDER BY rd.created_at`
+    out.rdv = await sql`
+      SELECT r.scheduled_at, r.status, r.crm_stage, r.created_at
+      FROM rdv r JOIN contacts c ON c.id = r.contact_id
+      WHERE LOWER(c.email) = ${email} ORDER BY r.created_at`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
