@@ -828,8 +828,21 @@ async function handler(req: NextRequest) {
      * On croise donc par MOIS DE PREMIER CONTACT. Si l'écart disparaît à période égale, la cause
      * n'est pas Outscraper — et changer de fournisseur coûterait cher pour rien.
      */
+    /**
+     * ⚠️ LES BORNES DE MOIS SE CALCULENT EN HEURE DE PARIS, PAS EN UTC (signalé par une session
+     * voisine, 31/08).
+     *
+     * `sent_at` est un timestamp sans fuseau qui stocke de l'UTC. Un mail parti le 1er août à 00h30
+     * à Paris vaut le 31 juillet 22h30 en UTC : groupé brut, il tombe dans le MAUVAIS MOIS. Sur ce
+     * projet le biais n'est pas théorique — avant la pose de la fenêtre d'envoi, **56 % des mails
+     * partaient hors de la plage 8h-20h**, dont 178 à minuit et 217 à deux heures du matin. Ce sont
+     * précisément les envois qui basculent d'un mois à l'autre.
+     *
+     * Et c'est cette comparaison par mois qui sert à trancher « faut-il changer de fournisseur de
+     * leads ». Une borne fausse ferait prendre une décision chère sur un artefact de fuseau.
+     */
     out.par_mois_et_source = await sql`
-      SELECT to_char(date_trunc('month', p.premier), 'YYYY-MM') AS mois,
+      SELECT to_char(date_trunc('month', p.premier AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Paris'), 'YYYY-MM') AS mois,
              p.source,
              COUNT(*)::int AS contactes,
              COUNT(*) FILTER (WHERE p.a_repondu)::int AS ont_repondu
