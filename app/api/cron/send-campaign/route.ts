@@ -105,9 +105,15 @@ const MAX_PER_RUN = 8 // Runs fréquents (5-10 min) → débit total largement s
 // arrête proprement AVANT le prochain envoi si on approche la coupe, la ligne reste 'sending'
 // et sera récupérée par le REAPER (>15 min) au prochain run — jamais de renvoi en double.
 const TIME_BUDGET_MS = 15_000 // 20s était trop haut : 20s + un envoi SMTP lent (socketTimeout 8s + retry) dépassait la coupe 30s de cron-job.org. 15s + ~8s = ~23s, marge sûre.
-// Plafond à vie par contact. La séquence validée fait 6 mails (J+0/2/5/8/12/16) et un lead qui
-// répond peut recevoir jusqu'à 2 relances de conversation → 8 au maximum absolu, JAMAIS plus.
-// (Garde-fou anti-boucle hérité de l'incident des 130 mails : ne pas monter au-delà.)
+// Plafond à vie par contact : 8 mails, JAMAIS plus. C'est le garde-fou anti-boucle hérité de
+// l'incident des 130 mails, et il ne se relève sous aucun prétexte.
+//
+// ⚠️ Ce commentaire annonçait « 6 de séquence + 2 de conversation » : faux depuis la suppression
+// de l'étape 5 le 31/08. La séquence froide fait 5 paliers (SEQUENCE_DELAYS, data/sequence.ts),
+// donc le plafond laisse aujourd'hui jusqu'à 3 relances de conversation. Le CHIFFRE 8 reste bon,
+// c'est sa justification qui avait vieilli — et une justification fausse finit par servir de
+// base à un raisonnement. Ne pas dériver ce plafond de SEQUENCE_LENGTH : le raccourcissement de
+// la séquence ne doit pas resserrer en silence ce qu'un lead CHAUD peut encore recevoir.
 const LIFETIME_CAP_PER_CONTACT = 8
 
 interface ClaimedRow {
@@ -413,10 +419,13 @@ async function runCron(req: NextRequest) {
             WHERE s3.contact_id = eq.contact_id AND s3.sequence_step = eq.sequence_step
               AND s3.status = 'queued' AND s3.id < eq.id
           )
-          -- PLAFOND À VIE : voir LIFETIME_CAP_PER_CONTACT (8 = 6 de séquence + 2 de conversation).
-          -- ⚠️ Ce commentaire annonçait « jamais plus de 4 mails » alors que la constante vaut 8
-          -- depuis longtemps. Un commentaire faux est pire qu'aucun commentaire : trois lectures du
-          -- même fichier donnaient trois chiffres (4 ici, 8 dans la constante, 7 dans l'invariant).
+          -- PLAFOND À VIE : voir LIFETIME_CAP_PER_CONTACT (8, soit 5 paliers de séquence froide
+          -- plus jusqu'à 3 relances de conversation).
+          -- ⚠️ Ce commentaire a déjà menti DEUX fois. Il annonçait « jamais plus de 4 mails »
+          -- alors que la constante valait 8 ; corrigé, il a ensuite dit « 6 de séquence + 2 »,
+          -- faux dès la suppression de l'étape 5. Un commentaire faux est pire qu'aucun : trois
+          -- lectures du même fichier donnaient trois chiffres. Le seul chiffre qui fait foi est
+          -- la constante ; tout le reste est un récit qui vieillit.
           AND (
             SELECT COUNT(*) FROM email_queue s2
             WHERE s2.contact_id = eq.contact_id AND s2.status = 'sent'

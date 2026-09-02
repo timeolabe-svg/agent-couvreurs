@@ -243,7 +243,7 @@ async function handler(req: NextRequest) {
    * suivra. Ne jamais faire l'inverse : un audit plus permissif que la machine ne surveille rien.
    */
   await verifier('C2', 'coherence',
-    'Aucun contact n\'a reçu plus de 8 mails à vie (6 de séquence + 2 de conversation)',
+    'Aucun contact n\'a reçu plus de 8 mails à vie (5 paliers de séquence + jusqu\'à 3 de conversation)',
     async () => await sql`
       SELECT c.email, COUNT(*)::int AS mails
       FROM email_queue q JOIN contacts c ON c.id = q.contact_id
