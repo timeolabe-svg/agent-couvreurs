@@ -339,9 +339,10 @@ async function runCron(req: NextRequest) {
         -- interne (simple SELECT filtré, sans DISTINCT) ; le DISTINCT ON s'applique ENSUITE, sur le
         -- résultat déjà verrouillé, dans une requête sans clause de verrou (pas nécessaire ni permis).
         SELECT picked.id FROM (
-          SELECT DISTINCT ON (candidates.contact_id) candidates.id, candidates.sequence_step, candidates.scheduled_at
+          SELECT DISTINCT ON (candidates.contact_id) candidates.id, candidates.sequence_step, candidates.scheduled_at, candidates.nominative
           FROM (
-        SELECT eq.id, eq.contact_id, eq.sequence_step, eq.scheduled_at
+        SELECT eq.id, eq.contact_id, eq.sequence_step, eq.scheduled_at,
+               (split_part(c.email, '@', 1) !~* '^(contact|info|devis|commercial|accueil|secretariat|admin|direction|service|bonjour|hello|sav|entreprise|societe)') AS nominative
         FROM email_queue eq
         JOIN contacts c ON c.id = eq.contact_id
         WHERE eq.status = 'queued'
@@ -435,8 +436,32 @@ async function runCron(req: NextRequest) {
           -- ENSUITE quelle ligne du contact est retenue.
           ORDER BY candidates.contact_id, (candidates.sequence_step = 0) DESC, candidates.scheduled_at ASC
         ) picked
-        -- Tri final (post-dédoublonnage par contact) + plafond du lot.
-        ORDER BY (picked.sequence_step = 0) DESC, picked.scheduled_at ASC
+        /**
+         * Tri final (post-dédoublonnage par contact) + plafond du lot.
+         *
+         * ⚠️ LES ADRESSES NOMINATIVES D'ABORD (31/08) — c'est le plus gros levier mesuré à ce jour.
+         *
+         * Comparaison sur toute la base, contactés → ont répondu → rendez-vous :
+         *
+         *   nominative (prenom@, prenom.nom@)   1 600 contactés   3,63 % de réponses   0,69 % de RDV
+         *   générique  (contact@, info@…)       1 104 contactés   1,27 %               0,36 %
+         *
+         * Presque TROIS FOIS plus de réponses, et deux fois plus de rendez-vous. Une adresse
+         * générique tombe dans une boîte partagée que personne ne lit vraiment ; une adresse
+         * nominative arrive chez une personne, souvent le dirigeant.
+         *
+         * ⚠️ Et pas d'accent grave inversé dans ce commentaire : il est À L'INTÉRIEUR du gabarit
+         * sql, un seul suffit à terminer la chaîne. Troisième fois que ce piège casse le build.
+         *
+         * On ne SUPPRIME pas les génériques — ils rapportent encore, et le plafond quotidien n'est
+         * pas toujours atteint. On les fait juste passer APRÈS : à capacité limitée, les places du
+         * jour vont d'abord à ceux qui répondent.
+         *
+         * ⚠️ Ce tri ne s'applique qu'entre lignes de MÊME priorité : un nouveau contact passe
+         * toujours devant une relance, et une relance datée reste due. On ne réordonne que ce qui
+         * était départagé par la seule date de mise en file.
+         */
+        ORDER BY (picked.sequence_step = 0) DESC, picked.nominative DESC, picked.scheduled_at ASC
         LIMIT ${limit}
       )
       RETURNING id, subject, body, sequence_step, campaign_id, contact_id, from_email

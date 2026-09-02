@@ -761,6 +761,98 @@ async function handler(req: NextRequest) {
       WHERE LOWER(c.email) = ${email} ORDER BY r.created_at`
   }
 
+  /**
+   * 🔎 LES LEADS OUTSCRAPER VALENT-ILS CEUX DE L'API GOOGLE ?
+   *
+   * Hypothèse de Timéo (31/08) : « depuis qu'on passe par Outscraper il n'y a plus de RDV ; avec
+   * l'API Google, plus cher, j'avais largement plus de rendez-vous — peut-être parce qu'on
+   * contactait directement le dirigeant ».
+   *
+   * C'est une hypothèse testable, et elle vaut mieux qu'un avis. On compare donc, source par source,
+   * le seul chemin qui compte : contacté → a répondu → rendez-vous. Et on teste séparément sa
+   * sous-hypothèse, qui est la plus intéressante : une adresse NOMINATIVE (prenom.nom@) répond-elle
+   * mieux qu'une adresse générique (contact@, info@) ?
+   */
+  if (quoi === 'source') {
+    out.par_source = await sql`
+      SELECT COALESCE(c.source, '(inconnue)') AS source,
+             COUNT(*)::int AS fiches,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent'))::int AS contactes,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id
+                                              AND (ir.classification IS NULL OR ir.classification NOT IN ('spam','oof','warmup'))))::int AS ont_repondu,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id))::int AS ont_un_rdv
+      FROM contacts c GROUP BY 1 ORDER BY 3 DESC`
+
+    /**
+     * ⚠️ NOMINATIVE OU GÉNÉRIQUE ? C'est la vraie question derrière l'intuition de Timéo.
+     * `contact@`, `info@`, `devis@` tombent dans une boîte partagée que personne ne lit vraiment ;
+     * `prenom.nom@` arrive chez une personne.
+     */
+    out.par_type_adresse = await sql`
+      SELECT CASE
+               WHEN split_part(c.email, '@', 1) ~* '^(contact|info|devis|commercial|accueil|secretariat|admin|direction|service|bonjour|hello|sav|entreprise|societe)'
+                 THEN 'generique (contact@, info@...)'
+               ELSE 'nominative (prenom@, prenom.nom@)'
+             END AS type_adresse,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent'))::int AS contactes,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id
+                                              AND (ir.classification IS NULL OR ir.classification NOT IN ('spam','oof','warmup'))))::int AS ont_repondu,
+             COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM rdv r WHERE r.contact_id = c.id))::int AS ont_un_rdv
+      FROM contacts c WHERE c.email IS NOT NULL
+      GROUP BY 1 ORDER BY 2 DESC`
+
+    /**
+     * ⚠️ LE CROISEMENT QUI TRANCHE. Deux faits séparés ne font pas une cause : si les fichiers
+     * Outscraper contiennent surtout des adresses génériques, alors « Outscraper convertit moins »
+     * et « les génériques convertissent moins » sont la MÊME observation, et le levier n'est pas de
+     * changer de fournisseur mais de trier les adresses.
+     */
+    out.source_x_type = await sql`
+      SELECT COALESCE(c.source, '(inconnue)') AS source,
+             CASE
+               WHEN split_part(c.email, '@', 1) ~* '^(contact|info|devis|commercial|accueil|secretariat|admin|direction|service|bonjour|hello|sav|entreprise|societe)'
+                 THEN 'generique' ELSE 'nominative' END AS type_adresse,
+             COUNT(*)::int AS fiches
+      FROM contacts c
+      WHERE c.email IS NOT NULL AND c.source IN ('google_places', 'outscraper')
+      GROUP BY 1, 2 ORDER BY 1, 3 DESC`
+
+    /**
+     * ⚠️ LE FACTEUR QUI PEUT TOUT EXPLIQUER : LA PÉRIODE.
+     *
+     * Les fiches Google Places ont été démarchées en juin-juillet, les fiches Outscraper surtout en
+     * août — le mois où 60 % des réponses reçues étaient des absences de congés. Comparer les deux
+     * sources sans tenir compte de ça, c'est comparer un mois normal à un mois mort et conclure sur
+     * le fournisseur.
+     *
+     * On croise donc par MOIS DE PREMIER CONTACT. Si l'écart disparaît à période égale, la cause
+     * n'est pas Outscraper — et changer de fournisseur coûterait cher pour rien.
+     */
+    out.par_mois_et_source = await sql`
+      SELECT to_char(date_trunc('month', p.premier), 'YYYY-MM') AS mois,
+             p.source,
+             COUNT(*)::int AS contactes,
+             COUNT(*) FILTER (WHERE p.a_repondu)::int AS ont_repondu
+      FROM (
+        SELECT c.id, COALESCE(c.source, '(inconnue)') AS source,
+               (SELECT MIN(q.sent_at) FROM email_queue q WHERE q.contact_id = c.id AND q.status = 'sent') AS premier,
+               EXISTS (SELECT 1 FROM incoming_replies ir WHERE ir.contact_id = c.id
+                         AND (ir.classification IS NULL OR ir.classification NOT IN ('spam','oof','warmup'))) AS a_repondu
+        FROM contacts c
+        WHERE c.source IN ('google_places', 'outscraper')
+      ) p
+      WHERE p.premier IS NOT NULL
+      GROUP BY 1, 2 ORDER BY 1, 2`
+
+    /** Les rendez-vous, datés et rattachés à leur source : la chronologie tranche mieux qu'un ratio. */
+    out.rdv_par_mois_et_source = await sql`
+      SELECT to_char(date_trunc('month', r.created_at), 'YYYY-MM') AS mois,
+             COALESCE(c.source, '(inconnue)') AS source,
+             COUNT(*)::int AS rdv
+      FROM rdv r LEFT JOIN contacts c ON c.id = r.contact_id
+      GROUP BY 1, 2 ORDER BY 1, 3 DESC`
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
