@@ -342,11 +342,17 @@ export async function GET(request: NextRequest) {
       run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contacts_linkedin_url_uq ON contacts(linkedin_url) WHERE linkedin_url IS NOT NULL`),
     },
     {
+      // ⚠️ Le driver Neon (HTTP) n'exécute qu'UNE instruction par appel — deux ALTER séparés par
+      // un point-virgule dans le même sql`` échouaient silencieusement en un seul ERR groupé.
+      // Toujours une instruction par entrée de migration, comme partout ailleurs dans ce fichier.
+      nom: 'contacts : retirer l ancienne contrainte email/linkedin (si présente)',
+      run: () => db.execute(sql`ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_email_or_linkedin_chk`),
+    },
+    {
       // Un contact sans AUCUN moyen de contact n'a pas sa place en base — ni email ni LinkedIn
       // n'est un état valide, contrairement à "l'un des deux manque".
       nom: 'contacts : contrainte email OU linkedin_url renseigné',
       run: () => db.execute(sql`
-        ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_email_or_linkedin_chk;
         ALTER TABLE contacts ADD CONSTRAINT contacts_email_or_linkedin_chk
           CHECK (email IS NOT NULL OR linkedin_url IS NOT NULL)
       `),
@@ -365,11 +371,12 @@ export async function GET(request: NextRequest) {
       `),
     },
     {
-      nom: 'linkedin_leads : index sur contact_id et status',
-      run: () => db.execute(sql`
-        CREATE INDEX IF NOT EXISTS ll_contact_idx ON linkedin_leads(contact_id);
-        CREATE INDEX IF NOT EXISTS ll_status_idx ON linkedin_leads(status)
-      `),
+      nom: 'linkedin_leads : index sur contact_id',
+      run: () => db.execute(sql`CREATE INDEX IF NOT EXISTS ll_contact_idx ON linkedin_leads(contact_id)`),
+    },
+    {
+      nom: 'linkedin_leads : index sur status',
+      run: () => db.execute(sql`CREATE INDEX IF NOT EXISTS ll_status_idx ON linkedin_leads(status)`),
     },
     {
       // Anti-doublon d'invitation : deux lignes ne peuvent viser le même profil.
