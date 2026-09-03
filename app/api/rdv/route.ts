@@ -144,10 +144,12 @@ export async function POST(request: NextRequest) {
   try {
     const event = await createCalendarEvent({
       summary: `RDV - ${contact.company} (${contact.city ?? ''})`,
-      description: `Contact: ${contact.name ?? contact.email}\nEntreprise: ${contact.company}\nTéléphone: ${contact.phone ?? 'N/A'}\nEmail: ${contact.email}\n\n${body.notes ?? ''}`,
+      description: `Contact: ${contact.name ?? contact.email ?? 'via LinkedIn'}\nEntreprise: ${contact.company}\nTéléphone: ${contact.phone ?? 'N/A'}\nEmail: ${contact.email ?? 'aucun (contact LinkedIn)'}\n\n${body.notes ?? ''}`,
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
-      attendeeEmail: contact.email,
+      // Un contact venu du canal LinkedIn peut n'avoir aucun email — pas d'invité sur l'événement
+      // Calendar dans ce cas, l'événement existe quand même.
+      attendeeEmail: contact.email ?? undefined,
       meetLink: body.meetLink ?? true,
     })
     googleEventId = event.eventId
@@ -249,7 +251,8 @@ export async function POST(request: NextRequest) {
 }
 
 function buildRdvEmailHtml(params: {
-  contact: { name: string | null; company: string; city: string | null; phone: string | null; email: string }
+  // email nullable : un contact venu du canal LinkedIn peut n'avoir aucune adresse.
+  contact: { name: string | null; company: string; city: string | null; phone: string | null; email: string | null; linkedin_url?: string | null }
   dateStr: string
   timeStr: string
   durationMin: number
@@ -271,10 +274,11 @@ function buildRdvEmailHtml(params: {
     <div style="background:#1a1d27;border-radius:0 0 8px 8px;padding:24px">
       <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:16px">
         <p style="margin:0 0 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em">CONTACT</p>
-        <p style="margin:0 0 2px;font-size:15px;font-weight:600;color:#e1e4e8">${contact.name ?? contact.email}</p>
+        <p style="margin:0 0 2px;font-size:15px;font-weight:600;color:#e1e4e8">${contact.name ?? contact.email ?? 'Contact LinkedIn'}</p>
         <p style="margin:0 0 2px;font-size:13px;color:#8b949e">${contact.company} — ${contact.city ?? ''}</p>
         ${contact.phone ? `<p style="margin:4px 0 0;font-size:13px;color:#e1e4e8">📞 ${contact.phone}</p>` : ''}
-        <p style="margin:4px 0 0;font-size:13px;color:#e1e4e8">✉️ ${contact.email}</p>
+        ${contact.email ? `<p style="margin:4px 0 0;font-size:13px;color:#e1e4e8">✉️ ${contact.email}</p>` : ''}
+        ${!contact.email && contact.linkedin_url ? `<p style="margin:4px 0 0;font-size:13px;color:#e1e4e8">🔗 <a href="${contact.linkedin_url}" style="color:#58a6ff">${contact.linkedin_url}</a></p>` : ''}
       </div>
       <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:16px">
         <p style="margin:0 0 4px;font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.05em">RDV</p>

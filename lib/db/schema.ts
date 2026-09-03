@@ -16,7 +16,16 @@ import {
 // contacts — prospects scraped or imported
 export const contacts = pgTable('contacts', {
   id: uuid('id').primaryKey().defaultRandom(),
-  email: text('email').unique().notNull(),
+  // ⚠️ NOT NULL retiré le 03/09/2026 (canal LinkedIn) : un dirigeant trouvé via SIRENE peut
+  // n'avoir aucun email exploitable. Audit préalable fait sur les 12 fichiers touchant
+  // contacts.email dans app/api/cron : aucun ne lit .email sans garde sur un contact qui
+  // pourrait être LinkedIn-only — les sélections larges (validate-emails, autopilot-tick)
+  // sont toutes ancrées par un innerJoin sur email_queue, où un contact LinkedIn-only n'a
+  // jamais de ligne. audit-sites ne touche jamais .email. Contrainte applicative en
+  // contrepartie : au moins un de email/linkedin_url doit être renseigné à l'insertion —
+  // Postgres ne l'impose pas nativement sur deux colonnes nullable indépendantes.
+  email: text('email').unique(),
+  linkedin_url: text('linkedin_url').unique(),
   name: text('name'),
   company: text('company').notNull(),
   website: text('website'),
@@ -121,8 +130,14 @@ export const email_queue = pgTable('email_queue', {
 export const incoming_replies = pgTable('incoming_replies', {
   id: uuid('id').primaryKey().defaultRandom(),
   contact_id: uuid('contact_id').references(() => contacts.id),
+  // NULLABLE depuis le canal LinkedIn : un message LinkedIn n'a pas de ligne email_queue en amont.
   email_queue_id: uuid('email_queue_id').references(() => email_queue.id),
-  from_email: text('from_email').notNull(),
+  linkedin_lead_id: uuid('linkedin_lead_id').references(() => linkedin_leads.id),
+  // 'email' | 'linkedin'. Point de jonction unique entre les deux canaux, à l'identique du
+  // principe éprouvé chez LabegarIA — c'est lui qui alimente la messagerie unifiée.
+  channel: text('channel').notNull().default('email'),
+  // NOT NULL retiré : un message LinkedIn n'a pas d'adresse email.
+  from_email: text('from_email'),
   subject: text('subject'),
   body: text('body').notNull(),
   classification: text('classification'), // desinterest/objection/question/interest/rdv_request/oof/spam/other
@@ -197,7 +212,12 @@ export const blocklist = pgTable('blocklist', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email'),
   domain: text('domain'),
+  // Clé canonique normalisée (in/<slug>) — voir profileKey() dans lib/blocklist.ts. Un stop
+  // LinkedIn doit bloquer aussi l'email de la même personne et réciproquement (blocklist au
+  // niveau PERSONNE, pas au niveau canal — doctrine LabegarIA).
+  linkedin_url: text('linkedin_url'),
   reason: text('reason'), // unsubscribe/bounce/desinterest/manual
+  source: text('source'), // 'email' | 'linkedin' | 'manual' — traçabilité d'où vient le blocage
   created_at: timestamp('created_at').defaultNow(),
 })
 
@@ -242,17 +262,37 @@ export const agent_config = pgTable('agent_config', {
 })
 
 // linkedin_leads
+//
+// ⚠️ Réécrite le 03/09/2026 (canal LinkedIn Hdigiweb). Cette table existait déjà dans le schéma
+// mais était totalement morte : aucune route API, aucun cron, aucune UI ne la lisait/l'écrivait —
+// un embryon jamais branché. `contact_id` est le pont vers le référentiel unique de personnes ;
+// c'est lui qui permet à un lead LinkedIn de traverser la MÊME messagerie, les MÊMES stats et le
+// MÊME pipeline RDV que l'email, au lieu de dupliquer tout un sous-système parallèle non
+// surveillé — défaut connu chez LabegarIA (aucun invariant LinkedIn, garde-fous codés en dur).
 export const linkedin_leads = pgTable('linkedin_leads', {
   id: uuid('id').primaryKey().defaultRandom(),
+  contact_id: uuid('contact_id').references(() => contacts.id),
   first_name: text('first_name'),
   last_name: text('last_name'),
   company: text('company'),
-  profile_url: text('profile_url'),
+  profile_url: text('profile_url').unique(),
   campaign_id: uuid('campaign_id').references(() => campaigns.id),
-  status: text('status').default('pending'), // pending/invited/connected/messaged/replied/rdv
+  // Cycle complet répliqué du bot LabegarIA (pas la version tronquée d'origine) :
+  // pending/invited/connected/messaged/relanced_1/relanced_2/replied/reply_relanced/rdv
+  // /not_interested/ignored/expired. `not_interested` est un statut TERMINAL, jamais recontacté.
+  status: text('status').default('pending'),
+  // Nécessaire pour la règle d'expiration à 21 jours (une invitation en attente au-delà de 3
+  // semaines n'est PAS déductible comme acceptée — 52 faux positifs vécus chez LabegarIA).
+  invited_at: timestamp('invited_at'),
+  connected_at: timestamp('connected_at'),
   message_sent: text('message_sent'),
+  // Nécessaire pour les relances J+3/J+7.
+  last_message_at: timestamp('last_message_at'),
   created_at: timestamp('created_at').defaultNow(),
-})
+}, (table) => ({
+  contactIdx: index('ll_contact_idx').on(table.contact_id),
+  statusIdx: index('ll_status_idx').on(table.status),
+}))
 
 // phone_leads
 export const phone_leads = pgTable('phone_leads', {
@@ -271,6 +311,29 @@ export const phone_leads = pgTable('phone_leads', {
   called_at: timestamp('called_at'),
   created_at: timestamp('created_at').defaultNow(),
 })
+
+// linkedin_bot_state — REPORTING seulement, jamais la source de vérité des garde-fous.
+//
+// Le budget réel (visites de profils/jour, montée en charge) vit dans state.json, LOCAL au VPS
+// du bot, fail-closed si illisible — le bot ne doit JAMAIS dépendre du réseau pour connaître son
+// propre budget, sinon on réintroduit une dépendance réseau sur un garde-fou de sécurité. Cette
+// table est une copie que le bot pousse à chaque cycle, à titre informatif pour le dashboard et
+// un futur invariant « bot muet » (E8) — jamais l'inverse.
+export const linkedin_bot_state = pgTable('linkedin_bot_state', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Une ligne par client dès maintenant, même à un seul (Hdigiweb) — n'attend pas un 2e client
+  // pour être multi-client.
+  client: text('client').notNull().default('hdigiweb'),
+  daily_profile_visits: integer('daily_profile_visits').default(0),
+  daily_profile_visits_date: date('daily_profile_visits_date'),
+  daily_invites_sent: integer('daily_invites_sent').default(0),
+  daily_invites_date: date('daily_invites_date'),
+  ramp_start: timestamp('ramp_start'),
+  last_heartbeat_at: timestamp('last_heartbeat_at'),
+  updated_at: timestamp('updated_at').defaultNow(),
+}, (table) => ({
+  clientIdx: uniqueIndex('lbs_client_uq').on(table.client),
+}))
 
 // dashboard_events — realtime event stream for SSE
 export const dashboard_events = pgTable('dashboard_events', {

@@ -110,7 +110,9 @@ export async function GET(request: NextRequest) {
       const fresh = buildHdigiwebSequence(step, varsFor(contact, queue.from_email))
       if (fresh.subject === queue.subject && fresh.body === queue.body) { unchanged++; continue }
       if (samples.length < 3) {
-        samples.push({ email: contact.email, step, subject: fresh.subject, body: fresh.body })
+        // Non-null garanti : cette ligne vient d'un JOIN sur email_queue, où seul un contact
+        // ayant un email peut avoir une ligne (le canal LinkedIn n'écrit jamais dans email_queue).
+        samples.push({ email: contact.email!, step, subject: fresh.subject, body: fresh.body })
       }
       todo.push({ id: queue.id, subject: fresh.subject, body: fresh.body })
     }

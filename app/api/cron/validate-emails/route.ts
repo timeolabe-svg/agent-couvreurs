@@ -116,7 +116,8 @@ async function runCron(req: Request) {
     try {
       const resp = await fetch(
         // timeout=6 (serveur MV) + AbortSignal 8s : borne dure par appel, cohérente avec TIME_BUDGET_MS.
-        `https://api.millionverifier.com/api/v3/?api=${mvKey}&email=${encodeURIComponent(c.email)}&timeout=6`,
+        // Non-null garanti : `rows` (ligne 94) vient d'un JOIN sur email_queue, réservé aux contacts email.
+        `https://api.millionverifier.com/api/v3/?api=${mvKey}&email=${encodeURIComponent(c.email!)}&timeout=6`,
         { signal: AbortSignal.timeout(8000) }
       )
       /**

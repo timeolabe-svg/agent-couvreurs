@@ -9,6 +9,8 @@ interface ConvMessage {
   date: string
   status?: string
   classification?: string
+  /** 'email' | 'linkedin' — absent sur les messages plus anciens que le canal LinkedIn (03/09). */
+  channel?: string
 }
 
 export async function GET() {
@@ -44,6 +46,8 @@ export async function GET() {
       .select({
         id: incoming_replies.id,
         contact_id: incoming_replies.contact_id,
+        linkedin_lead_id: incoming_replies.linkedin_lead_id,
+        channel: incoming_replies.channel,
         from_email: incoming_replies.from_email,
         subject: incoming_replies.subject,
         body: incoming_replies.body,
@@ -192,7 +196,10 @@ export async function GET() {
       key: string
       contactId: string | null
       company: string
-      email: string
+      // NULLABLE depuis le canal LinkedIn : un contact promu via SIRENE peut n'avoir aucun email.
+      email: string | null
+      /** 'email' | 'linkedin' — canal du DERNIER message du fil, pour le badge de la liste. */
+      channel: string
       city: string
       phone: string | null
       website: string | null
@@ -211,21 +218,27 @@ export async function GET() {
     }
     const groups = new Map<string, Group>()
 
-    const groupKeyFor = (contactId: string | null, email: string) => contactId ?? `email:${email}`
+    // ⚠️ `email` peut être vide (message LinkedIn sans from_email) : le repli passe alors par
+    // linkedinLeadId, et en tout dernier recours par l'id de la ligne elle-même (déterministe,
+    // au moins reproductible dans cette requête) plutôt qu'un identifiant aléatoire qui casserait
+    // le regroupement de deux messages du même fil.
+    const groupKeyFor = (contactId: string | null, email: string | null, linkedinLeadId?: string | null, fallbackId?: string) =>
+      contactId ?? (email ? `email:${email}` : linkedinLeadId ? `li:${linkedinLeadId}` : `anon:${fallbackId ?? Math.random()}`)
 
     // Anti-doublon d'AFFICHAGE (le même message parfois ré-ingéré → base64 non reconnu → il
     // apparaissait 2-3 fois, le fil semblait "dans tous les sens"). Normalisation pour comparer.
     const normForDedup = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9àâäéèêëîïôöùûüç]+/gi, ' ').trim().slice(0, 160)
 
     for (const r of replies) {
-      const key = groupKeyFor(r.contact_id, r.from_email)
+      const key = groupKeyFor(r.contact_id, r.from_email, r.linkedin_lead_id, r.id)
       const c = r.contact_id ? contactMap.get(r.contact_id) : null
       if (!groups.has(key)) {
         groups.set(key, {
           key,
           contactId: r.contact_id,
-          company: c?.company ?? r.from_email,
-          email: c?.email ?? r.from_email,
+          company: c?.company ?? r.from_email ?? 'Profil LinkedIn',
+          email: c?.email ?? r.from_email ?? null,
+          channel: r.channel ?? 'email',
           city: c?.city ?? '',
           phone: c?.phone ?? null,
           website: c?.website ?? null,
@@ -257,6 +270,7 @@ export async function GET() {
         body: displayBody,
         date: r.created_at?.toISOString() ?? '',
         classification: r.classification ?? undefined,
+        channel: r.channel ?? 'email',
       })
       // Drafts liés à cette réponse
       for (const d of draftRows.filter(d => d.incoming_reply_id === r.id)) {
@@ -292,7 +306,7 @@ export async function GET() {
     const conversations = [...groups.values()]
       .filter(g => {
         // 1) Expéditeur junk (antispam/no-reply/daemon) → jamais une vraie conversation.
-        if (isJunkSender(g.email)) return false
+        if (isJunkSender(g.email ?? '')) return false
         const lastReceived = [...g.messages].reverse().find(m => m.role === 'received')
         // 2) Aucune vraie réponse reçue, ou réponse vide/triviale → on n'affiche pas.
         if (!lastReceived) return false
@@ -337,7 +351,7 @@ export async function GET() {
          * traiter. Deux détections du même événement, c'est une qui finit par se tromper — on
          * utilise désormais celle du moteur, la seule.
          */
-        if (extractNewEmail(lastReceived.body, g.email)) return false
+        if (g.email && extractNewEmail(lastReceived.body, g.email)) return false
         // 8) Conversation clairement en ANGLAIS = mail de warmup (cible = artisans FR) → masquée.
         {
           const b = (lastReceived.body || '').toLowerCase()
@@ -443,6 +457,10 @@ export async function GET() {
             && !g.messages.slice(idx + 1).some(m => m.role === 'agent' && m.status === 'sent')
         }
         g.lastDate = g.messages.length ? g.messages[g.messages.length - 1].date : g.lastDate
+        // Badge de la liste = canal du DERNIER message ayant un canal connu (les messages 'sent'/
+        // 'agent' antérieurs au canal LinkedIn n'en portent pas) ; par défaut 'email'.
+        const dernierAvecCanal = [...g.messages].reverse().find(m => m.channel)
+        g.channel = dernierAvecCanal?.channel ?? g.channel
         return g
       })
     conversations.sort((a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime())

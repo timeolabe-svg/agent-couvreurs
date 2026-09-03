@@ -27,14 +27,18 @@ export async function GET(request: NextRequest) {
 
   const { db } = await import('@/lib/db')
   const { contacts } = await import('@/lib/db/schema')
-  const { eq, sql } = await import('drizzle-orm')
+  const { eq, and, isNotNull, sql } = await import('drizzle-orm')
   const { generateSequence } = await import('@/lib/email-generator')
 
   // 3 contacts audités au hasard (variété de défauts).
+  // ⚠️ Cette route prévisualise une SÉQUENCE EMAIL : depuis le canal LinkedIn (03/09), un contact
+  // peut être audité (audit-sites ne touche jamais l'email) sans avoir aucune adresse — le filtrer
+  // ici, pas juste caster le null, sinon la prévisualisation pique un contact pour qui aucun mail
+  // ne partira jamais.
   const rows = await db
     .select()
     .from(contacts)
-    .where(eq(contacts.audit_done, true))
+    .where(and(eq(contacts.audit_done, true), isNotNull(contacts.email)))
     .orderBy(sql`random()`)
     .limit(3)
 
@@ -54,7 +58,7 @@ export async function GET(request: NextRequest) {
       company: c.company,
       contact: c.name ?? '',
       firstName: c.name?.split(' ')[0] ?? '',
-      email: c.email,
+      email: c.email!, // garanti non-null par le filtre isNotNull(contacts.email) ci-dessus
       phone: c.phone ?? undefined,
       city: c.city ?? '',
       website: c.website ?? undefined,
@@ -86,7 +90,7 @@ export async function GET(request: NextRequest) {
       const { blocLegalRgpd } = await import('@/lib/rgpd')
       const { creerJetonDesabo } = await import('@/lib/unsubscribe-token')
       const base = (process.env.PUBLIC_APP_URL || 'https://agent-couvreurs.vercel.app').replace(/\/+$/, '')
-      const lienDesabo = `${base}/u/${creerJetonDesabo(c.email)}`
+      const lienDesabo = `${base}/u/${creerJetonDesabo(c.email!)}`
       const emails = emailsBruts.map(e => {
         if (/coordonnées professionnelles proviennent/i.test(e.body)) return e
         const sansAncien = e.body.replace(/\n*---\nPour ne plus recevoir mes emails[^\n]*\n?/i, '\n')

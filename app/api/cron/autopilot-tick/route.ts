@@ -719,10 +719,12 @@ async function runTickHandler(request: NextRequest) {
           console.log(`[autopilot] Email bidon ignoré : ${row.contact.email}`)
           continue
         }
+        // Non-null garanti : cette ligne vient d'un JOIN sur email_queue (§ ligne 672-696), où
+        // seul un contact ayant un email peut avoir une ligne — le canal LinkedIn n'y écrit jamais.
         const [blocked] = await db
           .select({ id: blocklist.id })
           .from(blocklist)
-          .where(eq(blocklist.email, row.contact.email))
+          .where(eq(blocklist.email, row.contact.email!))
           .limit(1)
         if (blocked) {
           await db.update(email_queue).set({ status: 'cancelled' })

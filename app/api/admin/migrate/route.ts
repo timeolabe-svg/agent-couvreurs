@@ -321,6 +321,108 @@ export async function GET(request: NextRequest) {
       nom: 'blocklist : contrainte unique sur email (sans elle, ON CONFLICT lève une erreur)',
       run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS blocklist_email_uq ON blocklist(email)`),
     },
+
+    // ─── 03/09/2026 — CANAL LINKEDIN (Hdigiweb, accord de Haris) ───────────────────────────
+    //
+    // Un dirigeant trouvé via SIRENE peut n'avoir aucun email exploitable. `contacts.email`
+    // était NOT NULL : impossible d'entrer ces prospects dans le référentiel unique. Audit
+    // préalable fait sur les 12 fichiers touchant contacts.email dans app/api/cron avant de
+    // retirer la contrainte — aucun ne lit .email sans garde sur un contact qui pourrait être
+    // LinkedIn-only (voir lib/db/schema.ts).
+    {
+      nom: 'contacts : email devient optionnel (canal LinkedIn)',
+      run: () => db.execute(sql`ALTER TABLE contacts ALTER COLUMN email DROP NOT NULL`),
+    },
+    {
+      nom: 'contacts : add linkedin_url',
+      run: () => db.execute(sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS linkedin_url TEXT`),
+    },
+    {
+      nom: 'contacts : contrainte unique sur linkedin_url',
+      run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contacts_linkedin_url_uq ON contacts(linkedin_url) WHERE linkedin_url IS NOT NULL`),
+    },
+    {
+      // Un contact sans AUCUN moyen de contact n'a pas sa place en base — ni email ni LinkedIn
+      // n'est un état valide, contrairement à "l'un des deux manque".
+      nom: 'contacts : contrainte email OU linkedin_url renseigné',
+      run: () => db.execute(sql`
+        ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_email_or_linkedin_chk;
+        ALTER TABLE contacts ADD CONSTRAINT contacts_email_or_linkedin_chk
+          CHECK (email IS NOT NULL OR linkedin_url IS NOT NULL)
+      `),
+    },
+    {
+      // `linkedin_leads` existait déjà dans le schéma mais n'était branchée nulle part (aucune
+      // route, aucun cron, aucune UI) — un embryon mort. `contact_id` est le pont qui la fait
+      // enfin entrer dans le référentiel unique, la messagerie et les invariants partagés.
+      nom: 'linkedin_leads : réparation (contact_id + cycle de statut complet)',
+      run: () => db.execute(sql`
+        ALTER TABLE linkedin_leads
+          ADD COLUMN IF NOT EXISTS contact_id UUID REFERENCES contacts(id),
+          ADD COLUMN IF NOT EXISTS invited_at TIMESTAMP,
+          ADD COLUMN IF NOT EXISTS connected_at TIMESTAMP,
+          ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP
+      `),
+    },
+    {
+      nom: 'linkedin_leads : index sur contact_id et status',
+      run: () => db.execute(sql`
+        CREATE INDEX IF NOT EXISTS ll_contact_idx ON linkedin_leads(contact_id);
+        CREATE INDEX IF NOT EXISTS ll_status_idx ON linkedin_leads(status)
+      `),
+    },
+    {
+      // Anti-doublon d'invitation : deux lignes ne peuvent viser le même profil.
+      nom: 'linkedin_leads : contrainte unique sur profile_url',
+      run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS ll_profile_url_uq ON linkedin_leads(profile_url) WHERE profile_url IS NOT NULL`),
+    },
+    {
+      // Point de jonction unique entre les deux canaux (principe éprouvé chez LabegarIA) : c'est
+      // channel qui alimente le badge de la messagerie et le filtre des statistiques.
+      nom: 'incoming_replies : add channel + linkedin_lead_id',
+      run: () => db.execute(sql`
+        ALTER TABLE incoming_replies
+          ADD COLUMN IF NOT EXISTS channel TEXT NOT NULL DEFAULT 'email',
+          ADD COLUMN IF NOT EXISTS linkedin_lead_id UUID REFERENCES linkedin_leads(id)
+      `),
+    },
+    {
+      // Un message LinkedIn n'a pas d'adresse email.
+      nom: 'incoming_replies : from_email devient optionnel (canal LinkedIn)',
+      run: () => db.execute(sql`ALTER TABLE incoming_replies ALTER COLUMN from_email DROP NOT NULL`),
+    },
+    {
+      nom: 'blocklist : add linkedin_url + source',
+      run: () => db.execute(sql`
+        ALTER TABLE blocklist
+          ADD COLUMN IF NOT EXISTS linkedin_url TEXT,
+          ADD COLUMN IF NOT EXISTS source TEXT
+      `),
+    },
+    {
+      // Le budget réel des visites/jour vit dans state.json, LOCAL au VPS du bot, fail-closed si
+      // illisible — cette table n'est qu'un REPORTING poussé par le bot à chaque cycle, jamais la
+      // source de vérité du garde-fou (le bot ne doit jamais dépendre du réseau pour connaître
+      // son propre budget).
+      nom: 'linkedin_bot_state : create table',
+      run: () => db.execute(sql`
+        CREATE TABLE IF NOT EXISTS linkedin_bot_state (
+          id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          client                    TEXT NOT NULL DEFAULT 'hdigiweb',
+          daily_profile_visits      INTEGER DEFAULT 0,
+          daily_profile_visits_date DATE,
+          daily_invites_sent        INTEGER DEFAULT 0,
+          daily_invites_date        DATE,
+          ramp_start                TIMESTAMP,
+          last_heartbeat_at         TIMESTAMP,
+          updated_at                TIMESTAMP DEFAULT now()
+        )
+      `),
+    },
+    {
+      nom: 'linkedin_bot_state : contrainte unique sur client',
+      run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS lbs_client_uq ON linkedin_bot_state(client)`),
+    },
   ]
 
   const resultats: string[] = []
