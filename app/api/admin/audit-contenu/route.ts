@@ -893,6 +893,43 @@ async function handler(req: NextRequest) {
       GROUP BY 1, 2 ORDER BY 1, 3 DESC`
   }
 
+  /**
+   * VÉRIFICATION DES REQUÊTES SQL DU BLOC LINKEDIN (dashboard/summary + stats/analytics, 03/09).
+   *
+   * Ces deux routes sont protégées par SESSION, pas par clé — impossible de les invoquer
+   * directement pour prouver qu'elles s'exécutent sans erreur (un 307 de redirection vers /login
+   * ne le prouve pas : il vient du middleware, AVANT que le handler ne tourne). On rejoue ici les
+   * MÊMES requêtes SQL, sous auth machine, pour confirmer qu'elles sont syntaxiquement valides
+   * contre le schéma réel et renvoient une forme exploitable — la seule vérification possible
+   * sans la session de Timéo.
+   */
+  if (quoi === 'verif-linkedin-stats') {
+    try {
+      const [sentTotal, repliesTotal, rdvTotal, sparkline, classif] = await Promise.all([
+        sql`SELECT COUNT(*)::int AS n FROM linkedin_leads WHERE invited_at IS NOT NULL`,
+        sql`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE channel = 'linkedin'`,
+        sql`SELECT COUNT(*)::int AS n FROM rdv r JOIN incoming_replies ir ON ir.id = r.incoming_reply_id WHERE ir.channel = 'linkedin'`,
+        sql`
+          SELECT d::date AS jour, COUNT(ir.id)::int AS n
+          FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d
+          LEFT JOIN incoming_replies ir ON ir.channel = 'linkedin' AND ir.created_at::date = d::date
+          GROUP BY d ORDER BY d`,
+        sql`
+          SELECT classification, COUNT(*)::int AS cnt FROM incoming_replies
+          WHERE channel = 'linkedin' GROUP BY classification`,
+      ])
+      out.ok_requetes = true
+      out.sent_total = sentTotal[0]?.n
+      out.replies_total = repliesTotal[0]?.n
+      out.rdv_total = rdvTotal[0]?.n
+      out.sparkline_7d = sparkline
+      out.classification_breakdown = classif
+    } catch (err) {
+      out.ok_requetes = false
+      out.erreur = err instanceof Error ? err.message : String(err)
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
