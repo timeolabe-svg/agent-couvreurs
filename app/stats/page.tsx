@@ -3,6 +3,22 @@
 import { useEffect, useState } from 'react'
 import { Mail, MessageSquare, AlertTriangle, Calendar, BarChart2, BarChart3 } from 'lucide-react'
 
+/**
+ * ⚠️ lucide-react (1.14.0 ici) a retiré ses icônes de MARQUES pour des raisons de licence — même
+ * constat que dans app/conversations/page.tsx, où ce SVG existe déjà en local (pas de module
+ * d'icônes partagé dans ce projet pour éviter la duplication).
+ */
+function LinkedinIcon({ size = 14, color, style }: { size?: number; color?: string; style?: React.CSSProperties }) {
+  // Même contrat que les icônes lucide-react utilisées à côté : KpiCard passe `style={{color}}`,
+  // pas un prop `color` direct — on lit donc l'un ou l'autre, `currentColor` en dernier recours.
+  const fill = color ?? style?.color ?? 'currentColor'
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} aria-hidden="true">
+      <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.03-1.85-3.03-1.85 0-2.14 1.45-2.14 2.94v5.66H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29ZM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12ZM7.12 20.45H3.56V9h3.56v11.45Z" />
+    </svg>
+  )
+}
+
 type Period = '7d' | '30d' | '90d' | 'all'
 
 interface AnalyticsData {
@@ -23,8 +39,16 @@ interface AnalyticsData {
   autoRepliesSent: number
   draftsValidated: number
   draftsPending: number
+  // Canal LinkedIn (03/09/2026) — bloc volontairement plus mince que l'email : pas encore de
+  // détail par ville ni de pipeline, le canal démarre. Voir app/api/stats/analytics/route.ts.
+  linkedin: {
+    sent: number; replies: number; rdvCount: number; replyRate: number
+    classificationBreakdown: Array<{ classification: string; count: number }>
+  }
   _demo?: boolean
 }
+
+type Channel = 'email' | 'linkedin'
 
 const MEDAL: Record<number, string> = { 0: '🏆', 1: '🥈', 2: '🥉' }
 
@@ -69,6 +93,7 @@ function formatDate(dateStr: string): string {
 
 export default function StatsPage() {
   const [period, setPeriod] = useState<Period>('30d')
+  const [channel, setChannel] = useState<Channel>('email')
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -82,8 +107,11 @@ export default function StatsPage() {
   }, [period])
 
   const d = data
-  const totalReplies = d?.replies ?? 0
-  const classBreakdown = d?.classificationBreakdown ?? []
+  // Demande explicite de Timéo : « diviser mailing et LinkedIn ». Les sections ville/pipeline/
+  // activité restent Mailing uniquement pour l'instant — le canal LinkedIn démarre, ces
+  // ventilations n'existent pas encore pour lui (voir app/api/stats/analytics/route.ts).
+  const totalReplies = channel === 'linkedin' ? (d?.linkedin.replies ?? 0) : (d?.replies ?? 0)
+  const classBreakdown = channel === 'linkedin' ? (d?.linkedin.classificationBreakdown ?? []) : (d?.classificationBreakdown ?? [])
 
   return (
     <div className="flex flex-col h-full" style={{ background: '#0a0a0f' }}>
@@ -101,24 +129,46 @@ export default function StatsPage() {
           </p>
         </div>
 
-        <div
-          className="flex items-center gap-1 p-1 rounded-lg"
-          style={{ background: '#1a1a24', border: '1px solid #1e1e2e' }}
-        >
-          {PERIODS.map(p => (
-            <button
-              key={p.id}
-              onClick={() => setPeriod(p.id)}
-              className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
-              style={{
-                background: period === p.id ? '#7d6fb0' : '#111118',
-                color: period === p.id ? '#ffffff' : '#6b6b80',
-                border: period === p.id ? 'none' : '1px solid #1e1e2e',
-              }}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          {/* Sélecteur de canal — demande explicite de Timéo, « diviser mailing et LinkedIn ». */}
+          <div
+            className="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: '#1a1a24', border: '1px solid #1e1e2e' }}
+          >
+            {(['email', 'linkedin'] as Channel[]).map(c => (
+              <button
+                key={c}
+                onClick={() => setChannel(c)}
+                className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
+                style={{
+                  background: channel === c ? (c === 'linkedin' ? '#0077b5' : '#7d6fb0') : '#111118',
+                  color: channel === c ? '#ffffff' : '#6b6b80',
+                  border: channel === c ? 'none' : '1px solid #1e1e2e',
+                }}
+              >
+                {c === 'email' ? 'Mailing' : 'LinkedIn'}
+              </button>
+            ))}
+          </div>
+          <div
+            className="flex items-center gap-1 p-1 rounded-lg"
+            style={{ background: '#1a1a24', border: '1px solid #1e1e2e' }}
+          >
+            {PERIODS.map(p => (
+              <button
+                key={p.id}
+                onClick={() => setPeriod(p.id)}
+                className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
+                style={{
+                  background: period === p.id ? '#7d6fb0' : '#111118',
+                  color: period === p.id ? '#ffffff' : '#6b6b80',
+                  border: period === p.id ? 'none' : '1px solid #1e1e2e',
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -129,41 +179,83 @@ export default function StatsPage() {
           )}
 
           {/* SECTION 2 — 4 KPI Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <KpiCard
-              icon={Mail}
-              iconColor="#7d6fb0"
-              label="EMAILS ENVOYÉS"
-              value={(d?.emailsSent ?? 0).toLocaleString('fr-FR')}
-              sub="+0% vs période préc."
-              subColor="#5c9b82"
-            />
-            <KpiCard
-              icon={MessageSquare}
-              iconColor="#5c9b82"
-              label="RÉPONSES"
-              value={String(d?.replies ?? 0)}
-              sub={`${d?.replyRate ?? 0}% taux de réponse`}
-              subColor="#6b6b80"
-            />
-            <KpiCard
-              icon={AlertTriangle}
-              iconColor="#c19653"
-              label="OPT-OUT & BOUNCES"
-              value={String((d?.optouts ?? 0) + (d?.bounces ?? 0))}
-              sub={`${d?.emailsSent ? (((d.optouts + d.bounces) / d.emailsSent) * 100).toFixed(1) : 0}% du total`}
-              subColor="#6b6b80"
-            />
-            <KpiCard
-              icon={Calendar}
-              iconColor="#7d6fb0"
-              label="RDV GÉNÉRÉS"
-              value={String(d?.rdvCount ?? 0)}
-              sub={`${d?.conversionRate ?? 0}% taux de conversion`}
-              subColor="#6b6b80"
-            />
-          </div>
+          {channel === 'email' ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <KpiCard
+                icon={Mail}
+                iconColor="#7d6fb0"
+                label="EMAILS ENVOYÉS"
+                value={(d?.emailsSent ?? 0).toLocaleString('fr-FR')}
+                sub="+0% vs période préc."
+                subColor="#5c9b82"
+              />
+              <KpiCard
+                icon={MessageSquare}
+                iconColor="#5c9b82"
+                label="RÉPONSES"
+                value={String(d?.replies ?? 0)}
+                sub={`${d?.replyRate ?? 0}% taux de réponse`}
+                subColor="#6b6b80"
+              />
+              <KpiCard
+                icon={AlertTriangle}
+                iconColor="#c19653"
+                label="OPT-OUT & BOUNCES"
+                value={String((d?.optouts ?? 0) + (d?.bounces ?? 0))}
+                sub={`${d?.emailsSent ? (((d.optouts + d.bounces) / d.emailsSent) * 100).toFixed(1) : 0}% du total`}
+                subColor="#6b6b80"
+              />
+              <KpiCard
+                icon={Calendar}
+                iconColor="#7d6fb0"
+                label="RDV GÉNÉRÉS"
+                value={String(d?.rdvCount ?? 0)}
+                sub={`${d?.conversionRate ?? 0}% taux de conversion`}
+                subColor="#6b6b80"
+              />
+            </div>
+          ) : (
+            // Bloc LinkedIn plus mince exprès : pas de ville/pipeline/activité pour l'instant, le
+            // canal démarre (voir la note sur app/api/stats/analytics/route.ts).
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <KpiCard
+                icon={LinkedinIcon}
+                iconColor="#0077b5"
+                label="INVITATIONS ENVOYÉES"
+                value={(d?.linkedin.sent ?? 0).toLocaleString('fr-FR')}
+                sub="depuis la promotion des leads"
+                subColor="#6b6b80"
+              />
+              <KpiCard
+                icon={MessageSquare}
+                iconColor="#5c9b82"
+                label="RÉPONSES"
+                value={String(d?.linkedin.replies ?? 0)}
+                sub={`${d?.linkedin.replyRate ?? 0}% taux de réponse`}
+                subColor="#6b6b80"
+              />
+              <KpiCard
+                icon={Calendar}
+                iconColor="#7d6fb0"
+                label="RDV GÉNÉRÉS"
+                value={String(d?.linkedin.rdvCount ?? 0)}
+                sub="via LinkedIn"
+                subColor="#6b6b80"
+              />
+              <KpiCard
+                icon={AlertTriangle}
+                iconColor="#6b6b80"
+                label="BUDGET QUOTIDIEN"
+                value="—"
+                sub="branché quand le bot tourne (heartbeat)"
+                subColor="#6b6b80"
+              />
+            </div>
+          )}
 
+          {/* SECTIONS 3-5 — Mailing uniquement : ville/pipeline/activité n'existent pas encore
+              côté LinkedIn (le canal démarre, voir app/api/stats/analytics/route.ts). */}
+          {channel === 'email' && <>
           {/* SECTION 3 — Auto-insight banner */}
           <div
             className="rounded-lg text-[13px]"
@@ -331,8 +423,10 @@ export default function StatsPage() {
               <DailyActivityChart data={d?.dailyActivity ?? []} />
             </div>
           </div>
+          </>}
 
-          {/* SECTION 6 — Détail des réponses */}
+          {/* SECTION 6 — Détail des réponses (commune aux deux canaux, classBreakdown/totalReplies
+              basculent déjà selon `channel` plus haut) */}
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e1e2e' }}>
             <div
               className="px-4 py-3 flex items-center gap-2"

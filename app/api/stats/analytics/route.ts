@@ -64,6 +64,11 @@ function getMockAnalytics(period: Period) {
     autoRepliesSent: Math.round(27 * multiplier),
     draftsValidated: Math.round(8 * multiplier),
     draftsPending: Math.round(3 * multiplier),
+    // Volumes bas exprès : le canal LinkedIn démarre, pas encore de régime de croisière à simuler.
+    linkedin: {
+      sent: Math.round(12 * multiplier), replies: Math.round(2 * multiplier), rdvCount: 0,
+      replyRate: 8.3, classificationBreakdown: [{ classification: 'interest', count: Math.round(1 * multiplier) }],
+    },
     _demo: true,
   }
 }
@@ -297,8 +302,47 @@ export async function GET(request: NextRequest) {
     count: r.cnt,
   }))
 
+  /**
+   * BLOC LINKEDIN — additif, exprès (03/09/2026, canal LinkedIn). « Diviser mailing et LinkedIn »
+   * demandé par Timéo. Plutôt que d'enfiler un paramètre `channel` dans les ~15 requêtes email
+   * ci-dessus (dont plusieurs portent déjà des correctifs fins, ex. le DISTINCT sur contact_id à
+   * la ligne 123, ou l'exclusion spam/oof à la ligne 128 — un risque de régression pour un gain
+   * nul tant que le volume LinkedIn reste à zéro), un bloc séparé calculé indépendamment, isolé
+   * par son propre try/catch : une erreur ici ne touche jamais les statistiques email existantes.
+   */
+  const linkedin = await (async () => {
+    try {
+      const { linkedin_leads } = await import('@/lib/db/schema')
+      const inviteConditions = periodStart ? and(sql`invited_at IS NOT NULL`, gte(linkedin_leads.invited_at, periodStart)) : sql`invited_at IS NOT NULL`
+      const [[{ n: sentCount }], [{ n: repliesCount }], [{ n: rdvCount2 }], classifRaw] = await Promise.all([
+        db.select({ n: count() }).from(linkedin_leads).where(inviteConditions) as unknown as Promise<Array<{ n: number }>>,
+        db.select({ n: sql<number>`count(distinct ${incoming_replies.contact_id})` }).from(incoming_replies).where(and(
+          eq(incoming_replies.channel, 'linkedin'),
+          replyConditions,
+          sql`(${incoming_replies.classification} is null or ${incoming_replies.classification} not in ('spam','oof'))`,
+        )) as unknown as Promise<Array<{ n: number }>>,
+        db.select({ n: count() }).from(rdv)
+          .innerJoin(incoming_replies, eq(incoming_replies.id, rdv.incoming_reply_id))
+          .where(and(eq(incoming_replies.channel, 'linkedin'), rdvConditions)) as unknown as Promise<Array<{ n: number }>>,
+        db.select({ classification: incoming_replies.classification, cnt: count() })
+          .from(incoming_replies)
+          .where(and(eq(incoming_replies.channel, 'linkedin'), replyConditions))
+          .groupBy(incoming_replies.classification),
+      ])
+      return {
+        sent: sentCount, replies: repliesCount, rdvCount: rdvCount2,
+        replyRate: sentCount > 0 ? +(Math.min(repliesCount, sentCount) / sentCount * 100).toFixed(1) : 0,
+        classificationBreakdown: classifRaw.map(r => ({ classification: r.classification ?? 'unknown', count: r.cnt })),
+      }
+    } catch (err) {
+      console.error('[stats/analytics] bloc linkedin échoué (isolé) :', err)
+      return { sent: 0, replies: 0, rdvCount: 0, replyRate: 0, classificationBreakdown: [] as Array<{ classification: string; count: number }> }
+    }
+  })()
+
   return NextResponse.json({
     period,
+    linkedin,
     emailsSent,
     replies,
     replyRate,

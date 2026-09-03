@@ -590,7 +590,64 @@ export async function GET() {
       }
     : null
 
+  /**
+   * BLOC LINKEDIN — séparé du reste du dashboard exprès (03/09/2026, canal LinkedIn).
+   *
+   * Volontairement calculé à côté du gros Promise.all ci-dessus plutôt que fondu dedans : ce
+   * bloc est nouveau et non éprouvé, le Promise.all existant est fragile (une seule erreur dans
+   * un tableau déstructuré à 20 entrées casse TOUT le dashboard). Une erreur ici reste isolée
+   * grâce au catch ci-dessous — le dashboard email continue de fonctionner même si ce bloc échoue.
+   *
+   * Même forme que le bloc email pour que le futur composant front n'ait rien à réinventer :
+   * sent_today/capacity_today/reply_rate_week/vs_last_week_pct/sent_total/replies_total/
+   * rdv_total/rate_total/sparkline_7d (pattern éprouvé chez LabegarIA).
+   *
+   * ⚠️ NE JAMAIS additionner les statuts cumulatifs de linkedin_leads.status (connected inclut
+   * déjà messaged/replied/rdv, etc.) — piège déjà rencontré et corrigé chez LabegarIA. On compte
+   * les ÉVÉNEMENTS (incoming_replies, rdv) plutôt que les statuts pour rester juste.
+   */
+  const linkedin = await (async () => {
+    try {
+      const [sentTodayRows, repliesTodayRows, sentTotalRows, repliesTotalRows, rdvTotalRows, sparkline, repliesThisWeekRows, repliesLastWeekRows] = await Promise.all([
+        sqlBrut`SELECT COUNT(*)::int AS n FROM linkedin_leads WHERE invited_at >= ${todayStart} AND invited_at < ${todayEnd}` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE channel = 'linkedin' AND created_at >= ${todayStart} AND created_at < ${todayEnd}` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`SELECT COUNT(*)::int AS n FROM linkedin_leads WHERE invited_at IS NOT NULL` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE channel = 'linkedin'` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`SELECT COUNT(DISTINCT r.id)::int AS n FROM rdv r JOIN incoming_replies ir ON ir.id = r.incoming_reply_id WHERE ir.channel = 'linkedin'` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`
+          SELECT d::date AS jour, COUNT(ir.id)::int AS n
+          FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, INTERVAL '1 day') d
+          LEFT JOIN incoming_replies ir ON ir.channel = 'linkedin' AND ir.created_at::date = d::date
+          GROUP BY d ORDER BY d` as unknown as Promise<Array<{ jour: string; n: number }>>,
+        sqlBrut`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE channel = 'linkedin' AND created_at >= ${weekStart} AND created_at < ${weekEnd}` as unknown as Promise<Array<{ n: number }>>,
+        sqlBrut`SELECT COUNT(*)::int AS n FROM incoming_replies WHERE channel = 'linkedin' AND created_at >= ${lastWeekStart} AND created_at < ${lastWeekEnd}` as unknown as Promise<Array<{ n: number }>>,
+      ])
+      const sent_today = sentTodayRows[0]?.n ?? 0
+      const sent_total = sentTotalRows[0]?.n ?? 0
+      const replies_total = repliesTotalRows[0]?.n ?? 0
+      const rdv_total = rdvTotalRows[0]?.n ?? 0
+      const replies_this_week = repliesThisWeekRows[0]?.n ?? 0
+      const replies_last_week = repliesLastWeekRows[0]?.n ?? 0
+      const replies_today = repliesTodayRows[0]?.n ?? 0
+      const reply_rate_week = sent_total > 0 ? +((replies_this_week / Math.max(1, sent_total)) * 100).toFixed(1) : 0
+      const vs_last_week_pct = replies_last_week > 0
+        ? +(((replies_this_week - replies_last_week) / replies_last_week) * 100).toFixed(1)
+        : (replies_this_week > 0 ? 100 : 0)
+      return {
+        sent_today, replies_today, capacity_today: 30, // 30 = DAILY_PROFILE_VISITS_CAP par défaut, tant que le bot ne pousse pas son vrai budget via /api/linkedin/heartbeat
+        reply_rate_week, vs_last_week_pct,
+        sent_total, replies_total, rdv_total,
+        rate_total: sent_total > 0 ? +((rdv_total / sent_total) * 100).toFixed(1) : 0,
+        sparkline_7d: sparkline.map(s => s.n),
+      }
+    } catch (err) {
+      console.error('[dashboard/summary] bloc linkedin échoué (isolé, le reste du dashboard continue) :', err)
+      return { sent_today: 0, replies_today: 0, capacity_today: 30, reply_rate_week: 0, vs_last_week_pct: 0, sent_total: 0, replies_total: 0, rdv_total: 0, rate_total: 0, sparkline_7d: [0, 0, 0, 0, 0, 0, 0] }
+    }
+  })()
+
   return NextResponse.json({
+    linkedin,
     totalEmailsSent,
     totalReplies,
     totalRdv,
