@@ -51,6 +51,9 @@ export async function GET(request: NextRequest) {
           body: row.incomingReply.body,
           classification: row.incomingReply.classification,
           instantly_reply_id: row.incomingReply.instantly_reply_id,
+          // 'email' | 'linkedin' — un brouillon LinkedIn ne peut pas être envoyé depuis cette UI
+          // (pas de session SMTP pour lui) : seul le bot Playwright l'enverra, via /api/linkedin/pending-replies.
+          channel: row.incomingReply.channel,
         }
       : null,
     contact: row.contact

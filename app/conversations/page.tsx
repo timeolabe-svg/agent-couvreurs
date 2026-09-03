@@ -3,6 +3,21 @@
 import { useEffect, useState } from 'react'
 import { Phone, Globe, MapPin, RefreshCw, Cpu, Mail, Inbox, ChevronLeft } from 'lucide-react'
 
+/**
+ * ⚠️ lucide-react (1.14.0 ici) a retiré ses icônes de MARQUES (LinkedIn, Facebook, Twitter...)
+ * pour des raisons de licence — ce n'est pas un problème de version installée, une mise à jour ne
+ * le réapporterait pas (constaté : LabegarIA, sur une version antérieure 0.400.0, l'avait encore ;
+ * les versions plus récentes de lucide-react l'ont supprimée pour tout le monde). SVG local,
+ * même contrat de props (`size`, `color`) que les icônes lucide utilisées à côté.
+ */
+function Linkedin({ size = 14, color = 'currentColor', className }: { size?: number; color?: string; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={color} className={className} aria-hidden="true">
+      <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.03-1.85-3.03-1.85 0-2.14 1.45-2.14 2.94v5.66H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29ZM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12ZM7.12 20.45H3.56V9h3.56v11.45Z" />
+    </svg>
+  )
+}
+
 interface ConvMessage {
   role: 'sent' | 'received' | 'agent'
   subject?: string
@@ -10,12 +25,17 @@ interface ConvMessage {
   date: string
   status?: string
   classification?: string
+  /** 'email' | 'linkedin' — absent sur les messages plus anciens que le canal LinkedIn (03/09). */
+  channel?: string
 }
 interface Conversation {
   key: string
   contactId: string | null
   company: string
-  email: string
+  // NULLABLE depuis le canal LinkedIn : un contact promu via SIRENE peut n'avoir aucun email.
+  email: string | null
+  /** 'email' | 'linkedin' — canal du DERNIER message du fil, pour le badge de la liste. */
+  channel?: string
   city: string
   phone: string | null
   website: string | null
@@ -246,7 +266,12 @@ export default function ConversationsPage() {
                 }}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium truncate">{c.company}</span>
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    {c.channel === 'linkedin'
+                      ? <Linkedin size={11} color="#0077b5" className="flex-shrink-0" />
+                      : <Mail size={11} style={{ color: 'var(--color-muted-2)' }} className="flex-shrink-0" />}
+                    <span className="text-[13px] font-medium truncate">{c.company}</span>
+                  </span>
                   <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--color-muted-2)' }}>{fmt(c.lastDate)}</span>
                 </div>
                 {/* La date de retour est LE seul renseignement utile sur un absent : sans elle,
@@ -307,10 +332,17 @@ export default function ConversationsPage() {
               >
                 <ChevronLeft size={14} /> Toutes les conversations
               </button>
-              <span className="font-semibold text-[15px] break-words">{current.company}</span>
+              <span className="flex items-center gap-1.5 font-semibold text-[15px] break-words">
+                {current.channel === 'linkedin'
+                  ? <Linkedin size={14} color="#0077b5" className="flex-shrink-0" />
+                  : <Mail size={14} style={{ color: 'var(--color-muted)' }} className="flex-shrink-0" />}
+                {current.company}
+              </span>
               {/* Les coordonnées passent à la ligne au lieu de déborder de l'écran. */}
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]" style={{ color: 'var(--color-muted)' }}>
-                <span className="flex items-center gap-1"><Mail size={12} />{current.email}</span>
+                {current.email
+                  ? <span className="flex items-center gap-1"><Mail size={12} />{current.email}</span>
+                  : current.channel === 'linkedin' && <span className="flex items-center gap-1"><Linkedin size={12} color="#0077b5" />Contact LinkedIn</span>}
                 {current.city && <span className="flex items-center gap-1"><MapPin size={12} />{current.city}</span>}
                 {current.phone && (
                   <a href={`tel:${current.phone}`} className="flex items-center gap-1 font-medium" style={{ color: '#5c9b82' }}>

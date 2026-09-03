@@ -19,6 +19,20 @@ export async function GET(request: NextRequest) {
 
   try {
     const { sql } = await import('@/lib/db')
+
+    /**
+     * ⚠️ INTERRUPTEUR CÔTÉ SERVEUR, PAS SEULEMENT DANS LE BOT (doctrine LabegarIA).
+     *
+     * « L'agent OUVRE et RELANCE, il ne CONVERSE pas » : une fois qu'un prospect répond sur
+     * LinkedIn, la conversation est reprise À LA MAIN, l'IA ne génère pas la suite toute seule.
+     * Si l'interrupteur vivait uniquement dans une variable d'env du bot, le serveur continuerait
+     * à FABRIQUER des brouillons "à envoyer" pendant que l'auto-réponse est censée être coupée —
+     * une dette invisible qui, le jour où quelqu'un rallume, part d'un coup, des semaines de
+     * réponses à la fois. Défaut : OFF (ligne absente = off).
+     */
+    const flag = await sql`SELECT value FROM agent_config WHERE key = 'linkedin_auto_reply' LIMIT 1` as Array<{ value: string }>
+    if (flag[0]?.value !== 'on') return NextResponse.json({ ok: true, drafts: [], auto_reply: false })
+
     const rows = await sql`
       SELECT rd.id, rd.body, ir.linkedin_lead_id, ll.profile_url, ll.first_name, ll.company
       FROM reply_drafts rd

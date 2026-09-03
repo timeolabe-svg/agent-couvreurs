@@ -44,6 +44,14 @@ export async function PATCH(
       ? await db.select().from(incoming_replies).where(eq(incoming_replies.id, draft.incoming_reply_id))
       : [null]
 
+    // ⚠️ DÉFENSE EN PROFONDEUR : l'UI masque déjà le bouton Envoyer pour un brouillon LinkedIn
+    // (aucune session SMTP pour ce canal), mais cette route reste la SORTIE UNIQUE — un appel
+    // direct (cache de page périmé, futur appelant) doit être refusé ici aussi, avec un motif
+    // clair, plutôt que de tomber par accident sur "sans adresse" faute de from_email.
+    if (incoming?.channel === 'linkedin') {
+      return NextResponse.json({ error: 'Brouillon LinkedIn : seul le bot peut l\'envoyer, via /api/linkedin/pending-replies' }, { status: 400 })
+    }
+
     // ⚠️ On envoie par le MOTEUR MAISON (SMTP Gmail), pas par Instantly : Instantly ne sert plus
     // qu'au warmup, donc l'ancien appel échouait systématiquement et la validation manuelle d'une
     // réponse ne partait JAMAIS (échec silencieux côté "À valider").

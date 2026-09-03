@@ -11,18 +11,22 @@ interface DraftItem {
   created_at: string | null
   incomingReply: {
     id: string
-    from_email: string
+    from_email: string | null
     subject: string | null
     body: string
     classification: string | null
     instantly_reply_id: string | null
+    // 'email' | 'linkedin' — un brouillon LinkedIn ne peut pas partir depuis cette page, voir
+    // le bouton "Envoyer" plus bas.
+    channel?: string
   } | null
   contact: {
     id: string
     name: string | null
     company: string
     city: string | null
-    email: string
+    // NULLABLE depuis le canal LinkedIn.
+    email: string | null
     phone: string | null
   } | null
 }
@@ -205,6 +209,11 @@ export default function ReponsesAValiderPage() {
             const isEditing = editingId === item.id
             const cls = item.incomingReply?.classification ?? 'other'
             const clsStyle = CLASSIFICATION_STYLES[cls] ?? CLASSIFICATION_STYLES.other
+            // « L'agent OUVRE et RELANCE, il ne CONVERSE pas » : aucun envoi manuel depuis cette
+            // UI pour LinkedIn, il n'existe pas de session SMTP pour ce canal. Le bot Playwright,
+            // seul détenteur de la session LinkedIn, l'enverra via /api/linkedin/pending-replies
+            // une fois l'auto-réponse activée côté serveur (agent_config.linkedin_auto_reply).
+            const isLinkedin = item.incomingReply?.channel === 'linkedin'
 
             return (
               <div
@@ -335,14 +344,24 @@ export default function ReponsesAValiderPage() {
                   className="px-4 py-3 flex items-center gap-2"
                   style={{ borderTop: '1px solid var(--color-border)', background: 'var(--color-surface-2)' }}
                 >
-                  <button
-                    onClick={() => handleSend(item.id, item.body)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
-                    style={{ background: '#5c9b8220', color: '#5c9b82', border: '1px solid #5c9b8240' }}
-                  >
-                    <CheckCircle size={12} />
-                    Envoyer
-                  </button>
+                  {isLinkedin ? (
+                    <span
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium"
+                      style={{ background: '#0077b515', color: '#0077b5', border: '1px solid #0077b530' }}
+                      title="Ce brouillon LinkedIn part via le bot, pas depuis cette page — aucune session LinkedIn n'existe ici."
+                    >
+                      En attente du bot LinkedIn
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleSend(item.id, item.body)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
+                      style={{ background: '#5c9b8220', color: '#5c9b82', border: '1px solid #5c9b8240' }}
+                    >
+                      <CheckCircle size={12} />
+                      Envoyer
+                    </button>
+                  )}
                   <button
                     onClick={() => handleEdit(item.id, item.body)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
