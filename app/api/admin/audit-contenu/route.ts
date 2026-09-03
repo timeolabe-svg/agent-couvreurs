@@ -391,6 +391,33 @@ async function handler(req: NextRequest) {
       GROUP BY 1 ORDER BY 2 DESC LIMIT 40`
 
     /**
+     * ⚠️ LE « BRUIT ENTRANT » N'AVAIT AUCUN ÉCHANTILLON — donc personne ne l'avait jamais lu.
+     *
+     * 733 messages écartés en 7 jours, et le seul regard possible était leur NOMBRE. Un motif qui
+     * s'appelle « bruit » et qu'on ne peut pas ouvrir est une poubelle : le jour où un vrai
+     * prospect y tombe, rien ne le dira jamais. Le 03/09/2026, Timéo signalait « pas la moindre
+     * conversation depuis des jours » et je ne pouvais NI confirmer NI infirmer qu'une réponse
+     * dormait là-dedans.
+     *
+     * On sépare donc ce qui ressemble à une entreprise française (domaine .fr, ou un objet
+     * commençant par Re:/RE:, signe d'une réponse à l'un de nos mails) du bruit d'infrastructure
+     * (rapports DMARC, notifications Google, mailer-daemon).
+     */
+    out.bruit_a_relire = await sql`
+      SELECT LEFT(motif, 200) AS motif, vu_le, boite
+      FROM imap_messages_ecartes
+      WHERE vu_le > NOW() - INTERVAL '14 days'
+        AND motif LIKE 'BRUIT ENTRANT%'
+        AND (motif ~* '@[a-z0-9.-]+\\.fr' OR motif ~* 'objet[^,]*: *re *:')
+        AND motif !~* 'dmarc|mailer-daemon|postmaster|noreply|no-reply|newsletter|linkedin|google\\.com|microsoft'
+      ORDER BY vu_le DESC LIMIT 40`
+    out.bruit_volume = await sql`
+      SELECT COUNT(*)::int AS total_14j,
+             COUNT(*) FILTER (WHERE motif ~* '@[a-z0-9.-]+\\.fr')::int AS avec_domaine_fr
+      FROM imap_messages_ecartes
+      WHERE vu_le > NOW() - INTERVAL '14 days' AND motif LIKE 'BRUIT ENTRANT%'`
+
+    /**
      * RECLASSEMENT DES TRACES HISTORIQUES.
      *
      * Les lignes écrites avant le 27/08 portent toutes le préfixe « A RATTACHER A LA MAIN », que le
