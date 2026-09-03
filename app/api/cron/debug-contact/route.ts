@@ -21,7 +21,12 @@ export async function GET(req: NextRequest) {
   const { sql } = await import('@/lib/db')
 
   try {
-  const contact = (await sql`SELECT id, email, company, city, phone, source, created_at, website, sector, audit_score, audit_level, audit_weaknesses, audit_done FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`) as Array<Record<string, unknown>>
+  // ⚠️ `google_reviews_count` et `email_validated` sont dans la liste depuis le 03/09/2026 : sans
+  // eux, ce diagnostic ne pouvait pas répondre à la seule question qui compte quand Haris rejette
+  // un lead (« combien d'avis avait-il ? »). Un champ absent d'un SELECT se lit `undefined`, ce qui
+  // ressemble à « la valeur est vide » — et j'ai conclu deux fois de travers là-dessus dans la
+  // même journée. Ce qu'on n'a pas demandé à la base ne dit rien.
+  const contact = (await sql`SELECT id, email, company, city, phone, source, created_at, website, sector, google_reviews_count, email_validated, audit_score, audit_level, audit_weaknesses, audit_done FROM contacts WHERE LOWER(email) = LOWER(${email}) LIMIT 1`) as Array<Record<string, unknown>>
   const cid = (contact[0]?.id as string | undefined) ?? null
 
   const incoming = (await sql`
