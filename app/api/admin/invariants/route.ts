@@ -366,9 +366,15 @@ async function handler(req: NextRequest) {
   await verifier('C7', 'coherence',
     'Aucune personne n\'existe en double dans contacts (même adresse, casse différente)',
     async () => await sql`
+      -- ⚠️ WHERE email IS NOT NULL ajouté le 03/09/2026 (canal LinkedIn) : sans lui, GROUP BY
+      -- réunit TOUS les email=NULL dans un seul groupe — 150 contacts LinkedIn (email
+      -- volontairement NULL, joignables via linkedin_leads) se sont vus signalés comme UNE
+      -- personne en double 150 fois. Le doublon qu'on cherche ici est une adresse EMAIL
+      -- dupliquée, pas l'absence d'email — ça n'a jamais été la question posée par cet invariant.
       SELECT LOWER(email) AS adresse, COUNT(*)::int AS fiches,
              STRING_AGG(email, ' | ') AS variantes
       FROM contacts
+      WHERE email IS NOT NULL
       GROUP BY LOWER(email)
       HAVING COUNT(*) > 1
       LIMIT 500`)
