@@ -146,8 +146,9 @@ export async function POST(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts, blocklist } = await import('@/lib/db/schema')
-  const { eq, or } = await import('drizzle-orm')
+  const { contacts } = await import('@/lib/db/schema')
+  const { eq } = await import('drizzle-orm')
+  const { estBloque } = await import('@/lib/blocklist')
 
   let inserted = 0
   let skipped = 0
@@ -168,19 +169,8 @@ export async function POST(request: NextRequest) {
 
     const finalEmail = validation.fixedEmail ?? row.email.toLowerCase().trim()
 
-    // Check blocklist
-    const blocked = await db
-      .select()
-      .from(blocklist)
-      .where(
-        or(
-          eq(blocklist.email, finalEmail),
-          eq(blocklist.domain, finalEmail.split('@')[1]),
-        ),
-      )
-      .limit(1)
-
-    if (blocked.length > 0) {
+    // Check blocklist — vérification centrale insensible à la casse, voir lib/blocklist.ts.
+    if (await estBloque({ email: finalEmail })) {
       skipped++
       continue
     }

@@ -159,9 +159,16 @@ export async function generateReplyResponse(params: {
   isFollowUp?: boolean    // true = relance (le prospect n'a pas répondu à notre dernière réponse)
   fromEmail?: string      // boîte gabin@ qui a DÉJÀ contacté ce prospect → signature COHÉRENTE (même adresse suit la conversation)
   existingRdvSlot?: string // un RDV est DÉJÀ calé → ne rien re-proposer, juste confirmer brièvement
+  // 'email' (défaut) | 'linkedin'. ⚠️ Omettre fromEmail ne suffit PAS à retirer la signature côté
+  // LinkedIn : `emailInSig` retombe sur une adresse par défaut, et SYSTEM_PROMPT ordonne "toujours
+  // finir par Bien à vous, + Signature: Gabin/Hdigiweb/email" quel que soit fromEmail. Un message
+  // LinkedIn signé comme un email trahit l'automatisation à la première ligne.
+  channel?: 'email' | 'linkedin'
 }): Promise<string> {
+  const channel = params.channel ?? 'email'
   // Force la signature sur la boîte qui suit la conversation (jamais une autre adresse).
-  const fixSig = (b: string) => params.fromEmail
+  // Sans objet sur LinkedIn : aucune signature n'y est jamais ajoutée (cf. plus bas).
+  const fixSig = (b: string) => (channel === 'email' && params.fromEmail)
     ? b.replace(/gabin[a-z.]*@hdigiweb-[a-z]+\.[a-z]+/gi, params.fromEmail)
     : b
   const historyBlock =
@@ -250,19 +257,35 @@ ${buildStrategyGuidance(params.classification)}
 Rédige la réponse. JSON uniquement :
 {"body": "..."}`
 
-  // Signature dynamique : la boîte qui suit la conversation (pas l'adresse hardcodée) + les VRAIS
-  // réglages d'agence (téléphone, site) au lieu du bloc figé "Gabin/Hdigiweb/email" qui ne
-  // contenait aucun moyen de rappel. Un lead avait signalé l'absence de signature complète.
-  const emailInSig = params.fromEmail || 'gabin@hdigiweb-agence.com'
-  let system = SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, emailInSig)
-  try {
-    const { getAgencyInfo } = await import('@/lib/agency-signature')
-    const agency = await getAgencyInfo()
-    const sigLines = ['Signature :', 'Gabin', agency.nom, emailInSig]
-    if (agency.telephone) sigLines.push(agency.telephone)
-    if (agency.site) sigLines.push(agency.site.replace(/^https?:\/\//, ''))
-    system = system.replace(`Signature :\nGabin\nHdigiweb\n${emailInSig}`, sigLines.join('\n'))
-  } catch { /* non-bloquant : signature minimale en repli */ }
+  let system: string
+  if (channel === 'linkedin') {
+    // ⚠️ Il ne suffit PAS d'omettre fromEmail : SYSTEM_PROMPT ordonne "toujours finir par Bien à
+    // vous," et se termine par un bloc "Signature : Gabin/Hdigiweb/email" écrit en dur. Un message
+    // LinkedIn signé comme un email trahit l'automatisation à la première ligne — personne ne
+    // signe un DM entre professionnels déjà connectés. On retire les deux consignes et on les
+    // remplace par l'équivalent LinkedIn, sans toucher au reste (persona, offre, anti-invention,
+    // stratégies par classification restent identiques : ce sont les mêmes règles de fond).
+    system = SYSTEM_PROMPT
+      .replace(
+        '- Toujours finir par "Bien à vous," avant la signature\n',
+        '- N\'écris JAMAIS de formule de politesse finale ("Bien à vous", "Cordialement") ni de signature : c\'est un message LinkedIn, entre deux profils déjà connectés, pas un email.\n- Message TRÈS court (2-4 lignes maximum, souvent moins) : un DM LinkedIn qui ressemble à un email trahit l\'automatisation.\n',
+      )
+      .replace(/\n\nSignature :\nGabin\nHdigiweb\ngabin@hdigiweb-agence\.com$/, '')
+  } else {
+    // Signature dynamique : la boîte qui suit la conversation (pas l'adresse hardcodée) + les VRAIS
+    // réglages d'agence (téléphone, site) au lieu du bloc figé "Gabin/Hdigiweb/email" qui ne
+    // contenait aucun moyen de rappel. Un lead avait signalé l'absence de signature complète.
+    const emailInSig = params.fromEmail || 'gabin@hdigiweb-agence.com'
+    system = SYSTEM_PROMPT.replace(/gabin@hdigiweb-agence\.com/g, emailInSig)
+    try {
+      const { getAgencyInfo } = await import('@/lib/agency-signature')
+      const agency = await getAgencyInfo()
+      const sigLines = ['Signature :', 'Gabin', agency.nom, emailInSig]
+      if (agency.telephone) sigLines.push(agency.telephone)
+      if (agency.site) sigLines.push(agency.site.replace(/^https?:\/\//, ''))
+      system = system.replace(`Signature :\nGabin\nHdigiweb\n${emailInSig}`, sigLines.join('\n'))
+    } catch { /* non-bloquant : signature minimale en repli */ }
+  }
 
   // ⚠️ RÈGLE ABSOLUE : cette fonction ne DOIT JAMAIS jeter. Un hoquet Gemini (vide, 429,
   // timeout) tuait tout processReply → aucun brouillon → le lead CHAUD (qui a donné son
@@ -290,16 +313,22 @@ async function buildFallbackReply(params: {
   contactPhone?: string
   existingRdvSlot?: string
   fromEmail?: string
+  channel?: 'email' | 'linkedin'
 }): Promise<string> {
   const name = (params.contactName && params.contactName.includes('@')) ? '' : (params.contactName || '')
   const greeting = name ? `Bonjour ${name},` : 'Bonjour,'
-  const box = params.fromEmail || 'gabin@hdigiweb-agence.com'
-  let sig = `Bien à vous,\n\nGabin\nHdigiweb\n${box}`
-  try {
-    const { getAgencyInfo, buildSignature } = await import('@/lib/agency-signature')
-    const agency = await getAgencyInfo()
-    sig = `Bien à vous,\n\n${buildSignature('Gabin', agency.nom, box, agency.telephone, agency.site)}`
-  } catch { /* non-bloquant : signature minimale en repli */ }
+  // Aucune signature sur LinkedIn — même filet de sécurité que sur le chemin IA : un repli qui
+  // signe comme un email trahirait l'automatisation exactement là où il doit passer inaperçu.
+  let sig = ''
+  if (params.channel !== 'linkedin') {
+    const box = params.fromEmail || 'gabin@hdigiweb-agence.com'
+    sig = `Bien à vous,\n\nGabin\nHdigiweb\n${box}`
+    try {
+      const { getAgencyInfo, buildSignature } = await import('@/lib/agency-signature')
+      const agency = await getAgencyInfo()
+      sig = `Bien à vous,\n\n${buildSignature('Gabin', agency.nom, box, agency.telephone, agency.site)}`
+    } catch { /* non-bloquant : signature minimale en repli */ }
+  }
   const slot = params.existingRdvSlot || params.proposedSlot
 
   // Ton : je suis Hdigiweb (jamais "je transmets"), je ne répète JAMAIS son numéro, je propose concret.

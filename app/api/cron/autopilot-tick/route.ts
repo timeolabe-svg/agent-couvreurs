@@ -184,7 +184,8 @@ async function runTickHandler(request: NextRequest) {
   }
 
   const { db } = await import('@/lib/db')
-  const { contacts, campaigns, email_queue, dashboard_events, agent_config, blocklist } = await import('@/lib/db/schema')
+  const { contacts, campaigns, email_queue, dashboard_events, agent_config } = await import('@/lib/db/schema')
+  const { estBloque } = await import('@/lib/blocklist')
   const { eq, and, or, gte, lte, sql, notInArray, isNull } = await import('drizzle-orm')
   const { generateEmail, generateSequence } = await import('@/lib/email-generator')
   const { buildHdigiwebSequence, auditHookVerifie, SEQUENCE_LENGTH, SEQUENCE_DELAYS } = await import('@/data/sequence')
@@ -422,13 +423,10 @@ async function runTickHandler(request: NextRequest) {
           // perdu, seulement différé de 30 minutes.
           if (budgetDepasse()) break
           try {
-            // Ne jamais recontacter une adresse blocklistée (opt-out)
-            const [isBlocked] = await db
-              .select({ id: blocklist.id })
-              .from(blocklist)
-              .where(eq(blocklist.email, lead.email!))
-              .limit(1)
-            if (isBlocked) continue
+            // Ne jamais recontacter une adresse blocklistée (opt-out). Vérification centrale
+            // insensible à la casse — voir lib/blocklist.ts (avant : comparaison exacte ici,
+            // divergente de celle des invariants).
+            if (await estBloque({ email: lead.email })) continue
 
             // Insérer le contact (ignorer si email/place_id déjà présent → pas de recontact)
             const [inserted] = await db
@@ -719,13 +717,10 @@ async function runTickHandler(request: NextRequest) {
           console.log(`[autopilot] Email bidon ignoré : ${row.contact.email}`)
           continue
         }
-        // Non-null garanti : cette ligne vient d'un JOIN sur email_queue (§ ligne 672-696), où
-        // seul un contact ayant un email peut avoir une ligne — le canal LinkedIn n'y écrit jamais.
-        const [blocked] = await db
-          .select({ id: blocklist.id })
-          .from(blocklist)
-          .where(eq(blocklist.email, row.contact.email!))
-          .limit(1)
+        // Vérification centrale insensible à la casse — voir lib/blocklist.ts. Non-null garanti :
+        // cette ligne vient d'un JOIN sur email_queue (§ ligne 672-696), où seul un contact ayant
+        // un email peut avoir une ligne — le canal LinkedIn n'y écrit jamais.
+        const blocked = await estBloque({ email: row.contact.email })
         if (blocked) {
           await db.update(email_queue).set({ status: 'cancelled' })
             .where(and(eq(email_queue.contact_id, row.contact.id), eq(email_queue.status, 'pending')))

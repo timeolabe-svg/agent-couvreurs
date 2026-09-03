@@ -62,9 +62,10 @@ async function runCron(req: Request) {
   const tempsRestant = () => TIME_BUDGET_MS - (Date.now() - started)
   try {
   const { db } = await import('@/lib/db')
-  const { contacts, campaigns, email_queue, blocklist, agent_config } = await import('@/lib/db/schema')
+  const { contacts, campaigns, email_queue, agent_config } = await import('@/lib/db/schema')
   const { eq, and, sql, notInArray, isNull, or, gte, inArray } = await import('drizzle-orm')
   const { scrapeGooglePlaces } = await import('@/lib/scraper/google-places')
+  const { estBloque } = await import('@/lib/blocklist')
 
   // Campagne active (pour rattacher les email_queue)
   const [activeCampaign] = await db.select().from(campaigns).where(eq(campaigns.status, 'active')).limit(1)
@@ -313,9 +314,8 @@ async function runCron(req: Request) {
     if (Date.now() - started > TIME_BUDGET_MS) break
     const email = lead.email!.toLowerCase()
     try {
-      // Jamais recontacter un opt-out.
-      const [b] = await db.select({ id: blocklist.id }).from(blocklist).where(eq(blocklist.email, email)).limit(1)
-      if (b) { skipped++; continue }
+      // Jamais recontacter un opt-out. Vérification centrale insensible à la casse — voir lib/blocklist.ts.
+      if (await estBloque({ email })) { skipped++; continue }
 
       // Insert contact (audit_done=false → audité plus tard par audit-sites).
       const [ins] = await db.insert(contacts).values({

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { jetonMachineValide } from '@/lib/cron-auth'
+import { checkLinkedinBotAuth } from '@/lib/linkedin-bot-auth'
 import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 
@@ -78,6 +79,22 @@ export async function proxy(request: NextRequest) {
         return NextResponse.next()
       }
     }
+  }
+
+  /**
+   * ⚠️ LE BOT LINKEDIN A SON PROPRE SECRET, ET DONC SA PROPRE PORTE (03/09/2026).
+   *
+   * Sans ce bloc, `/api/linkedin/*` et `/api/blocklist/check` tombent dans la branche session
+   * ci-dessous — exactement la panne déjà vécue sur `/api/stripe/webhook` : un appelant sans
+   * cookie de session se prend une redirection 307 vers /login, qui renvoie un code de succès et
+   * masque le vrai problème. Le bot tourne sur un VPS externe, il n'a et n'aura jamais de session.
+   *
+   * Volontairement une PORTE SÉPARÉE de celle des crons ci-dessus, avec LINKEDIN_BOT_SECRET et non
+   * CRON_SECRET : un VPS compromis ne doit jamais donner accès aux tâches cron-job.org internes.
+   */
+  const routeBotLinkedin = pathname.startsWith('/api/linkedin/') || pathname === '/api/blocklist/check'
+  if (routeBotLinkedin && checkLinkedinBotAuth(request).ok) {
+    return NextResponse.next()
   }
 
   const token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET })

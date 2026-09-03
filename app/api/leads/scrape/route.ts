@@ -52,8 +52,9 @@ export async function POST(request: NextRequest) {
 
   // Dynamic import to avoid crashing when DB is not configured at module level
   const { db } = await import('@/lib/db')
-  const { contacts, blocklist } = await import('@/lib/db/schema')
-  const { eq, or, inArray } = await import('drizzle-orm')
+  const { contacts } = await import('@/lib/db/schema')
+  const { eq } = await import('drizzle-orm')
+  const { estBloque } = await import('@/lib/blocklist')
 
   let leads
   try {
@@ -74,19 +75,8 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      // Check blocklist
-      const blocked = await db
-        .select()
-        .from(blocklist)
-        .where(
-          or(
-            eq(blocklist.email, lead.email),
-            eq(blocklist.domain, lead.email.split('@')[1]),
-          ),
-        )
-        .limit(1)
-
-      if (blocked.length > 0) {
+      // Check blocklist — vérification centrale insensible à la casse, voir lib/blocklist.ts.
+      if (await estBloque({ email: lead.email })) {
         skipped++
         continue
       }
