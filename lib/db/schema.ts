@@ -21,9 +21,16 @@ export const contacts = pgTable('contacts', {
   // contacts.email dans app/api/cron : aucun ne lit .email sans garde sur un contact qui
   // pourrait être LinkedIn-only — les sélections larges (validate-emails, autopilot-tick)
   // sont toutes ancrées par un innerJoin sur email_queue, où un contact LinkedIn-only n'a
-  // jamais de ligne. audit-sites ne touche jamais .email. Contrainte applicative en
-  // contrepartie : au moins un de email/linkedin_url doit être renseigné à l'insertion —
-  // Postgres ne l'impose pas nativement sur deux colonnes nullable indépendantes.
+  // jamais de ligne. audit-sites ne touche jamais .email.
+  //
+  // ⚠️ CONTRAINTE CHECK (email OU linkedin_url) POSÉE PUIS RETIRÉE LE MÊME JOUR : elle cassait
+  // le flux légitime de promotion SIRENE → LinkedIn, qui crée le contact AVANT que le bot ait
+  // résolu son profile_url (la recherche se fait lors de l'invitation, pas à la promotion). Un
+  // contact « en cours de résolution LinkedIn » n'a alors NI email NI linkedin_url, mais IL a
+  // une ligne linkedin_leads qui le référence — la garantie « joignable d'une manière ou d'une
+  // autre » ne peut donc pas se vérifier sur cette seule ligne, elle doit croiser une autre
+  // table. Reportée sur un invariant mesuré (famille linkedin) plutôt qu'une contrainte
+  // synchrone qui bloque un flux en plusieurs étapes.
   email: text('email').unique(),
   linkedin_url: text('linkedin_url').unique(),
   name: text('name'),

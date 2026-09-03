@@ -342,20 +342,22 @@ export async function GET(request: NextRequest) {
       run: () => db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS contacts_linkedin_url_uq ON contacts(linkedin_url) WHERE linkedin_url IS NOT NULL`),
     },
     {
-      // ⚠️ Le driver Neon (HTTP) n'exécute qu'UNE instruction par appel — deux ALTER séparés par
-      // un point-virgule dans le même sql`` échouaient silencieusement en un seul ERR groupé.
-      // Toujours une instruction par entrée de migration, comme partout ailleurs dans ce fichier.
-      nom: 'contacts : retirer l ancienne contrainte email/linkedin (si présente)',
+      /**
+       * ⚠️ CONTRAINTE POSÉE PUIS RETIRÉE LE MÊME JOUR (03/09/2026).
+       *
+       * L'intention était juste — un contact sans aucun moyen de contact n'a pas sa place — mais
+       * la mise en œuvre cassait le flux légitime de promotion SIRENE → LinkedIn : celui-ci crée
+       * le contact AVANT que le bot résolve son profile_url (la recherche se fait à l'invitation,
+       * pas à la promotion). Un contact « en cours de résolution » n'a alors ni email ni
+       * linkedin_url sur SA PROPRE ligne, alors qu'il EST joignable — via la ligne linkedin_leads
+       * qui le référence. Une contrainte CHECK ne peut pas croiser une autre table ; l'exigence
+       * est donc reportée sur un invariant mesuré (famille linkedin), qui peut, lui, faire le
+       * lien. Gardée en DROP explicite plutôt qu'en effaçant les deux entrées : la migration
+       * reste rejouable et l'historique dit pourquoi une contrainte qui semblait juste a été
+       * défaite dans l'heure.
+       */
+      nom: 'contacts : retirer la contrainte email/linkedin (cassait la promotion LinkedIn)',
       run: () => db.execute(sql`ALTER TABLE contacts DROP CONSTRAINT IF EXISTS contacts_email_or_linkedin_chk`),
-    },
-    {
-      // Un contact sans AUCUN moyen de contact n'a pas sa place en base — ni email ni LinkedIn
-      // n'est un état valide, contrairement à "l'un des deux manque".
-      nom: 'contacts : contrainte email OU linkedin_url renseigné',
-      run: () => db.execute(sql`
-        ALTER TABLE contacts ADD CONSTRAINT contacts_email_or_linkedin_chk
-          CHECK (email IS NOT NULL OR linkedin_url IS NOT NULL)
-      `),
     },
     {
       // `linkedin_leads` existait déjà dans le schéma mais n'était branchée nulle part (aucune
