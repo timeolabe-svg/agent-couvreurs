@@ -30,6 +30,10 @@ export const maxDuration = 60
  *   A. JURIDIQUE      — ce qui peut coûter une plainte
  *   B. LEAD PERDU     — ce qui coûte de l'argent en silence
  *   C. COHÉRENCE      — ce qui rend les chiffres faux, donc les décisions fausses
+ *
+ * Le préfixe de code (A/B/C/D/E...) regroupe par CHAPITRE (D = consignes de Timéo, E = canal
+ * LinkedIn) ; `famille` reste l'une des 3 catégories de CONSÉQUENCE ci-dessus, orthogonale au
+ * chapitre — ne pas en ajouter une 4e par chapitre, ça casserait cette séparation pour rien.
  */
 type Etat = 'OK' | 'ECHEC' | 'INDISPONIBLE'
 interface Invariant {
@@ -676,6 +680,114 @@ async function handler(req: NextRequest) {
       ORDER BY q.sent_at DESC LIMIT 500`,
     'Borné au 27/08, lendemain de la pose : avant, 56 % des mails partaient hors fenêtre — dette irréversible, pas alerte.')
 
+  // ─────────────────────── E. LE CANAL LINKEDIN (03/09/2026) ───────────────────────
+  //
+  // ⚠️ POURQUOI CETTE FAMILLE EXISTE. Chez LabegarIA, qui a construit le bot LinkedIn en premier,
+  // AUCUN invariant ne couvre ce canal — les garde-fous sont codés en dur dans bot.js, sans
+  // vérification a posteriori. C'est l'occasion manquée que ce projet ne reproduit pas.
+
+  await verifier('E1', 'juridique',
+    'Aucun message LinkedIn envoyé à un lead après son blocage',
+    async () => await sql`
+      SELECT ll.profile_url, ir.created_at, b.created_at AS bloque_le
+      FROM linkedin_leads ll
+      JOIN incoming_replies ir ON ir.linkedin_lead_id = ll.id
+      JOIN blocklist b ON LOWER(b.linkedin_url) = LOWER(ll.profile_url)
+      WHERE ir.created_at > b.created_at
+      LIMIT 500`,
+    'Doctrine LabegarIA : blocklist vérifiée à CHAQUE envoi, pas seulement à la première invitation.')
+
+  await verifier('E2', 'juridique',
+    'Un contact blocklisté par email n\'a pas reçu d\'invitation LinkedIn (et réciproquement)',
+    async () => await sql`
+      SELECT c.email, c.linkedin_url, ll.status, ll.invited_at
+      FROM contacts c JOIN linkedin_leads ll ON ll.contact_id = c.id
+      WHERE ll.invited_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM blocklist b
+          WHERE (c.email IS NOT NULL AND LOWER(b.email) = LOWER(c.email))
+             OR (c.linkedin_url IS NOT NULL AND LOWER(b.linkedin_url) = LOWER(c.linkedin_url))
+        )
+      LIMIT 500`,
+    'Blocklist au niveau PERSONNE, pas au niveau canal : un stop sur un canal bloque l\'autre.')
+
+  await verifier('E3', 'coherence',
+    'Aucun lead LinkedIn "messaged" sans être passé par "connected"',
+    async () => await sql`
+      SELECT id, profile_url, status, invited_at, connected_at
+      FROM linkedin_leads
+      WHERE status IN ('messaged', 'relanced_1', 'relanced_2', 'replied', 'reply_relanced', 'rdv')
+        AND connected_at IS NULL
+      LIMIT 500`)
+
+  await verifier('E4', 'lead_perdu',
+    'Aucune réponse LinkedIn chaude n\'est restée sans brouillon ni réponse depuis plus de 3 jours',
+    async () => await sql`
+      SELECT ir.id, ir.classification, ir.created_at
+      FROM incoming_replies ir
+      WHERE ir.channel = 'linkedin'
+        AND ir.classification IN ('interest', 'question', 'rdv_request')
+        AND ir.created_at < NOW() - INTERVAL '3 days'
+        AND NOT EXISTS (SELECT 1 FROM reply_drafts rd WHERE rd.incoming_reply_id = ir.id)
+      LIMIT 500`,
+    'Miroir de B1/B2 côté email : un lead chaud sans trace de traitement est un lead perdu en silence.')
+
+  await verifier('E5', 'coherence',
+    'Aucune invitation LinkedIn de plus de 21 jours sans statut "expired" ou "connected"',
+    async () => await sql`
+      SELECT id, profile_url, invited_at, status
+      FROM linkedin_leads
+      WHERE status = 'invited' AND invited_at < NOW() - INTERVAL '21 days'
+      LIMIT 500`,
+    'La faute exacte des 52 faux positifs chez LabegarIA : "absent de la liste" ne veut pas dire "accepté" au-delà de 3 semaines — vérifie que la réconciliation quotidienne du bot tourne.')
+
+  await verifier('E6', 'juridique',
+    'Le budget de visites de profils LinkedIn n\'a jamais été dépassé (reporting du bot)',
+    async () => await sql`
+      SELECT client, daily_profile_visits, daily_profile_visits_date
+      FROM linkedin_bot_state
+      WHERE daily_profile_visits_date = CURRENT_DATE AND daily_profile_visits > 30
+      LIMIT 500`,
+    'Le vrai garde-fou vit dans state.json, local au VPS, fail-closed. Cette ligne est un REPORTING : si elle rougit, le bot et son reporting ont divergé — à regarder, pas à corriger ici.')
+
+  await verifier('E7', 'coherence',
+    'Aucun lead LinkedIn "not_interested" (statut terminal) n\'a de message ultérieur',
+    async () => await sql`
+      SELECT ll.id, ll.profile_url, ir.created_at
+      FROM linkedin_leads ll
+      JOIN incoming_replies ir ON ir.linkedin_lead_id = ll.id
+      WHERE ll.status = 'not_interested'
+        AND ir.created_at > COALESCE(
+          (SELECT MIN(ir2.created_at) FROM incoming_replies ir2
+             WHERE ir2.linkedin_lead_id = ll.id AND ir2.classification = 'desinterest'),
+          '9999-01-01'::timestamp)
+      LIMIT 500`)
+
+  await verifier('E8', 'coherence',
+    'Un contact promu pour LinkedIn (sans email) a bien une ligne linkedin_leads qui le référence',
+    async () => await sql`
+      SELECT c.id, c.company, c.created_at
+      FROM contacts c
+      WHERE c.email IS NULL AND c.linkedin_url IS NULL
+        AND NOT EXISTS (SELECT 1 FROM linkedin_leads ll WHERE ll.contact_id = c.id)
+      LIMIT 500`,
+    'Remplace la contrainte CHECK retirée le 03/09 (elle cassait la promotion en 2 temps) : la garantie "joignable d\'une manière ou d\'une autre" se mesure ici, en croisant linkedin_leads, plutôt qu\'en bloquant l\'insertion.')
+
+  /**
+   * ⚠️ E9 DOIT RESTER SATISFIABLE (leçon tirée juste en dessous, section suivante, sur
+   * l'alerte "linkedin-bot MUET" restée rouge à vie chez une autre session). Tant qu'aucun
+   * heartbeat n'a JAMAIS été reçu, ce n'est pas "le bot s'est tu", c'est "le bot n'existe pas
+   * encore" — deux états différents. On n'alerte QUE si un heartbeat a déjà eu lieu un jour.
+   */
+  await verifier('E9', 'lead_perdu',
+    'Le bot LinkedIn n\'est pas resté muet plus de 3 cycles depuis son dernier signe de vie',
+    async () => await sql`
+      SELECT client, last_heartbeat_at
+      FROM linkedin_bot_state
+      WHERE last_heartbeat_at IS NOT NULL
+        AND last_heartbeat_at < NOW() - INTERVAL '7.5 hours'`,
+    'Borné à un heartbeat déjà reçu au moins une fois : avant le premier déploiement du bot, ce n\'est pas une alerte, ne pas la lever à vide.')
+
   // ── MÉMOIRE DES FAUTES DÉJÀ COMMISES ─────────────────────────────────
   // Un invariant doit être SATISFIABLE : s'il compte des faits passés qu'on ne peut plus défaire,
   // il reste rouge à vie et on cesse de le regarder — c'est ce qui est arrivé à l'alerte
@@ -711,6 +823,8 @@ async function handler(req: NextRequest) {
       EN_ECHEC: echecs.length,
       non_verifiables: indispo.length,
       echecs_juridiques: echecs.filter(i => i.famille === 'juridique').length,
+      // Comptage par CHAPITRE (préfixe de code), pas par famille — E = canal LinkedIn.
+      echecs_linkedin: echecs.filter(i => i.code.startsWith('E')).length,
     },
     historique,
     invariants: out,
