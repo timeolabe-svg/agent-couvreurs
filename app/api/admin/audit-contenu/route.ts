@@ -1022,6 +1022,22 @@ async function handler(req: NextRequest) {
     out.exemples_suspects = suspects.slice(0, 10)
     out.echantillon_sain = rows.filter(r => !suspects.includes(r)).slice(0, 12)
       .map(r => `${r.first_name} ${r.last_name} (${(r.company ?? '').slice(0, 28)})`)
+
+    /**
+     * Le message LinkedIn dit « quand quelqu'un cherche un {métier} à {ville} ». Si `sector` et
+     * `city` sont vides, tout le monde reçoit « un artisan », sans ville — la personnalisation
+     * n'est alors qu'une intention dans le code. On la MESURE avant de croire qu'elle existe.
+     */
+    const remplissage = (await sql`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(c.sector) FILTER (WHERE NULLIF(TRIM(c.sector), '') IS NOT NULL AND c.sector <> 'inconnu')::int AS avec_metier,
+        COUNT(c.city) FILTER (WHERE NULLIF(TRIM(c.city), '') IS NOT NULL)::int AS avec_ville
+      FROM linkedin_leads ll
+      LEFT JOIN contacts c ON c.id = ll.contact_id
+      WHERE ll.status = 'pending'
+    `) as Array<{ total: number; avec_metier: number; avec_ville: number }>
+    out.personnalisation = remplissage[0]
   }
 
   return NextResponse.json({ ok: true, ...out })
