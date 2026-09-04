@@ -996,6 +996,34 @@ async function handler(req: NextRequest) {
     out.exemple = rows[0] ? { full_name: rows[0].full_name, a_un_email: !!rows[0].email } : null
   }
 
+  /**
+   * 🔬 QUALITÉ DES NOMS QUI VONT RECEVOIR UNE INVITATION.
+   *
+   * C'est la mesure la plus directement liée au risque de restriction du compte : LinkedIn
+   * restreint les comptes dont les invitations se font marquer « je ne connais pas cette
+   * personne ». Un nom de SOCIÉTÉ pris pour un nom de dirigeant (SIRENE renvoie parfois une
+   * personne morale), une initiale seule, un chiffre — et l'invitation part à côté.
+   */
+  if (quoi === 'verif-noms-linkedin') {
+    const rows = await sql`
+      SELECT first_name, last_name, company FROM linkedin_leads
+      WHERE status = 'pending' ORDER BY created_at ASC LIMIT 500
+    ` as Array<{ first_name: string | null; last_name: string | null; company: string | null }>
+    const FORME_SOCIETE = /\b(sarl|sas|sasu|eurl|sci|scop|snc|earl|ets|etablissements|entreprise|societe|société|groupe|holding)\b/i
+    const suspects = rows.filter(r => {
+      const p = (r.first_name ?? '').trim(), n = (r.last_name ?? '').trim()
+      return !p || !n                             // sans prénom OU sans nom : non invitable
+        || p.length < 2 || n.length < 2           // initiale seule
+        || /\d/.test(p + n)                       // un chiffre dans un nom d'humain
+        || FORME_SOCIETE.test(p + ' ' + n)        // forme juridique = personne morale
+    })
+    out.leads_pending = rows.length
+    out.noms_suspects = suspects.length
+    out.exemples_suspects = suspects.slice(0, 10)
+    out.echantillon_sain = rows.filter(r => !suspects.includes(r)).slice(0, 12)
+      .map(r => `${r.first_name} ${r.last_name} (${(r.company ?? '').slice(0, 28)})`)
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
