@@ -20,10 +20,31 @@ export async function GET(request: NextRequest) {
   try {
     const limit = Math.min(5000, Math.max(1, Number(request.nextUrl.searchParams.get('limit') ?? 5000)))
     const { sql } = await import('@/lib/db')
+    /**
+     * 🚨 `full_name` ET `email` SONT DES CHAMPS DU CONTRAT, PAS DU CONFORT (04/09/2026).
+     *
+     * Ils manquaient, et rien ne le signalait — ni une erreur, ni un test : le bot lisait
+     * `lead.full_name` à 56 endroits sur un objet qui n'en avait pas, donc `undefined` partout.
+     * Conséquences mesurées en relisant les chemins concernés, toutes SILENCIEUSES :
+     *  · `runCheckReplies` filtre la boîte de réception avec `namesMatch(c.name, l.full_name)` →
+     *    toujours faux → shortlist vide → AUCUNE réponse de prospect n'aurait jamais été détectée
+     *    ni remontée dans la messagerie de l'app (garantie « zéro lead perdu » à zéro) ;
+     *  · la garde anti-mauvais-destinataire de `saisirEtEnvoyer` compare le nom lu à l'écran avec
+     *    `lead.full_name` → jamais d'égalité → « ENVOI ANNULÉ » sur tous les DM qui ne passent pas
+     *    par le href compose ;
+     *  · `openConversationInInbox(full_name)` ne trouve jamais rien → chaque relance retombe sur
+     *    l'ouverture du PROFIL, c'est-à-dire sur la dépense qui a fait restreindre LabegarIA.
+     *
+     * `email` sert la blocklist : `estBloque(lead)` teste l'URL ET l'email, et sans email la garde
+     * ne pouvait pas voir qu'une personne s'était opposée PAR MAIL — le stop doit suivre la
+     * PERSONNE, pas le canal. Sans conséquence sur la population actuelle (leads sans email), mais
+     * la garde doit être vraie avant qu'on lui confie la population qui en a un.
+     */
     const rows = await sql`
       SELECT ll.id, ll.first_name, ll.last_name, ll.company, ll.profile_url, ll.status,
              ll.invited_at, ll.connected_at, ll.last_message_at, ll.created_at, ll.contact_id,
-             c.city, c.sector
+             NULLIF(TRIM(CONCAT_WS(' ', ll.first_name, ll.last_name)), '') AS full_name,
+             c.email, c.city, c.sector
       FROM linkedin_leads ll
       LEFT JOIN contacts c ON c.id = ll.contact_id
       ORDER BY ll.created_at ASC
