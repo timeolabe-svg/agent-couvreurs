@@ -965,6 +965,37 @@ async function handler(req: NextRequest) {
     }
   }
 
+  /**
+   * 🔬 CONTRAT DE `/api/linkedin/leads` — le bot lit des champs, on vérifie qu'ils EXISTENT.
+   *
+   * Le bug du 04/09 (full_name et email absents du SELECT) n'était visible ni à la compilation
+   * (c'est du JSON), ni en base (les colonnes existent ailleurs), ni dans un log (undefined ne
+   * lève rien). Seule une comparaison entre ce que le bot LIT et ce que l'API RENVOIE le montre.
+   * On rejoue donc la requête de la route et on liste les champs manquants.
+   */
+  if (quoi === 'verif-contrat-leads') {
+    // Les champs que bot.js lit sur un lead (extraits mécaniquement des accès `lead.x` / `l.x`).
+    const attendus = ['id', 'first_name', 'last_name', 'full_name', 'company', 'profile_url',
+      'status', 'invited_at', 'last_message_at', 'email']
+    const rows = await sql`
+      SELECT ll.id, ll.first_name, ll.last_name, ll.company, ll.profile_url, ll.status,
+             ll.invited_at, ll.connected_at, ll.last_message_at, ll.created_at, ll.contact_id,
+             NULLIF(TRIM(CONCAT_WS(' ', ll.first_name, ll.last_name)), '') AS full_name,
+             c.email, c.city, c.sector
+      FROM linkedin_leads ll
+      LEFT JOIN contacts c ON c.id = ll.contact_id
+      ORDER BY ll.created_at ASC
+      LIMIT 200
+    ` as Array<Record<string, unknown>>
+    const renvoyes = rows[0] ? Object.keys(rows[0]) : []
+    out.champs_manquants = attendus.filter(c => !renvoyes.includes(c))
+    out.contrat_ok = out.champs_manquants && (out.champs_manquants as string[]).length === 0
+    out.leads_lus = rows.length
+    // Un champ présent mais TOUJOURS vide serait un faux « ok » : on mesure le remplissage réel.
+    out.full_name_renseigne = rows.filter(r => r.full_name).length
+    out.exemple = rows[0] ? { full_name: rows[0].full_name, a_un_email: !!rows[0].email } : null
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
