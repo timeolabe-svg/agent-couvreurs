@@ -34,19 +34,37 @@ export async function POST(request: NextRequest) {
     const { classifyReply } = await import('@/lib/reply-agent/classifier')
     const { prepareLinkedinReply } = await import('@/lib/reply-agent/send-linkedin-reply')
 
-    const key = profileKey(payload.profile_url)
+    // `key` = clé canonique 'in/<slug>', réservée à la table `blocklist` (seule à la stocker sous
+    // cette forme, cf. lib/blocklist.ts). `linkedin_leads.profile_url` stocke lui l'URL COMPLÈTE
+    // brute, telle qu'écrite par lead-status/route.ts depuis resolveProfile() du bot — les deux
+    // formats ne sont PAS interchangeables.
+    //
+    // 🚨 BUG CORRIGÉ (04/09/2026) : cette route comparait `profile_url = ${key}` (forme courte)
+    // contre une colonne en forme longue → aucune ligne existante n'a JAMAIS matché, chaque
+    // réponse créait un lead FANTÔME (profile_url='in/<slug>', contact_id=NULL, jamais rattaché à
+    // la vraie fiche). Le vrai lead restait 'messaged' pour toujours (jamais vu comme 'replied' par
+    // le statut), et le brouillon de réponse se serait attaché à une URL invalide — le filet de
+    // conversation en direct dans runRelances() a évité un double message, mais le pipeline de
+    // réponse était cassé. Fix : extraire le même slug que le bot (regex identique à
+    // bot.js:profileKey) et matcher sur l'URL complète via LIKE, jamais une comparaison stricte.
+    const slug = (payload.profile_url.match(/\/in\/([^/?#]+)/i)?.[1] || '').toLowerCase()
+    if (!slug) return NextResponse.json({ error: 'profile_url invalide (pas de /in/<slug>)' }, { status: 400 })
 
     // Retrouver (ou créer) le lead. Le bot connaît le profil AVANT que la fiche existe si la
     // recherche a résolu un profil jamais invité par nous jusque-là (cas rare, ex. quelqu'un
     // écrit en premier) — on garde la trace quand même, sans contact_id, plutôt que la jeter.
     const leadRows = (await sql`
-      SELECT id, contact_id, status FROM linkedin_leads WHERE profile_url = ${key} LIMIT 1
+      SELECT id, contact_id, status FROM linkedin_leads
+      WHERE LOWER(profile_url) LIKE '%/in/' || ${slug} || '%'
+      LIMIT 1
     `) as Array<{ id: string; contact_id: string | null; status: string | null }>
     let lead = leadRows[0]
     if (!lead) {
+      // On stocke l'URL COMPLÈTE (jamais la clé courte) : c'est le format que lit tout le reste du
+      // bot (profileKey() côté bot.js compare des URLs complètes entre elles).
       const ins = (await sql`
         INSERT INTO linkedin_leads (first_name, last_name, company, profile_url, status)
-        VALUES (${payload.first_name ?? null}, ${payload.last_name ?? null}, ${payload.company ?? null}, ${key}, 'replied')
+        VALUES (${payload.first_name ?? null}, ${payload.last_name ?? null}, ${payload.company ?? null}, ${payload.profile_url}, 'replied')
         RETURNING id, contact_id, status
       `) as Array<{ id: string; contact_id: string | null; status: string | null }>
       lead = ins[0]
@@ -69,9 +87,12 @@ export async function POST(request: NextRequest) {
     }
     const optOut = isExplicitOptOut(payload.body)
     if (optOut) {
+      // `blocklist.linkedin_url` stocke lui la forme CANONIQUE ('in/<slug>', cf. lib/blocklist.ts)
+      // — c'est la forme qu'estBloque()/le check du bot recalculent et comparent, contrairement à
+      // linkedin_leads.profile_url ci-dessus qui garde l'URL complète.
       await sql`
         INSERT INTO blocklist (email, linkedin_url, reason, source)
-        VALUES (${contactEmail}, ${key}, 'unsubscribe', 'linkedin')
+        VALUES (${contactEmail}, ${profileKey(payload.profile_url)}, 'unsubscribe', 'linkedin')
       `.catch(() => {}) // best-effort : ne bloque jamais l'ingestion elle-même
       await sql`UPDATE linkedin_leads SET status = 'not_interested' WHERE id = ${lead.id}`
     }
