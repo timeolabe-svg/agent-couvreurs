@@ -1038,6 +1038,42 @@ async function handler(req: NextRequest) {
       WHERE ll.status = 'pending'
     `) as Array<{ total: number; avec_metier: number; avec_ville: number }>
     out.personnalisation = remplissage[0]
+
+    /**
+     * 🔧 LE MÉTIER EXISTE, IL N'A JUSTE PAS ÉTÉ RECOPIÉ.
+     *
+     * `promouvoir-linkedin` lit `outscraper_leads.sector`, vide pour la plupart des fiches, et
+     * ignore `outscraper_leads.category` — la catégorie Google, qui est précisément le métier
+     * (« Pisciniste », « Couvreur »…). Résultat : 117 personnes sur 150 recevraient « quand
+     * quelqu'un cherche un artisan », alors que leur métier est connu depuis l'achat des leads.
+     *
+     * `&reparer=1` recopie la catégorie dans les fiches déjà promues. Corriger la cause ne suffit
+     * pas : il faut balayer ce qui est déjà en base (leçon « un correctif vaut pour TOUS »).
+     */
+    const recuperable = (await sql`
+      SELECT COUNT(*)::int AS n
+      FROM linkedin_leads ll
+      JOIN contacts c ON c.id = ll.contact_id
+      JOIN outscraper_leads o ON o.place_id = c.google_place_id
+      WHERE ll.status = 'pending'
+        AND (NULLIF(TRIM(c.sector), '') IS NULL OR c.sector = 'inconnu')
+        AND NULLIF(TRIM(o.category), '') IS NOT NULL
+    `) as Array<{ n: number }>
+    out.metiers_recuperables_depuis_category = recuperable[0]?.n ?? 0
+
+    if (req.nextUrl.searchParams.get('reparer') === '1') {
+      const maj = await sql`
+        UPDATE contacts c
+        SET sector = TRIM(o.category)
+        FROM outscraper_leads o
+        WHERE o.place_id = c.google_place_id
+          AND (NULLIF(TRIM(c.sector), '') IS NULL OR c.sector = 'inconnu')
+          AND NULLIF(TRIM(o.category), '') IS NOT NULL
+          AND EXISTS (SELECT 1 FROM linkedin_leads ll WHERE ll.contact_id = c.id)
+        RETURNING c.id
+      ` as Array<{ id: string }>
+      out.metiers_repares = maj.length
+    }
   }
 
   return NextResponse.json({ ok: true, ...out })
