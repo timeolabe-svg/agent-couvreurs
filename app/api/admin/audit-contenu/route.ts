@@ -930,6 +930,41 @@ async function handler(req: NextRequest) {
     }
   }
 
+  /**
+   * 🔬 PREUVE DU CORRECTIF ingest/route.ts (04/09/2026) — SANS le secret du bot LinkedIn.
+   *
+   * Le bot n'a pas de session, et je n'ai pas voulu récupérer LINKEDIN_BOT_SECRET pour un test
+   * (le secret machine ne doit circuler que là où il est déjà). Cette branche rejoue exactement la
+   * requête corrigée de /api/linkedin/ingest — même extraction de slug, même LIKE — sur une ligne
+   * SYNTHÉTIQUE créée puis détruite dans le même appel, jamais sur de vraies données de prospect.
+   */
+  if (quoi === 'verif-ingest-match') {
+    const url = 'https://www.linkedin.com/in/test-audit-ingest-xyz/'
+    const slug = (url.match(/\/in\/([^/?#]+)/i)?.[1] || '').toLowerCase()
+    try {
+      const ins = await sql`
+        INSERT INTO linkedin_leads (first_name, last_name, profile_url, status)
+        VALUES ('Audit', 'Test', ${url}, 'messaged')
+        RETURNING id
+      ` as Array<{ id: string }>
+      const found = await sql`
+        SELECT id, status FROM linkedin_leads
+        WHERE LOWER(profile_url) LIKE '%/in/' || ${slug} || '%'
+        LIMIT 1
+      ` as Array<{ id: string; status: string }>
+      out.ligne_creee = ins[0]?.id
+      out.ligne_retrouvee = found[0]?.id
+      out.match_ok = !!found[0] && found[0].id === ins[0]?.id
+      await sql`DELETE FROM linkedin_leads WHERE id = ${ins[0]?.id}`
+      out.nettoye = true
+    } catch (err) {
+      out.match_ok = false
+      out.erreur = err instanceof Error ? err.message : String(err)
+      // Best-effort cleanup même en cas d'erreur en cours de route.
+      await sql`DELETE FROM linkedin_leads WHERE profile_url = ${url}`.catch(() => {})
+    }
+  }
+
   return NextResponse.json({ ok: true, ...out })
 }
 
